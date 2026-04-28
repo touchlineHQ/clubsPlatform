@@ -1,13 +1,13 @@
 {
-  "name": "elbantams-backend",
-  "version": "1.0.0",
+  "name": "clubsPlatform",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "cd website && npm run dev",
     "build": "cd website && npm run build",
     "preview": "npx wrangler pages dev website/dist",
-    "db:migrate:local": "npx wrangler d1 migrations apply elbantams-auth --local",
-    "db:migrate:prod": "npx wrangler d1 migrations apply elbantams-auth --remote"
+    "db:migrate:local": "npx wrangler d1 migrations apply clubsPlatform-auth --local",
+    "db:migrate:prod": "npx wrangler d1 migrations apply clubsPlatform-auth --remote"
   },
   "dependencies": {
     "better-auth": "^1.5.6",

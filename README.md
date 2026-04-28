@@ -1,8 +1,6 @@
-# ELBantams FC Website
+# Clubs Platform
 
-Club website for ELBantams FC, built with React and TypeScript, deployed to Cloudflare Pages.
-
-**Live site:** https://elbantams.pages.dev
+A white labelled website for grassroots football clubs, built with React and TypeScript, deployed to Cloudflare Pages.
 
 ## Use This for Your Own Club
 

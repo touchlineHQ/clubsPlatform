@@ -1,11 +1,11 @@
-name = "elbantams"
+name = "clubsPlatform"
 compatibility_date = "2024-09-23"
 pages_build_output_dir = "website/dist"
 compatibility_flags = [ "nodejs_compat" ]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "elbantams-auth"
+database_name = "clubsPlatform-auth"
 database_id = "97a5772c-41a2-4674-904a-251dbe0473f6"
 preview_database_id = "634c6b97-01dd-41f1-b704-74a8da8a5f2b"
 migrations_table = "migrations"
