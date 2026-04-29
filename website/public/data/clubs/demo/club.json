@@ -1,7 +1,7 @@
 {
   "slug": "demo",
-  "name": "Demo United FC",
-  "tagShort": "Demo United",
+  "name": "Demo FC",
+  "tagShort": "Demo FC",
   "tagline": "Your Club, Your Story — Powered by Touchline",
   "founded": 2024,
   "email": "hello@example.com",
@@ -19,6 +19,7 @@
   "colours": "Blue and white",
   "kitDescription": "Home: blue shirts, white shorts. Away: white shirts, blue shorts.",
   "primaryColor": "blue",
+  "clubFeedSlug": "demo-fc",
   "homeBanner": "This is a <strong>demo club</strong> showing what your site could look like on the Touchline Clubs Platform. Edit your <code>club.json</code> to make it your own.",
   "matchdayBadges": [
     { "label": "FA Charter Standard", "color": "blue" },
@@ -40,7 +41,7 @@
     {
       "icon": "fa-futbol",
       "title": "A Fresh Start",
-      "text": "Demo United FC is a template club used to showcase the Touchline Clubs Platform. Replace this with your own story."
+      "text": "Demo FC is a template club used to showcase the Touchline Clubs Platform. Replace this with your own story."
     },
     {
       "icon": "fa-users",
@@ -59,7 +60,7 @@
     }
   ],
   "history": [
-    "This is example content for the Demo United FC club. The platform lets you write your own history here, using HTML if needed.",
+    "This is example content for Demo FC. The platform lets you write your own history here, using HTML if needed.",
     "Each club on the platform gets its own customisable JSON files for content, plus an admin UI for live editing.",
     "Replace this text with your own history to bring the page to life."
   ]

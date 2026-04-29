@@ -38,7 +38,7 @@ const PITCH_SEED_STATEMENTS = [
   `INSERT OR IGNORE INTO "pitch" ("id", "name", "formats", "active") VALUES ('pitch_6', 'Pitch 6', '["7v7"]', 1)`,
   `INSERT OR IGNORE INTO "pitch" ("id", "name", "formats", "active") VALUES ('pitch_7', 'Pitch 7', '["5v5"]', 1)`,
   `INSERT OR IGNORE INTO "pitch" ("id", "name", "formats", "active") VALUES ('pitch_8', 'Pitch 8', '["5v5"]', 1)`,
-  `INSERT OR IGNORE INTO "club_config" ("id", "slug", "name", "active", "createdAt") VALUES ('club_demo', 'demo', 'Demo United FC', 1, unixepoch() * 1000)`,
+  `INSERT OR IGNORE INTO "club_config" ("id", "slug", "name", "active", "createdAt") VALUES ('club_demo', 'demo', 'Demo FC', 1, unixepoch() * 1000)`,
 ];
 
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
