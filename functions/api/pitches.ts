@@ -1,35 +1,27 @@
 import { ensureTables } from "../lib/ensure-tables";
-
-interface Env {
-  DB: D1Database;
-  BETTER_AUTH_SECRET: string;
-}
+import { type Env, json, getClubSlug } from "../lib/api-helpers";
 
 type PitchRow = {
   id: string;
+  clubSlug: string | null;
   name: string;
-  formats: string; // JSON array string
+  formats: string;
   description: string | null;
   active: number;
 };
 
-function json(res: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(res), {
-    ...(init ?? {}),
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
-  });
-}
-
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
+  const clubSlug = getClubSlug(context.request);
   const rows = await context.env.DB
     .prepare(
-      `SELECT id, name, formats, description, active
+      `SELECT id, clubSlug, name, formats, description, active
        FROM pitch
-       WHERE active = 1
+       WHERE active = 1 AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))
        ORDER BY name ASC`
     )
+    .bind(clubSlug, clubSlug)
     .all<PitchRow>();
 
   const pitches = rows.results.map((r) => ({

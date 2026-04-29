@@ -6,6 +6,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  clubSlug: string | null;
 }
 
 interface AuthContextValue {
@@ -13,6 +14,8 @@ interface AuthContextValue {
   loading: boolean;
   isAdmin: boolean;
   isManager: boolean;
+  /** True when the user is an admin with no specific clubSlug — can manage all clubs. */
+  isPlatformAdmin: boolean;
   teamRoles: UserTeamRole[];
   refresh: () => Promise<void>;
 }
@@ -22,6 +25,7 @@ const AuthContext = createContext<AuthContextValue>({
   loading: true,
   isAdmin: false,
   isManager: false,
+  isPlatformAdmin: false,
   teamRoles: [],
   refresh: async () => {},
 });
@@ -71,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       isAdmin: user?.role === 'admin',
       isManager: user?.role === 'manager' || user?.role === 'admin',
+      isPlatformAdmin: user?.role === 'admin' && user?.clubSlug === null,
       teamRoles,
       refresh,
     }}>

@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "icon": "fa-map-marker-alt",
+      "title": "Getting Here",
+      "text": "Add directions, parking info and accessibility details so visitors know where to go on matchday."
+    },
+    {
+      "icon": "fa-tshirt",
+      "title": "Club Colours",
+      "text": "Describe your home and away kits, and any heritage details about your colours."
+    },
+    {
+      "icon": "fa-utensils",
+      "title": "Refreshments",
+      "text": "Tell visitors about the kitchen, bar and any matchday catering options."
+    },
+    {
+      "icon": "fa-paw",
+      "title": "Dog-friendly",
+      "text": "Set out your club's policy on dogs and other pets at the ground."
+    }
+  ]
+}

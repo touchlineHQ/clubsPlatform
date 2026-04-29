@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "title": "Welcome to the Demo Club",
+      "text": "This is a sample news item showing how club news appears on the platform. Admins can add, edit and delete news from the customise screen.",
+      "link": "#",
+      "linkText": "Learn More"
+    },
+    {
+      "title": "Customise Your Site",
+      "text": "Every club gets full control over their content — branding, teams, fixtures, news and committee — all driven from JSON or the admin UI.",
+      "link": "#",
+      "linkText": "View Docs"
+    },
+    {
+      "title": "Live Fixture Feeds",
+      "text": "Connect your club's FA Full-Time feed and the platform pulls fixtures, results and team rosters automatically.",
+      "link": "#",
+      "linkText": "Read More"
+    }
+  ]
+}

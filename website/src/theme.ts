@@ -14,10 +14,10 @@ const ORANGE_SHADES: MantineColorsTuple = [
   '#8a350b',
 ];
 
-export function createClubTheme(primaryColor = 'orange') {
+export function createClubTheme(primaryColor = 'blue') {
   return createTheme({
     primaryColor,
-    colors: primaryColor === 'orange' ? { orange: ORANGE_SHADES } : undefined,
+    ...(primaryColor === 'orange' ? { colors: { orange: ORANGE_SHADES } } : {}),
     fontFamily: 'system-ui, -apple-system, sans-serif',
   });
 }

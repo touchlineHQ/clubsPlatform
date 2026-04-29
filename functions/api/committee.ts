@@ -1,8 +1,9 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from "../lib/api-helpers";
 
 type CommitteeRow = {
   id: string;
+  clubSlug: string | null;
   role: string;
   name: string;
   contact: string;
@@ -11,14 +12,19 @@ type CommitteeRow = {
   updatedAt: number;
 };
 
+const clubFilter = `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`;
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
+  const clubSlug = getClubSlug(context.request);
   const rows = await context.env.DB
     .prepare(
-      `SELECT id, role, name, contact, sortOrder, createdAt, updatedAt
+      `SELECT id, clubSlug, role, name, contact, sortOrder, createdAt, updatedAt
        FROM committee_member
+       WHERE ${clubFilter}
        ORDER BY sortOrder ASC, role ASC`
     )
+    .bind(clubSlug, clubSlug)
     .all<CommitteeRow>();
 
   return json({ items: rows.results });
@@ -28,6 +34,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
+  const clubSlug = getClubSlug(context.request);
   const body = (await context.request.json()) as Partial<{
     role: string;
     name: string;
@@ -46,10 +53,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const ts = nowMs();
   await context.env.DB
     .prepare(
-      `INSERT INTO committee_member (id, role, name, contact, sortOrder, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO committee_member (id, clubSlug, role, name, contact, sortOrder, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(id, role, name, contact, sortOrder, ts, ts)
+    .bind(id, clubSlug, role, name, contact, sortOrder, ts, ts)
     .run();
 
   return json({ ok: true, id }, { status: 201 });
@@ -63,6 +70,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
+  const clubSlug = getClubSlug(context.request);
   const body = (await context.request.json()) as Partial<{
     role: string;
     name: string;
@@ -71,8 +79,8 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   }>;
 
   const existing = await context.env.DB
-    .prepare(`SELECT id FROM committee_member WHERE id = ?`)
-    .bind(id)
+    .prepare(`SELECT id FROM committee_member WHERE id = ? AND ${clubFilter}`)
+    .bind(id, clubSlug, clubSlug)
     .first<{ id: string }>();
   if (!existing) return json({ error: "Not found" }, { status: 404 });
 
@@ -107,11 +115,11 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
+  const clubSlug = getClubSlug(context.request);
   const res = await context.env.DB
-    .prepare(`DELETE FROM committee_member WHERE id = ?`)
-    .bind(id)
+    .prepare(`DELETE FROM committee_member WHERE id = ? AND ${clubFilter}`)
+    .bind(id, clubSlug, clubSlug)
     .run();
 
   return json({ ok: true, changes: res.meta.changes });
 };
-

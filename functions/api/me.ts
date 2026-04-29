@@ -4,13 +4,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);
   if ("error" in result) return result.error;
   const { session } = result;
+  const u = session.user as Record<string, unknown>;
 
   return json({
     user: {
       id: session.user.id,
       name: session.user.name,
       email: session.user.email,
-      role: (session.user as Record<string, unknown>).role ?? "member",
+      role: u.role ?? "member",
+      clubSlug: (u.clubSlug as string | null) ?? null,
     },
   });
 };

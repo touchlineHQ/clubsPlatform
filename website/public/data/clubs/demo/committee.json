@@ -1,0 +1,8 @@
+{
+  "committee": [
+    { "role": "Chairperson", "name": "Sample Name", "contact": "chair@example.com" },
+    { "role": "Secretary", "name": "Sample Name", "contact": "secretary@example.com" },
+    { "role": "Treasurer", "name": "Sample Name", "contact": "treasurer@example.com" },
+    { "role": "Welfare Officer", "name": "Sample Name", "contact": "welfare@example.com" }
+  ]
+}

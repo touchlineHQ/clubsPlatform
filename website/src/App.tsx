@@ -2,14 +2,16 @@ import { useEffect, useState, useCallback } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { loadAllData } from './data';
-import type { AppData } from './types';
+import { loadAllData, loadClubRegistry } from './data';
+import type { AppData, ClubEntry } from './types';
 import { createClubTheme } from './theme';
 import { AuthProvider } from './context/AuthContext';
-import { SiteHeader } from './components/SiteHeader';
-import { SiteSidebar } from './components/SiteSidebar';
+import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { SiteHeader } from './components/SiteHeader';
+import { SiteSidebar } from './components/SiteSidebar';
+import { ClubSelectorPage } from './pages/ClubSelectorPage';
 import { HomePage } from './pages/HomePage';
 import { AboutPage } from './pages/AboutPage';
 import { TeamsPage } from './pages/TeamsPage';
@@ -29,15 +31,55 @@ import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
 
+/** Extract the first path segment as a potential club slug, e.g. "/east-leake/" → "east-leake" */
+function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const first = segments[0] ?? '';
+  if (first && clubs.some(c => c.slug === first)) return first;
+  return null;
+}
+
+const DEMO_SLUG = 'demo';
+
 export default function App() {
+  const [registry, setRegistry] = useState<{ multiClub: boolean; clubs: ClubEntry[] } | null>(null);
+  const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
   const [previewData, setPreviewData] = useState<AppData | null>(null);
   const [opened, { toggle, close }] = useDisclosure();
 
+  // Step 1: load club registry to determine single vs multi-club mode
   useEffect(() => {
-    loadAllData().then(setFetchedData);
+    loadClubRegistry().then((reg) => {
+      setRegistry(reg);
+
+      let slug: string | null = null;
+      if (reg.multiClub) {
+        slug = parseClubSlugFromPath(reg.clubs);
+
+        // If no slug in the URL but only one real (non-demo) club exists,
+        // skip the selector and go straight to that club.
+        if (!slug) {
+          const realClubs = reg.clubs.filter(c => c.slug !== DEMO_SLUG);
+          if (realClubs.length === 1) {
+            window.location.replace(`/${realClubs[0].slug}/`);
+            return;
+          }
+        }
+      } else {
+        // Single-club: use the sole registered club
+        slug = reg.clubs[0]?.slug ?? null;
+      }
+      setClubSlug(slug);
+    });
   }, []);
+
+  // Step 2: once we have a club slug, load all club data
+  useEffect(() => {
+    if (!clubSlug) return;
+    loadAllData(clubSlug).then(setFetchedData);
+  }, [clubSlug]);
 
   const data = previewData ?? fetchedData;
 
@@ -55,7 +97,8 @@ export default function App() {
     setEditingData(null);
   }, []);
 
-  if (!data) {
+  // Registry not yet loaded
+  if (!registry) {
     return (
       <Center h="100vh">
         <Loader size="xl" />
@@ -63,9 +106,31 @@ export default function App() {
     );
   }
 
-  const clubTheme = createClubTheme(data.club.primaryColor);
+  // Multi-club platform root: no club in URL path → show selector
+  if (registry.multiClub && !clubSlug) {
+    return (
+      <MantineProvider theme={createClubTheme()}>
+        <AuthProvider>
+          <ClubSelectorPage clubs={registry.clubs} />
+        </AuthProvider>
+      </MantineProvider>
+    );
+  }
+
+  // Club determined but data not yet loaded
+  if (!data || !clubSlug) {
+    return (
+      <Center h="100vh">
+        <Loader size="xl" />
+      </Center>
+    );
+  }
+
+  const registryEntry = registry?.clubs.find(c => c.slug === clubSlug);
+  const clubTheme = createClubTheme(registryEntry?.primaryColor ?? data.club.primaryColor);
 
   return (
+    <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
     <MantineProvider theme={clubTheme}>
     <AuthProvider>
     <SectionProvider>
@@ -140,5 +205,6 @@ export default function App() {
     </SectionProvider>
     </AuthProvider>
     </MantineProvider>
+    </ClubContext.Provider>
   );
 }

@@ -1,8 +1,9 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from "../lib/api-helpers";
 
 type NewsRow = {
   id: string;
+  clubSlug: string | null;
   title: string;
   text: string;
   body: string | null;
@@ -13,14 +14,19 @@ type NewsRow = {
   updatedAt: number;
 };
 
+const clubFilter = `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`;
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
+  const clubSlug = getClubSlug(context.request);
   const rows = await context.env.DB
     .prepare(
-      `SELECT id, title, text, body, link, linkText, sections, createdAt, updatedAt
+      `SELECT id, clubSlug, title, text, body, link, linkText, sections, createdAt, updatedAt
        FROM news_item
+       WHERE ${clubFilter}
        ORDER BY updatedAt DESC`
     )
+    .bind(clubSlug, clubSlug)
     .all<NewsRow>();
 
   const items = rows.results.map((r) => ({
@@ -42,6 +48,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
+  const clubSlug = getClubSlug(context.request);
   const body = (await context.request.json()) as Partial<{
     title: string;
     text: string;
@@ -64,10 +71,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   await context.env.DB
     .prepare(
-      `INSERT INTO news_item (id, title, text, body, link, linkText, sections, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO news_item (id, clubSlug, title, text, body, link, linkText, sections, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .bind(id, title, text, body.body ?? null, link, linkText, sections, ts, ts)
+    .bind(id, clubSlug, title, text, body.body ?? null, link, linkText, sections, ts, ts)
     .run();
 
   return json({ ok: true, id }, { status: 201 });
@@ -81,6 +88,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
+  const clubSlug = getClubSlug(context.request);
   const body = (await context.request.json()) as Partial<{
     title: string;
     text: string;
@@ -91,8 +99,8 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   }>;
 
   const existing = await context.env.DB
-    .prepare(`SELECT id FROM news_item WHERE id = ?`)
-    .bind(id)
+    .prepare(`SELECT id FROM news_item WHERE id = ? AND ${clubFilter}`)
+    .bind(id, clubSlug, clubSlug)
     .first<{ id: string }>();
   if (!existing) return json({ error: "Not found" }, { status: 404 });
 
@@ -131,11 +139,11 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
+  const clubSlug = getClubSlug(context.request);
   const res = await context.env.DB
-    .prepare(`DELETE FROM news_item WHERE id = ?`)
-    .bind(id)
+    .prepare(`DELETE FROM news_item WHERE id = ? AND ${clubFilter}`)
+    .bind(id, clubSlug, clubSlug)
     .run();
 
   return json({ ok: true, changes: res.meta.changes });
 };
-
