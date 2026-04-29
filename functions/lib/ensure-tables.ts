@@ -44,17 +44,13 @@ let ensureTablesPromise: Promise<void> | null = null;
 
 export const ensureTables = (db: D1Database): Promise<void> => {
   if (!ensureTablesPromise) {
-    ensureTablesPromise = (async () => {
-      for (const sql of TABLE_STATEMENTS) {
-        await db.exec(sql);
-      }
-      for (const sql of PITCH_SEED_STATEMENTS) {
-        await db.exec(sql);
-      }
-    })().catch((err) => {
-      ensureTablesPromise = null;
-      throw err;
-    });
+    ensureTablesPromise = db
+      .batch([...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].map(sql => db.prepare(sql)))
+      .then(() => undefined)
+      .catch((err) => {
+        ensureTablesPromise = null;
+        throw err;
+      });
   }
   return ensureTablesPromise;
 };

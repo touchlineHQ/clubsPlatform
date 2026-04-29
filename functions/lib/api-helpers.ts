@@ -1,5 +1,4 @@
 import { createAuth } from "./auth";
-import { ensureTables } from "./ensure-tables";
 
 export interface Env {
   DB: D1Database;
@@ -35,7 +34,6 @@ export function getClubSlug(request: Request): string | null {
 }
 
 export async function requireAdmin(context: EventContext<Env, string, unknown>) {
-  await ensureTables(context.env.DB);
   const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
   const session = await auth.api.getSession({ headers: context.request.headers });
@@ -68,7 +66,6 @@ export async function requireAdmin(context: EventContext<Env, string, unknown>) 
 }
 
 export async function requireManagerOrAdmin(context: EventContext<Env, string, unknown>) {
-  await ensureTables(context.env.DB);
   const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
   const session = await auth.api.getSession({ headers: context.request.headers });
@@ -99,7 +96,6 @@ export async function requireManagerOrAdmin(context: EventContext<Env, string, u
 }
 
 export async function requireAuth(context: EventContext<Env, string, unknown>) {
-  await ensureTables(context.env.DB);
   const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
   const session = await auth.api.getSession({ headers: context.request.headers });
