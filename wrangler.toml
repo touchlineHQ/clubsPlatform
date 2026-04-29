@@ -13,4 +13,4 @@ migrations_dir = "migrations"
 [vars]
 BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 # Uncomment to enable multi-club platform mode (clubs managed via DB / data/clubs/index.json)
-# MULTI_CLUB = "1"
+MULTI_CLUB = "true"
