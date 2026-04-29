@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
   Title, Text, SimpleGrid, Paper, Stack, Group, Image, Center, Loader,
-  TextInput, Badge, Button, Modal, Alert, Container,
+  TextInput, PasswordInput, Badge, Button, Modal, Alert, Container,
 } from '@mantine/core';
 import type { ClubEntry } from '../types';
 import { useAuth } from '../context/AuthContext';
+import { signIn, signOut } from '../auth-client';
 
 const DEMO_SLUG = 'demo';
 
@@ -14,9 +15,10 @@ interface Props {
 }
 
 export function ClubSelectorPage({ clubs, loading }: Props) {
-  const { isPlatformAdmin } = useAuth();
+  const { isPlatformAdmin, user, loading: authLoading, refresh } = useAuth();
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const realClubs = useMemo(() => clubs.filter(c => c.slug !== DEMO_SLUG), [clubs]);
   const demoClub = useMemo(() => clubs.find(c => c.slug === DEMO_SLUG), [clubs]);
@@ -29,6 +31,11 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
     );
   }, [realClubs, search]);
 
+  const handleSignOut = async () => {
+    await signOut();
+    await refresh();
+  };
+
   if (loading) {
     return (
       <Center h="60vh">
@@ -40,14 +47,30 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
   return (
     <Container size="lg" py="xl">
       <Stack gap="xl">
-        {/* Marketing header */}
-        <Stack gap="xs">
-          <Title order={1}>Touchline Clubs Platform</Title>
-          <Text c="dimmed" size="lg">
-            One platform powering grassroots football clubs across the country.
-            Pick a club below, try the demo, or create your own.
-          </Text>
-        </Stack>
+        {/* Page header row */}
+        <Group justify="space-between" align="flex-start">
+          <Stack gap="xs" style={{ flex: 1 }}>
+            <Title order={1}>Touchline Clubs Platform</Title>
+            <Text c="dimmed" size="lg">
+              One platform powering grassroots football clubs across the country.
+              Pick a club below, try the demo, or create your own.
+            </Text>
+          </Stack>
+
+          {/* Auth controls */}
+          {!authLoading && (
+            user ? (
+              <Group gap="xs" mt={4}>
+                <Text size="sm" c="dimmed">Signed in as {user.name}</Text>
+                <Button variant="subtle" size="xs" onClick={handleSignOut}>Sign out</Button>
+              </Group>
+            ) : (
+              <Button variant="subtle" size="sm" mt={4} onClick={() => setLoginOpen(true)}>
+                Sign in
+              </Button>
+            )
+          )}
+        </Group>
 
         {/* Top CTAs: demo + (admin) create */}
         <Group>
@@ -86,7 +109,9 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
 
           {filtered.length === 0 ? (
             <Paper p="xl" withBorder ta="center">
-              <Text c="dimmed">No clubs match "{search}"</Text>
+              <Text c="dimmed">
+                {search ? `No clubs match "${search}"` : 'No clubs have been created yet.'}
+              </Text>
             </Paper>
           ) : (
             <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
@@ -99,6 +124,7 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
       </Stack>
 
       <CreateClubModal opened={createOpen} onClose={() => setCreateOpen(false)} />
+      <LoginModal opened={loginOpen} onClose={() => setLoginOpen(false)} onSuccess={refresh} />
     </Container>
   );
 }
@@ -147,6 +173,65 @@ function ClubCard({ club, isDemo }: { club: ClubEntry; isDemo?: boolean }) {
         </Stack>
       </Group>
     </Paper>
+  );
+}
+
+interface LoginModalProps {
+  opened: boolean;
+  onClose: () => void;
+  onSuccess: () => Promise<void>;
+}
+
+function LoginModal({ opened, onClose, onSuccess }: LoginModalProps) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      const result = await signIn.email({ email, password });
+      if (result.error) {
+        setError(result.error.message ?? 'Login failed');
+      } else {
+        await onSuccess();
+        onClose();
+      }
+    } catch {
+      setError('Login failed — please try again');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Sign in" size="sm">
+      <form onSubmit={handleSubmit}>
+        <Stack>
+          <TextInput
+            label="Email"
+            type="email"
+            required
+            value={email}
+            onChange={e => setEmail(e.currentTarget.value)}
+          />
+          <PasswordInput
+            label="Password"
+            required
+            value={password}
+            onChange={e => setPassword(e.currentTarget.value)}
+          />
+          {error && <Alert color="red">{error}</Alert>}
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" loading={submitting}>Sign in</Button>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
   );
 }
 

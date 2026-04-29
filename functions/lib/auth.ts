@@ -23,6 +23,11 @@ export function createAuth(
           defaultValue: "member",
           input: false,
         },
+        clubSlug: {
+          type: "string",
+          required: false,
+          input: false,
+        },
       },
     },
     databaseHooks: {
