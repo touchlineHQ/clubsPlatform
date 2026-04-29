@@ -2,9 +2,9 @@
   "slug": "demo",
   "name": "Demo FC",
   "tagShort": "Demo FC",
-  "tagline": "Your Club, Your Story — Powered by Touchline",
+  "tagline": "Your Club, Your Story — Powered by TouchlineHQ",
   "founded": 2024,
-  "email": "hello@example.com",
+  "email": "hello@touchlinehq.co.uk",
   "address": {
     "line1": "Demo Ground",
     "line2": "Sample Lane, Anytown",
@@ -21,7 +21,7 @@
   "primaryColor": "blue",
   "clubFeedSlug": "demo-fc",
   "teamSlugPrefix": "demo-fc-",
-  "homeBanner": "This is a <strong>demo club</strong> showing what your site could look like on the Touchline Clubs Platform. Edit your <code>club.json</code> to make it your own.",
+  "homeBanner": "This is a <strong>demo club</strong> showing what your site could look like on the TouchlineHQ Clubs Platform. Edit your <code>club.json</code> to make it your own.",
   "matchdayBadges": [
     { "label": "FA Charter Standard", "color": "blue" },
     { "label": "FA Respect", "color": "green" }
@@ -34,7 +34,6 @@
     { "to": "/register", "label": "Register & Pay", "icon": "fa-credit-card" },
     { "to": "/committee", "label": "Committee & Staff", "icon": "fa-id-card" },
     { "to": "/news", "label": "Club News", "icon": "fa-newspaper" },
-    { "to": "/gallery", "label": "Gallery", "icon": "fa-images" },
     { "to": "/matchday", "label": "Matchday Info", "icon": "fa-map-marker-alt" },
     { "to": "/contact", "label": "Contact", "icon": "fa-envelope" }
   ],
@@ -42,7 +41,7 @@
     {
       "icon": "fa-futbol",
       "title": "A Fresh Start",
-      "text": "Demo FC is a template club used to showcase the Touchline Clubs Platform. Replace this with your own story."
+      "text": "Demo FC is a template club used to showcase the TouchlineHQ Clubs Platform. Replace this with your own story."
     },
     {
       "icon": "fa-users",
