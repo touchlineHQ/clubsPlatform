@@ -109,7 +109,7 @@ export default function App() {
   // Multi-club platform root: no club in URL path → show selector
   if (registry.multiClub && !clubSlug) {
     return (
-      <MantineProvider>
+      <MantineProvider theme={createClubTheme()}>
         <AuthProvider>
           <ClubSelectorPage clubs={registry.clubs} />
         </AuthProvider>

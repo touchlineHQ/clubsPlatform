@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Title, Text, SimpleGrid, Paper, Stack, Group, Image, Center, Loader,
-  TextInput, PasswordInput, Badge, Button, Modal, Alert, Container,
+  TextInput, PasswordInput, Badge, Button, Modal, Alert, Container, Box, Divider,
 } from '@mantine/core';
 import type { ClubEntry } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -44,88 +44,120 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
     );
   }
 
+  const noRealClubs = realClubs.length === 0;
+
   return (
-    <Container size="lg" py="xl">
-      <Stack gap="xl">
-        {/* Page header row */}
-        <Group justify="space-between" align="flex-start">
-          <Stack gap="xs" style={{ flex: 1 }}>
-            <Title order={1}>Touchline Clubs Platform</Title>
-            <Text c="dimmed" size="lg">
-              One platform powering grassroots football clubs across the country.
-              Pick a club below, try the demo, or create your own.
-            </Text>
-          </Stack>
+    <>
+      {/* Branded hero bar */}
+      <Box bg="var(--mantine-primary-color-filled)" py="xl" px="md">
+        <Container size="lg">
+          <Group justify="space-between" align="center">
+            <Stack gap={4}>
+              <Title order={1} c="white" style={{ lineHeight: 1.1 }}>
+                Touchline Clubs Platform
+              </Title>
+              <Text c="rgba(255,255,255,0.8)" size="md">
+                Powering grassroots football clubs across the country
+              </Text>
+            </Stack>
 
-          {/* Auth controls */}
-          {!authLoading && (
-            user ? (
-              <Group gap="xs" mt={4}>
-                <Text size="sm" c="dimmed">Signed in as {user.name}</Text>
-                <Button variant="subtle" size="xs" onClick={handleSignOut}>Sign out</Button>
-              </Group>
-            ) : (
-              <Button variant="subtle" size="sm" mt={4} onClick={() => setLoginOpen(true)}>
-                Sign in
+            {/* Auth controls */}
+            {!authLoading && (
+              user ? (
+                <Group gap="xs">
+                  <Text size="sm" c="rgba(255,255,255,0.8)">Signed in as {user.name}</Text>
+                  <Button variant="white" color="dark" size="xs" onClick={handleSignOut}>Sign out</Button>
+                </Group>
+              ) : (
+                <Button variant="white" color="dark" size="sm" onClick={() => setLoginOpen(true)}>
+                  Sign in
+                </Button>
+              )
+            )}
+          </Group>
+        </Container>
+      </Box>
+
+      <Container size="lg" py="xl">
+        <Stack gap="xl">
+          {/* CTAs */}
+          <Group>
+            {demoClub && (
+              <Button
+                component="a"
+                href={`/${demoClub.slug}/`}
+                variant="light"
+                size="md"
+              >
+                Try the demo
               </Button>
-            )
-          )}
-        </Group>
-
-        {/* Top CTAs: demo + (admin) create */}
-        <Group>
-          {demoClub && (
-            <Button
-              component="a"
-              href={`/${demoClub.slug}/`}
-              variant="light"
-              size="md"
-            >
-              View demo club
-            </Button>
-          )}
-          {isPlatformAdmin && (
-            <Button onClick={() => setCreateOpen(true)} size="md">
-              Create new club
-            </Button>
-          )}
-        </Group>
-
-        {/* Search + grid */}
-        <Stack gap="md">
-          <Group justify="space-between" align="end">
-            <Title order={3}>Browse clubs</Title>
-            <Text size="sm" c="dimmed">
-              {filtered.length} {filtered.length === 1 ? 'club' : 'clubs'}
-            </Text>
+            )}
+            {isPlatformAdmin && (
+              <Button onClick={() => setCreateOpen(true)} size="md">
+                + Create new club
+              </Button>
+            )}
           </Group>
 
-          <TextInput
-            placeholder="Search by name or slug..."
-            value={search}
-            onChange={e => setSearch(e.currentTarget.value)}
-            size="md"
-          />
+          <Divider />
 
-          {filtered.length === 0 ? (
-            <Paper p="xl" withBorder ta="center">
-              <Text c="dimmed">
-                {search ? `No clubs match "${search}"` : 'No clubs have been created yet.'}
-              </Text>
-            </Paper>
-          ) : (
-            <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
-              {filtered.map((club) => (
-                <ClubCard key={club.slug} club={club} />
-              ))}
-            </SimpleGrid>
-          )}
+          {/* Search + grid */}
+          <Stack gap="md">
+            <Group justify="space-between" align="center">
+              <Title order={3}>Clubs</Title>
+              {!noRealClubs && (
+                <Text size="sm" c="dimmed">
+                  {filtered.length} {filtered.length === 1 ? 'club' : 'clubs'}
+                </Text>
+              )}
+            </Group>
+
+            {noRealClubs ? (
+              <Paper p="xl" withBorder ta="center" bg="var(--mantine-color-gray-0)">
+                <Stack gap="sm" align="center">
+                  <Text fw={600} size="lg">No clubs yet</Text>
+                  <Text c="dimmed" size="sm" maw={400}>
+                    {user
+                      ? isPlatformAdmin
+                        ? 'Create your first club using the button above.'
+                        : 'No clubs have been added to this platform yet.'
+                      : 'Sign in as a platform admin to create and manage clubs.'}
+                  </Text>
+                  {!user && (
+                    <Button variant="light" size="sm" mt="xs" onClick={() => setLoginOpen(true)}>
+                      Sign in
+                    </Button>
+                  )}
+                </Stack>
+              </Paper>
+            ) : (
+              <>
+                <TextInput
+                  placeholder="Search by name or slug..."
+                  value={search}
+                  onChange={e => setSearch(e.currentTarget.value)}
+                  size="md"
+                />
+                {filtered.length === 0 ? (
+                  <Paper p="xl" withBorder ta="center">
+                    <Text c="dimmed">No clubs match "{search}"</Text>
+                  </Paper>
+                ) : (
+                  <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
+                    {filtered.map((club) => (
+                      <ClubCard key={club.slug} club={club} />
+                    ))}
+                  </SimpleGrid>
+                )}
+              </>
+            )}
+          </Stack>
         </Stack>
-      </Stack>
+      </Container>
 
       <CreateClubModal opened={createOpen} onClose={() => setCreateOpen(false)} />
       <LoginModal opened={loginOpen} onClose={() => setLoginOpen(false)} onSuccess={refresh} />
-    </Container>
+    </>
   );
 }
 
