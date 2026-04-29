@@ -17,9 +17,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .prepare(`SELECT id, slug, name, active, createdAt FROM club_config ORDER BY createdAt ASC`)
     .all<ClubRow>();
 
-  const clubs = rows.results
+  let clubs = rows.results
     .filter(r => r.active === 1)
     .map(r => ({ id: r.id, slug: r.slug, name: r.name }));
+
+  // The demo club is a multi-club platform feature only — single-club forks
+  // shouldn't accidentally surface it.
+  if (!multiClub) {
+    clubs = clubs.filter(c => c.slug !== 'demo');
+  }
 
   return json({ multiClub, clubs });
 };

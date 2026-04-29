@@ -39,6 +39,8 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
   return null;
 }
 
+const DEMO_SLUG = 'demo';
+
 export default function App() {
   const [registry, setRegistry] = useState<{ multiClub: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
@@ -55,6 +57,16 @@ export default function App() {
       let slug: string | null = null;
       if (reg.multiClub) {
         slug = parseClubSlugFromPath(reg.clubs);
+
+        // If no slug in the URL but only one real (non-demo) club exists,
+        // skip the selector and go straight to that club.
+        if (!slug) {
+          const realClubs = reg.clubs.filter(c => c.slug !== DEMO_SLUG);
+          if (realClubs.length === 1) {
+            window.location.replace(`/${realClubs[0].slug}/`);
+            return;
+          }
+        }
       } else {
         // Single-club: use the sole registered club
         slug = reg.clubs[0]?.slug ?? null;
@@ -98,7 +110,9 @@ export default function App() {
   if (registry.multiClub && !clubSlug) {
     return (
       <MantineProvider>
-        <ClubSelectorPage clubs={registry.clubs} />
+        <AuthProvider>
+          <ClubSelectorPage clubs={registry.clubs} />
+        </AuthProvider>
       </MantineProvider>
     );
   }

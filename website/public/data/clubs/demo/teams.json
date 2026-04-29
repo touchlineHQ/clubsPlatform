@@ -1,0 +1,48 @@
+{
+  "sections": [
+    {
+      "id": "seniors",
+      "name": "Senior Teams",
+      "subtitle": "Adult football",
+      "icon": "fa-trophy",
+      "teams": [
+        {
+          "name": "First Team",
+          "description": "Our flagship adult side, competing in regional league football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "first.team@example.com"
+        },
+        {
+          "name": "Reserves",
+          "description": "Reserve squad providing depth and development opportunities.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "reserves@example.com"
+        }
+      ]
+    },
+    {
+      "id": "youth",
+      "name": "Youth Teams",
+      "subtitle": "Junior football, ages 7–18",
+      "icon": "fa-shield-alt",
+      "teams": [
+        {
+          "name": "U18s",
+          "description": "Pathway side preparing players for senior football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "u18@example.com"
+        },
+        {
+          "name": "U14s",
+          "description": "Mid-age youth team competing in local leagues.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "u14@example.com"
+        }
+      ]
+    }
+  ]
+}

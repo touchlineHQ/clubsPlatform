@@ -1,0 +1,66 @@
+{
+  "slug": "demo",
+  "name": "Demo United FC",
+  "tagShort": "Demo United",
+  "tagline": "Your Club, Your Story — Powered by Touchline",
+  "founded": 2024,
+  "email": "hello@example.com",
+  "address": {
+    "line1": "Demo Ground",
+    "line2": "Sample Lane, Anytown",
+    "postcode": "AB1 2CD"
+  },
+  "what3words": "///example.demo.club",
+  "socials": {
+    "facebook": "#",
+    "instagram": "#",
+    "twitter": "#"
+  },
+  "colours": "Blue and white",
+  "kitDescription": "Home: blue shirts, white shorts. Away: white shirts, blue shorts.",
+  "primaryColor": "blue",
+  "homeBanner": "This is a <strong>demo club</strong> showing what your site could look like on the Touchline Clubs Platform. Edit your <code>club.json</code> to make it your own.",
+  "matchdayBadges": [
+    { "label": "FA Charter Standard", "color": "blue" },
+    { "label": "FA Respect", "color": "green" }
+  ],
+  "nav": [
+    { "to": "/", "label": "Home", "icon": "fa-home" },
+    { "to": "/about", "label": "About Us", "icon": "fa-info-circle" },
+    { "to": "/teams", "label": "Teams", "icon": "fa-users" },
+    { "to": "/fixtures", "label": "Fixtures & Results", "icon": "fa-calendar" },
+    { "to": "/register", "label": "Register & Pay", "icon": "fa-credit-card" },
+    { "to": "/committee", "label": "Committee & Staff", "icon": "fa-id-card" },
+    { "to": "/news", "label": "Club News", "icon": "fa-newspaper" },
+    { "to": "/gallery", "label": "Gallery", "icon": "fa-images" },
+    { "to": "/matchday", "label": "Matchday Info", "icon": "fa-map-marker-alt" },
+    { "to": "/contact", "label": "Contact", "icon": "fa-envelope" }
+  ],
+  "about": [
+    {
+      "icon": "fa-futbol",
+      "title": "A Fresh Start",
+      "text": "Demo United FC is a template club used to showcase the Touchline Clubs Platform. Replace this with your own story."
+    },
+    {
+      "icon": "fa-users",
+      "title": "Community First",
+      "text": "Every club has its own identity, history and ambitions. Your About page is the place to tell that story."
+    },
+    {
+      "icon": "fa-chart-line",
+      "title": "Built for Growth",
+      "text": "From a single side to dozens of teams across age groups, the platform scales with your club."
+    },
+    {
+      "icon": "fa-handshake",
+      "title": "Everyone Welcome",
+      "text": "Customise sections to reflect what makes your club unique."
+    }
+  ],
+  "history": [
+    "This is example content for the Demo United FC club. The platform lets you write your own history here, using HTML if needed.",
+    "Each club on the platform gets its own customisable JSON files for content, plus an admin UI for live editing.",
+    "Replace this text with your own history to bring the page to life."
+  ]
+}

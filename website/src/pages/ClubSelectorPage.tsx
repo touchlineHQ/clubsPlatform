@@ -1,5 +1,12 @@
-import { Title, Text, SimpleGrid, Paper, Stack, Group, Image, Center, Loader } from '@mantine/core';
+import { useMemo, useState } from 'react';
+import {
+  Title, Text, SimpleGrid, Paper, Stack, Group, Image, Center, Loader,
+  TextInput, Badge, Button, Modal, Alert, Container,
+} from '@mantine/core';
 import type { ClubEntry } from '../types';
+import { useAuth } from '../context/AuthContext';
+
+const DEMO_SLUG = 'demo';
 
 interface Props {
   clubs: ClubEntry[];
@@ -7,6 +14,21 @@ interface Props {
 }
 
 export function ClubSelectorPage({ clubs, loading }: Props) {
+  const { isPlatformAdmin } = useAuth();
+  const [search, setSearch] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const realClubs = useMemo(() => clubs.filter(c => c.slug !== DEMO_SLUG), [clubs]);
+  const demoClub = useMemo(() => clubs.find(c => c.slug === DEMO_SLUG), [clubs]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return realClubs;
+    return realClubs.filter(c =>
+      c.name.toLowerCase().includes(q) || c.slug.toLowerCase().includes(q)
+    );
+  }, [realClubs, search]);
+
   if (loading) {
     return (
       <Center h="60vh">
@@ -16,55 +38,195 @@ export function ClubSelectorPage({ clubs, loading }: Props) {
   }
 
   return (
-    <Stack gap="xl" p="xl">
-      <Stack gap="xs">
-        <Title order={1}>Clubs Platform</Title>
-        <Text c="dimmed" size="lg">Select a club to continue</Text>
+    <Container size="lg" py="xl">
+      <Stack gap="xl">
+        {/* Marketing header */}
+        <Stack gap="xs">
+          <Title order={1}>Touchline Clubs Platform</Title>
+          <Text c="dimmed" size="lg">
+            One platform powering grassroots football clubs across the country.
+            Pick a club below, try the demo, or create your own.
+          </Text>
+        </Stack>
+
+        {/* Top CTAs: demo + (admin) create */}
+        <Group>
+          {demoClub && (
+            <Button
+              component="a"
+              href={`/${demoClub.slug}/`}
+              variant="light"
+              size="md"
+            >
+              View demo club
+            </Button>
+          )}
+          {isPlatformAdmin && (
+            <Button onClick={() => setCreateOpen(true)} size="md">
+              Create new club
+            </Button>
+          )}
+        </Group>
+
+        {/* Search + grid */}
+        <Stack gap="md">
+          <Group justify="space-between" align="end">
+            <Title order={3}>Browse clubs</Title>
+            <Text size="sm" c="dimmed">
+              {filtered.length} {filtered.length === 1 ? 'club' : 'clubs'}
+            </Text>
+          </Group>
+
+          <TextInput
+            placeholder="Search by name or slug..."
+            value={search}
+            onChange={e => setSearch(e.currentTarget.value)}
+            size="md"
+          />
+
+          {filtered.length === 0 ? (
+            <Paper p="xl" withBorder ta="center">
+              <Text c="dimmed">No clubs match "{search}"</Text>
+            </Paper>
+          ) : (
+            <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
+              {filtered.map((club) => (
+                <ClubCard key={club.slug} club={club} />
+              ))}
+            </SimpleGrid>
+          )}
+        </Stack>
       </Stack>
 
-      <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
-        {clubs.map((club) => (
-          <Paper
-            key={club.slug}
-            component="a"
-            href={`/${club.slug}/`}
-            p="xl"
-            radius="md"
-            withBorder
+      <CreateClubModal opened={createOpen} onClose={() => setCreateOpen(false)} />
+    </Container>
+  );
+}
+
+function ClubCard({ club, isDemo }: { club: ClubEntry; isDemo?: boolean }) {
+  return (
+    <Paper
+      component="a"
+      href={`/${club.slug}/`}
+      p="xl"
+      radius="md"
+      withBorder
+      style={{
+        textDecoration: 'none',
+        cursor: 'pointer',
+        transition: 'box-shadow 0.15s ease',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.boxShadow = 'var(--mantine-shadow-md)')}
+      onMouseLeave={e => (e.currentTarget.style.boxShadow = '')}
+    >
+      <Group gap="md" align="center">
+        {club.badge ? (
+          <Image src={club.badge} alt={club.name} w={48} h={48} fit="contain" />
+        ) : (
+          <Center
+            w={48}
+            h={48}
             style={{
-              textDecoration: 'none',
-              cursor: 'pointer',
-              transition: 'box-shadow 0.15s ease',
+              borderRadius: '50%',
+              background: club.primaryColor ?? 'var(--mantine-primary-color-filled)',
+              color: 'white',
+              fontWeight: 700,
+              fontSize: 20,
+              flexShrink: 0,
             }}
-            onMouseEnter={e => (e.currentTarget.style.boxShadow = 'var(--mantine-shadow-md)')}
-            onMouseLeave={e => (e.currentTarget.style.boxShadow = '')}
           >
-            <Group gap="md" align="center">
-              {club.badge ? (
-                <Image src={club.badge} alt={club.name} w={48} h={48} fit="contain" />
-              ) : (
-                <Center
-                  w={48}
-                  h={48}
-                  style={{
-                    borderRadius: '50%',
-                    background: club.primaryColor ?? 'var(--mantine-primary-color-filled)',
-                    color: 'white',
-                    fontWeight: 700,
-                    fontSize: 20,
-                  }}
-                >
-                  {club.name.charAt(0)}
-                </Center>
-              )}
-              <Stack gap={2}>
-                <Text fw={600} size="lg">{club.name}</Text>
-                <Text size="sm" c="dimmed">{club.slug}</Text>
-              </Stack>
-            </Group>
-          </Paper>
-        ))}
-      </SimpleGrid>
-    </Stack>
+            {club.name.charAt(0)}
+          </Center>
+        )}
+        <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
+          <Group gap="xs" wrap="nowrap">
+            <Text fw={600} size="lg" truncate>{club.name}</Text>
+            {isDemo && <Badge variant="light" color="gray" size="sm">Demo</Badge>}
+          </Group>
+          <Text size="sm" c="dimmed">{club.slug}</Text>
+        </Stack>
+      </Group>
+    </Paper>
+  );
+}
+
+interface CreateClubModalProps {
+  opened: boolean;
+  onClose: () => void;
+}
+
+function CreateClubModal({ opened, onClose }: CreateClubModalProps) {
+  const [slug, setSlug] = useState('');
+  const [name, setName] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+
+    try {
+      const res = await fetch('/api/clubs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: slug.trim().toLowerCase(), name: name.trim() }),
+      });
+
+      const data = await res.json() as { ok?: boolean; slug?: string; error?: string };
+
+      if (!res.ok) {
+        setError(data.error ?? `Request failed: ${res.status}`);
+        return;
+      }
+
+      // Reload the page so the new club appears in the registry
+      window.location.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Create new club" size="md">
+      <form onSubmit={handleSubmit}>
+        <Stack>
+          <Text size="sm" c="dimmed">
+            A new club will be created with empty content. You can populate teams, news,
+            committee and other content from the customise screen after creation.
+          </Text>
+
+          <TextInput
+            label="Club slug"
+            description="Used in the URL (e.g. /your-club/). Lowercase letters, numbers and hyphens only."
+            placeholder="your-club"
+            value={slug}
+            onChange={e => setSlug(e.currentTarget.value)}
+            required
+          />
+
+          <TextInput
+            label="Club name"
+            placeholder="Your Club FC"
+            value={name}
+            onChange={e => setName(e.currentTarget.value)}
+            required
+          />
+
+          {error && (
+            <Alert color="red" title="Could not create club">
+              {error}
+            </Alert>
+          )}
+
+          <Group justify="flex-end">
+            <Button variant="subtle" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" loading={submitting}>Create</Button>
+          </Group>
+        </Stack>
+      </form>
+    </Modal>
   );
 }

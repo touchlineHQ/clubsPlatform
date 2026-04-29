@@ -1,0 +1,25 @@
+{
+  "items": [
+    {
+      "icon": "fa-user-plus",
+      "title": "Player Registration",
+      "description": "Sign up to play for one of our teams. Open to all ages and abilities.",
+      "link": "#",
+      "buttonText": "Register"
+    },
+    {
+      "icon": "fa-credit-card",
+      "title": "Subs & Match Fees",
+      "description": "Pay your monthly subs or match fees online — fast and secure.",
+      "link": "#",
+      "buttonText": "Pay Now"
+    },
+    {
+      "icon": "fa-handshake",
+      "title": "Become a Volunteer",
+      "description": "Coaches, committee members and helpers — every contribution counts.",
+      "link": "#",
+      "buttonText": "Get Involved"
+    }
+  ]
+}

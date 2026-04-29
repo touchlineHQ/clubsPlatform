@@ -1,3 +1,5 @@
 {
-  "clubs": []
+  "clubs": [
+    { "slug": "demo", "name": "Demo United FC" }
+  ]
 }
