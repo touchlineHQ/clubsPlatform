@@ -17,7 +17,7 @@ const ORANGE_SHADES: MantineColorsTuple = [
 export function createClubTheme(primaryColor = 'orange') {
   return createTheme({
     primaryColor,
-    colors: primaryColor === 'orange' ? { orange: ORANGE_SHADES } : undefined,
+    ...(primaryColor === 'orange' ? { colors: { orange: ORANGE_SHADES } } : {}),
     fontFamily: 'system-ui, -apple-system, sans-serif',
   });
 }
