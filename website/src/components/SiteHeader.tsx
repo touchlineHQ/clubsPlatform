@@ -1,9 +1,10 @@
 import { Burger, Group, Text, ActionIcon, Badge, Box, Button, Menu } from '@mantine/core';
-import { IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconUser, IconLogout, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconUser, IconLogout, IconSettings, IconUsers, IconArrowLeft } from '@tabler/icons-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Club, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 import { signOut } from '../auth-client';
 import { tablerIcon } from '../utils/icons';
 
@@ -20,6 +21,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
 
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, loading: authLoading } = useAuth();
+  const { isMultiClub } = useClub();
   const navigate = useNavigate();
   const activeData = activeSection !== 'all'
     ? sections.find(s => s.id === activeSection)
@@ -38,6 +40,18 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
     <Group h="100%" px="md" justify="space-between" wrap="nowrap">
       <Group wrap="nowrap">
         <Burger opened={navOpen} onClick={onNavToggle} hiddenFrom="md" size="sm" />
+        {isMultiClub && (
+          <ActionIcon
+            component="a"
+            href="/"
+            variant="subtle"
+            aria-label="All clubs"
+            title="All clubs"
+            visibleFrom="sm"
+          >
+            <IconArrowLeft size={16} />
+          </ActionIcon>
+        )}
         <Text
           component={Link}
           to="/"

@@ -191,7 +191,8 @@ export async function loadClubRegistry(): Promise<{ multiClub: boolean; clubs: C
     const res = await fetch('/api/clubs');
     if (res.ok) {
       const data = await res.json() as { multiClub: boolean; clubs: ClubEntry[] };
-      if (data.clubs?.length) return data;
+      // Always trust the API response — even empty clubs is valid in multi-club mode
+      return { multiClub: data.multiClub ?? false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through to static fallback

@@ -40,12 +40,13 @@ const PITCH_SEED_STATEMENTS = [
   `INSERT OR IGNORE INTO "pitch" ("id", "name", "formats", "active") VALUES ('pitch_8', 'Pitch 8', '["5v5"]', 1)`,
 ];
 
+const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
+
 let ensureTablesPromise: Promise<void> | null = null;
 
 export const ensureTables = (db: D1Database): Promise<void> => {
   if (!ensureTablesPromise) {
-    ensureTablesPromise = db
-      .batch([...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].map(sql => db.prepare(sql)))
+    ensureTablesPromise = db.exec(ALL_SQL)
       .then(() => undefined)
       .catch((err) => {
         ensureTablesPromise = null;
