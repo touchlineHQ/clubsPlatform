@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Tabs, Stack, Title, Text, Group, Button, Paper } from '@mantine/core';
+import { Tabs, Stack, Title, Text, Group, Button, Paper, Select, Alert } from '@mantine/core';
 import {
-  IconUsers, IconId, IconNews, IconRefresh,
+  IconUsers, IconId, IconNews, IconRefresh, IconPalette,
 } from '@tabler/icons-react';
 import type { AppData } from '../types';
 import { loadFeeds, loadClubSlugs, loadAllFeedTeams } from '../data';
@@ -10,6 +10,8 @@ import { TeamsForm } from '../components/customize/TeamsForm';
 import { CommitteeForm } from '../components/customize/CommitteeForm';
 import { NewsForm } from '../components/customize/NewsForm';
 import { SaveButton } from '../components/customize/SaveButton';
+import { COLOR_OPTIONS } from '../components/customize/iconOptions';
+import { useClub } from '../context/ClubContext';
 
 interface Props {
   originalData: AppData;
@@ -20,6 +22,69 @@ interface Props {
   previewActive: boolean;
 }
 
+interface AppearanceTabProps {
+  clubId: string;
+  currentColor: string | null;
+  onColorSaved: (color: string | null) => void;
+}
+
+function AppearanceTab({ clubId, currentColor, onColorSaved }: AppearanceTabProps) {
+  const [color, setColor] = useState<string | null>(currentColor);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const res = await fetch(`/api/clubs?id=${encodeURIComponent(clubId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryColor: color }),
+      });
+      const data = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? `Request failed: ${res.status}`);
+      } else {
+        setSaved(true);
+        onColorSaved(color);
+        setTimeout(() => setSaved(false), 3000);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const colorData = COLOR_OPTIONS.map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }));
+
+  return (
+    <Stack gap="md" maw={400}>
+      <div>
+        <Text fw={600} mb={4}>Theme colour</Text>
+        <Text size="sm" c="dimmed" mb="sm">
+          Choose the primary colour for your club's site. Changes take effect immediately after saving.
+        </Text>
+        <Select
+          data={colorData}
+          value={color}
+          onChange={setColor}
+          placeholder="Default (blue)"
+          clearable
+        />
+      </div>
+      {error && <Alert color="red">{error}</Alert>}
+      {saved && <Alert color="green">Colour saved successfully.</Alert>}
+      <Group>
+        <Button onClick={handleSave} loading={saving}>Save colour</Button>
+      </Group>
+    </Stack>
+  );
+}
+
 export function CustomizePage({
   originalData,
   editingData,
@@ -28,6 +93,9 @@ export function CustomizePage({
   onResetPreview,
   previewActive,
 }: Props) {
+  const { clubs, clubSlug } = useClub();
+  const clubEntry = clubs.find(c => c.slug === clubSlug);
+
   const [loadingFeeds, setLoadingFeeds] = useState(false);
   const [feedTeams, setFeedTeams] = useState<FeedTeamEntry[]>([]);
 
@@ -105,6 +173,7 @@ export function CustomizePage({
           <Tabs.Tab value="teams" leftSection={<IconUsers size={14} />}>Teams</Tabs.Tab>
           <Tabs.Tab value="committee" leftSection={<IconId size={14} />}>Committee</Tabs.Tab>
           <Tabs.Tab value="news" leftSection={<IconNews size={14} />}>News</Tabs.Tab>
+          <Tabs.Tab value="appearance" leftSection={<IconPalette size={14} />}>Appearance</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="teams" pt="md">
@@ -117,6 +186,22 @@ export function CustomizePage({
 
         <Tabs.Panel value="news" pt="md">
           <NewsForm news={localData.news} onChange={news => setLocalData(d => ({ ...d, news }))} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="appearance" pt="md">
+          {clubEntry ? (
+            <AppearanceTab
+              clubId={clubEntry.id}
+              currentColor={localData.club.primaryColor ?? null}
+              onColorSaved={(color) => {
+                const updated = { ...localData, club: { ...localData.club, primaryColor: color ?? undefined } };
+                onEditingChange(updated);
+                onApplyPreview(updated);
+              }}
+            />
+          ) : (
+            <Alert color="yellow">Club registry entry not found — cannot update appearance.</Alert>
+          )}
         </Tabs.Panel>
       </Tabs>
     </Stack>

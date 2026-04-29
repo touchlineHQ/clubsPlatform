@@ -6,6 +6,7 @@ type ClubRow = {
   slug: string;
   name: string;
   active: number;
+  primaryColor: string | null;
   createdAt: number;
 };
 
@@ -14,12 +15,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const multiClub = isMultiClubMode(context.env);
 
   const rows = await context.env.DB
-    .prepare(`SELECT id, slug, name, active, createdAt FROM club_config ORDER BY createdAt ASC`)
+    .prepare(`SELECT id, slug, name, active, primaryColor, createdAt FROM club_config ORDER BY createdAt ASC`)
     .all<ClubRow>();
 
   let clubs = rows.results
     .filter(r => r.active === 1)
-    .map(r => ({ id: r.id, slug: r.slug, name: r.name }));
+    .map(r => ({ id: r.id, slug: r.slug, name: r.name, primaryColor: r.primaryColor ?? null }));
 
   // The demo club is a multi-club platform feature only — single-club forks
   // shouldn't accidentally surface it.
@@ -80,7 +81,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     .first<{ id: string }>();
   if (!existing) return json({ error: "Not found" }, { status: 404 });
 
-  const body = (await context.request.json()) as Partial<{ name: string; active: boolean }>;
+  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null }>;
 
   const sets: string[] = [];
   const binds: unknown[] = [];
@@ -88,6 +89,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
   if (body.name !== undefined) set("name", body.name.trim());
   if (body.active !== undefined) set("active", body.active ? 1 : 0);
+  if (body.primaryColor !== undefined) set("primaryColor", body.primaryColor ?? null);
 
   if (!sets.length) return json({ error: "Nothing to update" }, { status: 400 });
 

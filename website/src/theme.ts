@@ -14,7 +14,7 @@ const ORANGE_SHADES: MantineColorsTuple = [
   '#8a350b',
 ];
 
-export function createClubTheme(primaryColor = 'orange') {
+export function createClubTheme(primaryColor = 'blue') {
   return createTheme({
     primaryColor,
     ...(primaryColor === 'orange' ? { colors: { orange: ORANGE_SHADES } } : {}),

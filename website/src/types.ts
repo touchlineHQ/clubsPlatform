@@ -28,10 +28,11 @@ export interface MatchdayBadge {
 }
 
 export interface ClubEntry {
+  id: string;
   slug: string;
   name: string;
   badge?: string;
-  primaryColor?: string;
+  primaryColor?: string | null;
 }
 
 export interface Club {

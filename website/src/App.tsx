@@ -126,7 +126,8 @@ export default function App() {
     );
   }
 
-  const clubTheme = createClubTheme(data.club.primaryColor);
+  const registryEntry = registry?.clubs.find(c => c.slug === clubSlug);
+  const clubTheme = createClubTheme(registryEntry?.primaryColor ?? data.club.primaryColor);
 
   return (
     <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
