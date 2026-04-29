@@ -1,4 +1,4 @@
-import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
 
 type BookingRequestRow = {
   id: string;
@@ -36,23 +36,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { session, role } = result;
   const url = new URL(context.request.url);
   const statusFilter = url.searchParams.get("status");
+  const clubSlugFilter = getClubSlug(context.request);
 
   if (role === "admin") {
-    let query = `
+    const whereClauses: string[] = [`(br.clubSlug = ? OR (? IS NULL AND br.clubSlug IS NULL))`];
+    const binds: unknown[] = [clubSlugFilter, clubSlugFilter];
+
+    if (statusFilter) {
+      whereClauses.push(`br.status = ?`);
+      binds.push(statusFilter);
+    }
+
+    const query = `
       SELECT br.id, br.userId, br.teamName, br.teamSlug, br.teamLeague, br.date, br.timeStart, br.timeEnd,
              br.format, br.notes, br.status, br.declineReason, br.createdAt, br.updatedAt,
              u.name as userName, u.email as userEmail
       FROM booking_request br
       JOIN "user" u ON br.userId = u.id
+      WHERE ${whereClauses.join(" AND ")}
+      ORDER BY br.date ASC, br.timeStart ASC
     `;
-    const binds: string[] = [];
-
-    if (statusFilter) {
-      query += ` WHERE br.status = ?`;
-      binds.push(statusFilter);
-    }
-
-    query += ` ORDER BY br.date ASC, br.timeStart ASC`;
 
     const rows = await context.env.DB
       .prepare(query)
@@ -81,22 +84,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return json({ requests });
   }
 
-  // Manager: return only their own requests
+  // Manager: return only their own requests for the current club
   const userId = (session.user as Record<string, unknown>).id as string;
-  let query = `
-    SELECT id, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd,
-           format, notes, status, declineReason, createdAt, updatedAt
-    FROM booking_request
-    WHERE userId = ?
-  `;
-  const binds: unknown[] = [userId];
+  const managerWhere: string[] = [
+    `userId = ?`,
+    `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`,
+  ];
+  const binds: unknown[] = [userId, clubSlugFilter, clubSlugFilter];
 
   if (statusFilter) {
-    query += ` AND status = ?`;
+    managerWhere.push(`status = ?`);
     binds.push(statusFilter);
   }
 
-  query += ` ORDER BY date ASC, timeStart ASC`;
+  const query = `
+    SELECT id, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd,
+           format, notes, status, declineReason, createdAt, updatedAt
+    FROM booking_request
+    WHERE ${managerWhere.join(" AND ")}
+    ORDER BY date ASC, timeStart ASC
+  `;
 
   const rows = await context.env.DB
     .prepare(query)
@@ -129,6 +136,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const { session } = result;
   const userId = (session.user as Record<string, unknown>).id as string;
+  const clubSlug = getClubSlug(context.request);
 
   const body = (await context.request.json()) as Partial<{
     teamName: string;
@@ -167,10 +175,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   await context.env.DB
     .prepare(
-      `INSERT INTO booking_request (id, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd, format, notes, status, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+      `INSERT INTO booking_request (id, clubSlug, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd, format, notes, status, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
     )
-    .bind(id, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd, format, notes, ts, ts)
+    .bind(id, clubSlug, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd, format, notes, ts, ts)
     .run();
 
   return json({ ok: true, id }, { status: 201 });
@@ -263,14 +271,19 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       return json({ error: "Booking request not found" }, { status: 404 });
     }
 
+    const reqClubSlug = await context.env.DB
+      .prepare(`SELECT clubSlug FROM booking_request WHERE id = ?`)
+      .bind(id)
+      .first<{ clubSlug: string | null }>();
+
     await context.env.DB.batch([
       context.env.DB
         .prepare(
-          `INSERT INTO booking (id, requestId, pitchId, date, timeStart, timeEnd, teamName, teamSlug, teamLeague, format, notes, createdAt)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO booking (id, clubSlug, requestId, pitchId, date, timeStart, timeEnd, teamName, teamSlug, teamLeague, format, notes, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
-          bookingId, id, pitchId, request.date, timeStart, timeEnd,
+          bookingId, reqClubSlug?.clubSlug ?? null, id, pitchId, request.date, timeStart, timeEnd,
           fullRequest.teamName, fullRequest.teamSlug, fullRequest.teamLeague, request.format, notes, ts
         ),
       context.env.DB

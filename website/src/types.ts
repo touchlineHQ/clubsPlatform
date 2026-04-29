@@ -27,7 +27,15 @@ export interface MatchdayBadge {
   color: string;
 }
 
+export interface ClubEntry {
+  slug: string;
+  name: string;
+  badge?: string;
+  primaryColor?: string;
+}
+
 export interface Club {
+  slug: string;
   name: string;
   tagShort?: string;
   tagline: string;
