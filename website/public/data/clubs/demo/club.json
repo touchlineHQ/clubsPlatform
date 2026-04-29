@@ -20,6 +20,7 @@
   "kitDescription": "Home: blue shirts, white shorts. Away: white shirts, blue shorts.",
   "primaryColor": "blue",
   "clubFeedSlug": "demo-fc",
+  "teamSlugPrefix": "demo-fc-",
   "homeBanner": "This is a <strong>demo club</strong> showing what your site could look like on the Touchline Clubs Platform. Edit your <code>club.json</code> to make it your own.",
   "matchdayBadges": [
     { "label": "FA Charter Standard", "color": "blue" },

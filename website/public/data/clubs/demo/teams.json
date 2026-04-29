@@ -11,36 +11,124 @@
           "description": "Our flagship adult side, competing in regional league football.",
           "manager": "TBC",
           "coach": "TBC",
-          "contact": "first.team@example.com"
+          "contact": "first.team@example.com",
+          "slug": "demo-fc-seniors",
+          "sidebar": true
         },
         {
           "name": "Reserves",
           "description": "Reserve squad providing depth and development opportunities.",
           "manager": "TBC",
           "coach": "TBC",
-          "contact": "reserves@example.com"
+          "contact": "reserves@example.com",
+          "slug": "demo-fc-reserves"
+        },
+        {
+          "name": "Women's Team",
+          "description": "Our women's side competing in local and regional football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "women@example.com",
+          "slug": "demo-fc-women"
         }
       ]
     },
     {
       "id": "youth",
       "name": "Youth Teams",
-      "subtitle": "Junior football, ages 7–18",
+      "subtitle": "Junior football, ages 6–18",
       "icon": "fa-shield-alt",
       "teams": [
         {
-          "name": "U18s",
-          "description": "Pathway side preparing players for senior football.",
+          "name": "U6s",
+          "description": "Introduction to football for our youngest players.",
           "manager": "TBC",
           "coach": "TBC",
-          "contact": "u18@example.com"
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U7s",
+          "description": "Mini-soccer with a focus on fun and fundamentals.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U8s",
+          "description": "Mini-soccer developing skills and teamwork.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U9s",
+          "description": "Building the foundations of the game.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U10s",
+          "description": "Moving into small-sided football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U11s",
+          "description": "Developing tactical awareness alongside technical skills.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U12s",
+          "description": "Competitive junior football in local leagues.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U13s",
+          "description": "Growing independence and game intelligence.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
         },
         {
           "name": "U14s",
           "description": "Mid-age youth team competing in local leagues.",
           "manager": "TBC",
           "coach": "TBC",
-          "contact": "u14@example.com"
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U15s",
+          "description": "Preparing for the step up to youth football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U16s",
+          "description": "High-level youth competition and player development.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U17s",
+          "description": "Elite pathway for our most advanced young players.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
+        },
+        {
+          "name": "U18s",
+          "description": "Pathway side preparing players for senior football.",
+          "manager": "TBC",
+          "coach": "TBC",
+          "contact": "youth@example.com"
         }
       ]
     }
