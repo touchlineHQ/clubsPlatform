@@ -92,6 +92,13 @@ export default function App() {
     setEditingData(updated);
   }, []);
 
+  const handlePrimaryColorSaved = useCallback((color: string | null) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, primaryColor: color } : c),
+    } : prev);
+  }, [clubSlug]);
+
   const handleResetPreview = useCallback(() => {
     setPreviewData(null);
     setEditingData(null);
@@ -183,6 +190,7 @@ export default function App() {
                   onApplyPreview={handleApplyPreview}
                   onResetPreview={handleResetPreview}
                   previewActive={previewData !== null}
+                  onPrimaryColorSaved={handlePrimaryColorSaved}
                 />
               </ProtectedRoute>
             } />

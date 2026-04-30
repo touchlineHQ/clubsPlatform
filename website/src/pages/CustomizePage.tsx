@@ -20,15 +20,15 @@ interface Props {
   onApplyPreview: (data: AppData) => void;
   onResetPreview: () => void;
   previewActive: boolean;
+  onPrimaryColorSaved?: (color: string | null) => void;
 }
 
 interface AppearanceTabProps {
-  clubId: string;
   currentColor: string | null;
   onColorSaved: (color: string | null) => void;
 }
 
-function AppearanceTab({ clubId, currentColor, onColorSaved }: AppearanceTabProps) {
+function AppearanceTab({ currentColor, onColorSaved }: AppearanceTabProps) {
   const { clubSlug } = useClub();
   const [color, setColor] = useState<string | null>(currentColor);
   const [saving, setSaving] = useState(false);
@@ -40,7 +40,7 @@ function AppearanceTab({ clubId, currentColor, onColorSaved }: AppearanceTabProp
     setError(null);
     setSaved(false);
     try {
-      const res = await fetch(`/api/clubs?id=${encodeURIComponent(clubId)}`, {
+      const res = await fetch('/api/clubs', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
         body: JSON.stringify({ primaryColor: color }),
@@ -93,6 +93,7 @@ export function CustomizePage({
   onApplyPreview,
   onResetPreview,
   previewActive,
+  onPrimaryColorSaved,
 }: Props) {
   const { clubs, clubSlug } = useClub();
   const clubEntry = clubs.find(c => c.slug === clubSlug);
@@ -192,12 +193,12 @@ export function CustomizePage({
         <Tabs.Panel value="appearance" pt="md">
           {clubEntry ? (
             <AppearanceTab
-              clubId={clubEntry.id}
               currentColor={localData.club.primaryColor ?? null}
               onColorSaved={(color) => {
                 const updated = { ...localData, club: { ...localData.club, primaryColor: color ?? undefined } };
                 onEditingChange(updated);
                 onApplyPreview(updated);
+                onPrimaryColorSaved?.(color);
               }}
             />
           ) : (
