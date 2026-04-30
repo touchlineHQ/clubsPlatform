@@ -1,4 +1,4 @@
-import { type Env, json, requireAdmin } from "../../lib/api-helpers";
+import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 
 interface UserRow {
   id: string;
@@ -12,8 +12,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
+  const clubSlug = getClubSlug(context.request);
+
   const users = await context.env.DB
-    .prepare('SELECT id, name, email, role, createdAt FROM "user" ORDER BY createdAt ASC')
+    .prepare(
+      `SELECT id, name, email, role, createdAt FROM "user"
+       WHERE (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))
+       ORDER BY createdAt ASC`
+    )
+    .bind(clubSlug, clubSlug)
     .all<UserRow>();
 
   return json({ users: users.results });

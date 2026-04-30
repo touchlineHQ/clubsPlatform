@@ -1,4 +1,4 @@
-import { type Env, json, requireAdmin } from "../../lib/api-helpers";
+import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 
 type UserTeamRoleRow = {
   id: string;
@@ -18,14 +18,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
+  const clubSlug = getClubSlug(context.request);
+
   const rows = await context.env.DB
     .prepare(`
       SELECT utr.id, utr.userId, utr.teamSlug, utr.teamLeague, utr.teamName, utr.role, utr.createdAt,
              u.name as userName, u.email as userEmail
       FROM user_team_role utr
       JOIN "user" u ON utr.userId = u.id
+      WHERE (utr.clubSlug = ? OR (? IS NULL AND utr.clubSlug IS NULL))
       ORDER BY utr.teamName ASC, u.name ASC
     `)
+    .bind(clubSlug, clubSlug)
     .all<UserTeamRoleRow>();
 
   return json({ assignments: rows.results });
@@ -34,6 +38,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
+
+  const clubSlug = getClubSlug(context.request);
 
   const body = (await context.request.json()) as Partial<{
     userId: string;
@@ -72,10 +78,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   try {
     await context.env.DB
       .prepare(
-        `INSERT INTO user_team_role (id, userId, teamSlug, teamLeague, teamName, role, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO user_team_role (id, clubSlug, userId, teamSlug, teamLeague, teamName, role, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .bind(id, userId, teamSlug, teamLeague, teamName, role, ts)
+      .bind(id, clubSlug, userId, teamSlug, teamLeague, teamName, role, ts)
       .run();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -100,13 +106,14 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
+  const clubSlug = getClubSlug(context.request);
   const url = new URL(context.request.url);
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
   const existing = await context.env.DB
-    .prepare(`SELECT id FROM user_team_role WHERE id = ?`)
-    .bind(id)
+    .prepare(`SELECT id FROM user_team_role WHERE id = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`)
+    .bind(id, clubSlug, clubSlug)
     .first<{ id: string }>();
 
   if (!existing) return json({ error: "Assignment not found" }, { status: 404 });
