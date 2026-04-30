@@ -6,7 +6,7 @@ import {
 import { IconCalendar, IconTrophy, IconAlertCircle } from '@tabler/icons-react';
 import type { ClubFeed, LiveResult, LiveFixture, TeamsData, LiveTeam } from '../types';
 import { useSection } from '../context/SectionContext';
-import { findDuplicateTeamNames, teamDisplayLabel } from '../utils/teamMatching';
+import { findDuplicateTeamNames, teamDisplayLabel, liveTeamsForSection } from '../utils/teamMatching';
 
 const FORM_GAMES = 5;
 
@@ -64,16 +64,6 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// Helper function to match age groups (similar to matchingTeamsByAge but simplified)
-function findTeamsByAgeGroup(liveTeams: LiveTeam[], teamName: string): LiveTeam[] {
-  const m = teamName.match(/Under\s+(\d+)/i);
-  if (!m) return [];
-  const age = parseInt(m[1], 10);
-  const tag = `-u${age}`.toLowerCase();
-  
-  return liveTeams.filter((t) => t.slug.includes(tag));
-}
-
 export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
   const { activeSection } = useSection();
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
@@ -86,23 +76,9 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     if (activeSection === 'all') return null;
     const section = teams.sections.find(s => s.id === activeSection);
     if (!section) return null;
-    
-    // Get all team names from liveTeams that match teams in this section
-    const teamNames = new Set<string>();
-    
-    for (const team of section.teams) {
-      if (team.slug) {
-        // 1. Match by exact slug (for senior teams with known slugs)
-        const matchingLiveTeams = liveTeams.filter(lt => lt.slug === team.slug);
-        matchingLiveTeams.forEach(lt => teamNames.add(lt.name));
-      } else {
-        // 2. Match by age group (for junior teams like "Under 6s")
-        const ageMatchedTeams = findTeamsByAgeGroup(liveTeams, team.name);
-        ageMatchedTeams.forEach(lt => teamNames.add(lt.name));
-      }
-    }
-    
-    return teamNames;
+
+    const matched = liveTeamsForSection(section, liveTeams);
+    return new Set(matched.map(lt => lt.name));
   }, [activeSection, teams, liveTeams]);
 
   const duplicateNames = useMemo(() => findDuplicateTeamNames(liveTeams), [liveTeams]);
