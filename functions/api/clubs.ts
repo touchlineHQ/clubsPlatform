@@ -71,13 +71,12 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
-  const url = new URL(context.request.url);
-  const id = url.searchParams.get("id") ?? "";
-  if (!id) return json({ error: "id query param required" }, { status: 400 });
+  const clubSlug = getClubSlug(context.request);
+  if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
   const existing = await context.env.DB
-    .prepare(`SELECT id FROM club_config WHERE id = ?`)
-    .bind(id)
+    .prepare(`SELECT id FROM club_config WHERE slug = ?`)
+    .bind(clubSlug)
     .first<{ id: string }>();
   if (!existing) return json({ error: "Not found" }, { status: 404 });
 
@@ -95,7 +94,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
   await context.env.DB
     .prepare(`UPDATE club_config SET ${sets.join(", ")} WHERE id = ?`)
-    .bind(...binds, id)
+    .bind(...binds, existing.id)
     .run();
 
   return json({ ok: true });
