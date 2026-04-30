@@ -4,6 +4,7 @@ import {
   Tabs, Paper, Group, Button,
 } from '@mantine/core';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
+import { useClub } from '../context/ClubContext';
 
 interface UserRow {
   id: string;
@@ -29,6 +30,9 @@ interface Props {
 }
 
 export function AdminUsersPage({ liveTeams }: Props) {
+  const { clubSlug } = useClub();
+  const clubHeaders = { 'X-Club-Slug': clubSlug };
+
   // Users tab state
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,7 +53,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/admin/users', { headers: clubHeaders });
       if (!res.ok) throw new Error('Failed to load users');
       const data = await res.json() as { users: UserRow[] };
       setUsers(data.users);
@@ -62,7 +66,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
 
   const fetchAssignments = async () => {
     try {
-      const res = await fetch('/api/admin/user-team-roles');
+      const res = await fetch('/api/admin/user-team-roles', { headers: clubHeaders });
       if (!res.ok) throw new Error('Failed to load assignments');
       const data = await res.json() as { assignments: TeamRoleAssignment[] };
       setAssignments(data.assignments);
@@ -75,7 +79,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
 
   const fetchDefinedTeams = async () => {
     try {
-      const res = await fetch('/api/teams');
+      const res = await fetch('/api/teams', { headers: clubHeaders });
       if (!res.ok) return;
       const data = await res.json() as {
         sections: DefinedSection[];
@@ -100,7 +104,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
     try {
       const res = await fetch('/api/admin/users', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({ userId, role: newRole }),
       });
       if (!res.ok) throw new Error('Failed to update role');
@@ -149,7 +153,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
     try {
       const res = await fetch('/api/admin/user-team-roles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({
           userId: newUserId,
           teamSlug,
@@ -181,6 +185,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
     try {
       const res = await fetch(`/api/admin/user-team-roles?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
+        headers: clubHeaders,
       });
       if (!res.ok) throw new Error('Failed to remove');
       setAssignments(prev => prev.filter(a => a.id !== id));

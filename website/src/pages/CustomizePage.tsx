@@ -29,6 +29,7 @@ interface AppearanceTabProps {
 }
 
 function AppearanceTab({ clubId, currentColor, onColorSaved }: AppearanceTabProps) {
+  const { clubSlug } = useClub();
   const [color, setColor] = useState<string | null>(currentColor);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +42,7 @@ function AppearanceTab({ clubId, currentColor, onColorSaved }: AppearanceTabProp
     try {
       const res = await fetch(`/api/clubs?id=${encodeURIComponent(clubId)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
         body: JSON.stringify({ primaryColor: color }),
       });
       const data = await res.json() as { ok?: boolean; error?: string };
