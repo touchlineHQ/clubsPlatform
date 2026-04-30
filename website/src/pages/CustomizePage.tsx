@@ -20,6 +20,7 @@ interface Props {
   onApplyPreview: (data: AppData) => void;
   onResetPreview: () => void;
   previewActive: boolean;
+  onPrimaryColorSaved?: (color: string | null) => void;
 }
 
 interface AppearanceTabProps {
@@ -93,6 +94,7 @@ export function CustomizePage({
   onApplyPreview,
   onResetPreview,
   previewActive,
+  onPrimaryColorSaved,
 }: Props) {
   const { clubs, clubSlug } = useClub();
   const clubEntry = clubs.find(c => c.slug === clubSlug);
@@ -198,6 +200,7 @@ export function CustomizePage({
                 const updated = { ...localData, club: { ...localData.club, primaryColor: color ?? undefined } };
                 onEditingChange(updated);
                 onApplyPreview(updated);
+                onPrimaryColorSaved?.(color);
               }}
             />
           ) : (
