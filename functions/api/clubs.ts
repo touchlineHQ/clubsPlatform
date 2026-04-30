@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, getClubSlug } from "../lib/api-helpers";
 
 type ClubRow = {
   id: string;
@@ -67,6 +67,13 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   if (!isMultiClubMode(context.env)) {
     return json({ error: "Multi-club mode is not enabled" }, { status: 403 });
   }
+
+  await ensureTables(context.env.DB);
+
+  // Defensive: add primaryColor column if the production DB predates migration 0009
+  try {
+    await context.env.DB.prepare(`ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`).run();
+  } catch { /* column already exists */ }
 
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
