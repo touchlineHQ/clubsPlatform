@@ -1,4 +1,4 @@
-import { Title, Text, Button, Group, SimpleGrid, Paper, ThemeIcon, Stack, Image, Badge } from '@mantine/core';
+import { Title, Text, Button, Group, SimpleGrid, Paper, ThemeIcon, Stack, Image } from '@mantine/core';
 import { Link } from 'react-router-dom';
 import type { Club } from '../types';
 import { tablerIcon } from '../utils/icons';
@@ -8,6 +8,8 @@ interface Props { club: Club }
 
 export function HomePage({ club }: Props) {
   const { user, loading, teamRoles } = useAuth();
+  const hasAbout = club.about && club.about.length > 0;
+  const hasHistory = club.history && club.history.length > 0;
 
   return (
     <Stack gap="xl">
@@ -17,12 +19,10 @@ export function HomePage({ club }: Props) {
           <Stack gap="md" style={{ flex: 1, minWidth: 200 }}>
             <div>
               <Title order={1} c="var(--mantine-primary-color-filled)">{club.name}</Title>
-              <Text size="lg" c="dimmed">{club.tagline}</Text>
+              {club.tagline && <Text size="lg" c="dimmed">{club.tagline}</Text>}
             </div>
-            {club.homeBanner ? (
+            {club.homeBanner && (
               <Text dangerouslySetInnerHTML={{ __html: club.homeBanner }} />
-            ) : (
-              <Text>{club.tagline}</Text>
             )}
             <Group>
               <Button component={Link} to="/about" variant="outline">
@@ -34,13 +34,7 @@ export function HomePage({ club }: Props) {
             </Group>
           </Stack>
           {club.badge && (
-            <Image
-              src={club.badge}
-              alt={`${club.name} Badge`}
-              w={160}
-              h={160}
-              fit="contain"
-            />
+            <Image src={club.badge} alt={`${club.name} Badge`} w={160} h={160} fit="contain" />
           )}
         </Group>
       </Paper>
@@ -54,13 +48,6 @@ export function HomePage({ club }: Props) {
               <Paper key={t.id} p="md" radius="md" withBorder>
                 <Group justify="space-between" mb={4}>
                   <Text fw={600}>{t.teamName}</Text>
-                  <Badge
-                    size="sm"
-                    color={t.role === 'manager' ? 'blue' : t.role === 'coach' ? 'teal' : 'gray'}
-                    variant="light"
-                  >
-                    {t.role}
-                  </Badge>
                 </Group>
                 <Group gap="xs" mt="sm">
                   <Button component={Link} to={`/teams/${t.teamLeague}/${t.teamSlug}`} size="xs" variant="light">
@@ -78,30 +65,34 @@ export function HomePage({ club }: Props) {
         </div>
       )}
 
-      {/* Features */}
-      <div>
-        <Title order={2} mb="md">Who We Are</Title>
-        <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
-          {club.about.map((item, i) => (
-            <Paper key={i} p="md" radius="md" withBorder>
-              <Group align="flex-start" gap="md" wrap="nowrap">
-                <ThemeIcon variant="light" size="lg" radius="md">
-                  {tablerIcon(item.icon)}
-                </ThemeIcon>
-                <div>
-                  <Text fw={600} mb={4}>{item.title}</Text>
-                  <Text size="sm" c="dimmed" dangerouslySetInnerHTML={{ __html: item.text }} />
-                </div>
-              </Group>
-            </Paper>
-          ))}
-        </SimpleGrid>
-        <Group mt="md">
-          <Button component={Link} to="/about" variant="outline">
-            Read Our Full Story
-          </Button>
-        </Group>
-      </div>
+      {/* Who We Are */}
+      {hasAbout && (
+        <div>
+          <Title order={2} mb="md">Who We Are</Title>
+          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="md">
+            {club.about.map((item, i) => (
+              <Paper key={i} p="md" radius="md" withBorder>
+                <Group align="flex-start" gap="md" wrap="nowrap">
+                  <ThemeIcon variant="light" size="lg" radius="md">
+                    {tablerIcon(item.icon)}
+                  </ThemeIcon>
+                  <div>
+                    <Text fw={600} mb={4}>{item.title}</Text>
+                    <Text size="sm" c="dimmed" dangerouslySetInnerHTML={{ __html: item.text }} />
+                  </div>
+                </Group>
+              </Paper>
+            ))}
+          </SimpleGrid>
+          {hasHistory && (
+            <Group mt="md">
+              <Button component={Link} to="/about" variant="outline">
+                Read Our Full Story
+              </Button>
+            </Group>
+          )}
+        </div>
+      )}
     </Stack>
   );
 }

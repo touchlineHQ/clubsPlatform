@@ -1,6 +1,6 @@
 import { NavLink, Stack, Text, Divider, Badge, Group, Paper, Button } from '@mantine/core';
 import { useLocation, Link } from 'react-router-dom';
-import { IconCalendar, IconClipboardList, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconCalendar, IconClipboardList, IconSettings, IconShoppingBag, IconUsers } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
@@ -58,14 +58,18 @@ interface Props {
   sections: TeamSection[];
   sidebarFeeds?: { feed: TeamFeed; label: string; sectionId: string }[];
   onNavClick: () => void;
+  pitchBookings?: boolean;
+  visibility?: Record<string, boolean>;
 }
 
-export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props) {
+export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, isManager } = useAuth();
 
-  const navItems = club.nav ?? DEFAULT_NAV;
+  const navItems = (club.nav ?? DEFAULT_NAV).filter(
+    ({ to }) => visibility === undefined || !(to in visibility) || visibility[to]
+  );
 
   const visibleFeeds = sidebarFeeds?.filter(
     f => activeSection === 'all' || f.sectionId === activeSection
@@ -73,30 +77,33 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props)
 
   return (
     <Stack gap={0} h="100%" style={{ overflowY: 'auto' }}>
-      <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pt="md" pb="xs">
-        View
-      </Text>
-      <Group gap={4} px="md" pb="sm" wrap="wrap">
-        <Button
-          size="compact-xs"
-          variant={activeSection === 'all' ? 'filled' : 'outline'}
-          onClick={() => setActiveSection('all')}
-        >
-          All
-        </Button>
-        {sections.map(s => (
-          <Button
-            key={s.id}
-            size="compact-xs"
-            variant={activeSection === s.id ? 'filled' : 'outline'}
-              onClick={() => setActiveSection(s.id)}
-          >
-            {s.name} {s.subtitle}
-          </Button>
-        ))}
-      </Group>
-
-      <Divider mx="md" mb="xs" />
+      {sections.length > 0 && (
+        <>
+          <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pt="md" pb="xs">
+            View
+          </Text>
+          <Group gap={4} px="md" pb="sm" wrap="wrap">
+            <Button
+              size="compact-xs"
+              variant={activeSection === 'all' ? 'filled' : 'outline'}
+              onClick={() => setActiveSection('all')}
+            >
+              All
+            </Button>
+            {sections.map(s => (
+              <Button
+                key={s.id}
+                size="compact-xs"
+                variant={activeSection === s.id ? 'filled' : 'outline'}
+                onClick={() => setActiveSection(s.id)}
+              >
+                {s.name}{s.subtitle ? ` ${s.subtitle}` : ''}
+              </Button>
+            ))}
+          </Group>
+          <Divider mx="md" mb="xs" />
+        </>
+      )}
 
       <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
         Menu
@@ -113,35 +120,56 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props)
           onClick={onNavClick}
         />
       ))}
-      <NavLink
-        component={Link}
-        to="/schedule"
-        label="Pitch Schedule"
-        leftSection={<IconCalendar size={16} />}
-        active={pathname === '/schedule'}
-        onClick={onNavClick}
-      />
+      {club.shopUrl && (
+        <NavLink
+          component="a"
+          href={club.shopUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          label="Club Shop"
+          leftSection={<IconShoppingBag size={16} />}
+          onClick={onNavClick}
+        />
+      )}
+      {pitchBookings && (
+        <NavLink
+          component={Link}
+          to="/schedule"
+          label="Pitch Schedule"
+          leftSection={<IconCalendar size={16} />}
+          active={pathname === '/schedule'}
+          onClick={onNavClick}
+        />
+      )}
 
       {visibleFeeds?.map(({ feed, label }) => (
         <NextTeamFixture key={label} feed={feed} label={`Next ${label} Fixture`} />
       ))}
 
-      <Divider my="sm" mx="md" />
-      <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
-        Get in Touch
-      </Text>
-      <Stack gap={4} px="md" pb="md">
-        <Text size="xs">
-          <Text component="a" href={`mailto:${club.email}`} c="var(--mantine-primary-color-filled)" size="xs">
-            {club.email}
+      {(club.email || club.address?.line1 || club.address?.line2 || club.address?.postcode) && (
+        <>
+          <Divider my="sm" mx="md" />
+          <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
+            Get in Touch
           </Text>
-        </Text>
-        <Text size="xs" c="dimmed">
-          {club.address.line1}, {club.address.line2}, {club.address.postcode}
-        </Text>
-      </Stack>
+          <Stack gap={4} px="md" pb="md">
+            {club.email && (
+              <Text size="xs">
+                <Text component="a" href={`mailto:${club.email}`} c="var(--mantine-primary-color-filled)" size="xs">
+                  {club.email}
+                </Text>
+              </Text>
+            )}
+            {[club.address?.line1, club.address?.line2, club.address?.postcode].filter(Boolean).length > 0 && (
+              <Text size="xs" c="dimmed">
+                {[club.address?.line1, club.address?.line2, club.address?.postcode].filter(Boolean).join(', ')}
+              </Text>
+            )}
+          </Stack>
+        </>
+      )}
 
-      {user && (isManager || isAdmin) && (
+      {pitchBookings && user && (isManager || isAdmin) && (
         <div style={{ marginTop: 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
@@ -174,14 +202,16 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props)
             active={pathname === '/admin/users'}
             onClick={onNavClick}
           />
-          <NavLink
-            component={Link}
-            to="/admin/bookings"
-            label="Booking Requests"
-            leftSection={<IconClipboardList size={16} />}
-            active={pathname === '/admin/bookings'}
-            onClick={onNavClick}
-          />
+          {pitchBookings && (
+            <NavLink
+              component={Link}
+              to="/admin/bookings"
+              label="Booking Requests"
+              leftSection={<IconClipboardList size={16} />}
+              active={pathname === '/admin/bookings'}
+              onClick={onNavClick}
+            />
+          )}
         </div>
       )}
     </Stack>

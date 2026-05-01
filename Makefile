@@ -2,7 +2,7 @@
 
 help:
 	@echo "Targets:"
-	@echo "  make dev              Run full stack (migrates DB + worker + UI)"
+	@echo "  make dev              Run full stack (migrates DB + Wrangler API + Vite at :$(UI_PORT))"
 	@echo "  make worker          Run wrangler API only"
 	@echo "  make worker-migrated Run worker after migrating local DB"
 	@echo "  make ui              Run Vite UI only"
@@ -23,7 +23,7 @@ UI_DIR ?= website
 UI_PORT ?= 5173
 WORKER_PORT ?= 8788
 PERSIST_DIR ?= .wrangler/state
-API_TARGET ?= https://elbantams.pages.dev
+API_TARGET ?= https://clubs.touchlinehq.co.uk
 
 install:
 	@npm install --ignore-scripts
@@ -34,7 +34,7 @@ install-ui:
 
 worker:
 	@mkdir -p "$(PERSIST_DIR)"
-	@npx wrangler pages dev \
+	@npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
 		--persist-to "$(PERSIST_DIR)"
 
@@ -47,19 +47,26 @@ ui:
 ui-remote:
 	@cd "$(UI_DIR)" && API_TARGET="$(API_TARGET)" npm run dev -- --port "$(UI_PORT)"
 
-# Runs both; access app at localhost:5173. Ctrl+C stops both.
+# Full stack: Wrangler API in background, Vite proxies /api to it.
+# Access app at http://localhost:$(UI_PORT). Ctrl+C stops both.
 dev:
-	@$(MAKE) worker-migrated &
-	@echo "Waiting for worker on port $(WORKER_PORT)..."; \
-	until nc -z localhost $(WORKER_PORT) 2>/dev/null; do sleep 0.5; done; \
-	echo "Worker ready — starting UI"; \
-	$(MAKE) ui
+	@$(MAKE) db-migrate-local
+	@mkdir -p "$(PERSIST_DIR)"; \
+	npx wrangler pages dev "$(UI_DIR)/public" \
+		--port "$(WORKER_PORT)" \
+		--persist-to "$(PERSIST_DIR)" & \
+	WRANGLER_PID=$$!; \
+	trap "kill $$WRANGLER_PID 2>/dev/null" EXIT INT TERM; \
+	echo "Waiting for Wrangler on port $(WORKER_PORT)..."; \
+	until bash -c "echo > /dev/tcp/localhost/$(WORKER_PORT)" 2>/dev/null; do sleep 0.5; done; \
+	echo "Wrangler ready — starting Vite (access app at http://localhost:$(UI_PORT))"; \
+	cd "$(UI_DIR)" && npm run dev -- --port "$(UI_PORT)"
 
 preview:
 	@npx wrangler pages dev "$(UI_DIR)/dist"
 
 db-migrate-local:
-	@npx wrangler d1 migrations apply elbantams-auth --local
+	@npx wrangler d1 migrations apply clubsplatform-auth --local
 
 db-migrate-prod:
-	@npx wrangler d1 migrations apply elbantams-auth --remote
+	@npx wrangler d1 migrations apply clubsplatform-auth --remote

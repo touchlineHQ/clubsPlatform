@@ -5,7 +5,7 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "session" ("id" TEXT PRIMARY KEY NOT NULL, "expiresAt" INTEGER NOT NULL, "token" TEXT NOT NULL UNIQUE, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, "ipAddress" TEXT, "userAgent" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS "account" ("id" TEXT PRIMARY KEY NOT NULL, "accountId" TEXT NOT NULL, "providerId" TEXT NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "accessToken" TEXT, "refreshToken" TEXT, "idToken" TEXT, "accessTokenExpiresAt" INTEGER, "refreshTokenExpiresAt" INTEGER, "scope" TEXT, "password" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "verification" ("id" TEXT PRIMARY KEY NOT NULL, "identifier" TEXT NOT NULL, "value" TEXT NOT NULL, "expiresAt" INTEGER NOT NULL, "createdAt" INTEGER, "updatedAt" INTEGER)`,
-  `CREATE TABLE IF NOT EXISTS "club_config" ("id" TEXT PRIMARY KEY NOT NULL, "slug" TEXT NOT NULL UNIQUE, "name" TEXT NOT NULL, "active" INTEGER NOT NULL DEFAULT 1, "primaryColor" TEXT, "createdAt" INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS "club_config" ("id" TEXT PRIMARY KEY NOT NULL, "slug" TEXT NOT NULL UNIQUE, "name" TEXT NOT NULL, "active" INTEGER NOT NULL DEFAULT 1, "primaryColor" TEXT, "data" TEXT, "seeded" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "news_item" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "title" TEXT NOT NULL, "text" TEXT NOT NULL, "body" TEXT, "link" TEXT NOT NULL, "linkText" TEXT NOT NULL, "sections" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_news_item_updatedAt" ON "news_item" ("updatedAt")`,
   `CREATE TABLE IF NOT EXISTS "committee_member" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "role" TEXT NOT NULL, "name" TEXT NOT NULL, "contact" TEXT NOT NULL, "sortOrder" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
@@ -15,6 +15,12 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_team_section_sortOrder" ON "team_section" ("sortOrder")`,
   `CREATE TABLE IF NOT EXISTS "team" ("id" TEXT PRIMARY KEY NOT NULL, "sectionId" TEXT NOT NULL REFERENCES "team_section"("id") ON DELETE CASCADE, "name" TEXT NOT NULL, "description" TEXT NOT NULL, "manager" TEXT NOT NULL, "coach" TEXT NOT NULL, "contact" TEXT NOT NULL, "photo" TEXT, "slug" TEXT, "sidebar" INTEGER NOT NULL DEFAULT 0, "managerLabel" TEXT, "coachLabel" TEXT, "sortOrder" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_team_sectionId_sortOrder" ON "team" ("sectionId", "sortOrder")`,
+  `CREATE TABLE IF NOT EXISTS "registration_item" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "icon" TEXT NOT NULL, "title" TEXT NOT NULL, "description" TEXT NOT NULL, "link" TEXT NOT NULL, "buttonText" TEXT NOT NULL, "sortOrder" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_registration_item_sortOrder" ON "registration_item" ("sortOrder")`,
+  `CREATE TABLE IF NOT EXISTS "gallery_item" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "src" TEXT, "caption" TEXT NOT NULL, "sortOrder" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_gallery_item_sortOrder" ON "gallery_item" ("sortOrder")`,
+  `CREATE TABLE IF NOT EXISTS "matchday_item" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "icon" TEXT NOT NULL, "title" TEXT NOT NULL, "text" TEXT NOT NULL, "sortOrder" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_matchday_item_sortOrder" ON "matchday_item" ("sortOrder")`,
   `CREATE TABLE IF NOT EXISTS "pitch" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "name" TEXT NOT NULL, "formats" TEXT NOT NULL, "description" TEXT, "active" INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS "booking_request" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "teamSlug" TEXT, "teamLeague" TEXT, "date" TEXT NOT NULL, "timeStart" TEXT NOT NULL, "timeEnd" TEXT NOT NULL, "format" TEXT NOT NULL, "notes" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "declineReason" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_booking_request_userId" ON "booking_request" ("userId")`,
@@ -41,14 +47,26 @@ const PITCH_SEED_STATEMENTS = [
   `INSERT OR IGNORE INTO "club_config" ("id", "slug", "name", "active", "createdAt") VALUES ('club_demo', 'demo', 'Demo FC', 1, unixepoch() * 1000)`,
 ];
 
+// Defensive migrations for columns added after initial deploy
+const COLUMN_MIGRATIONS = [
+  `ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`,
+  `ALTER TABLE "club_config" ADD COLUMN "data" TEXT`,
+  `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
+];
+
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
 
 let ensureTablesPromise: Promise<void> | null = null;
 
 export const ensureTables = (db: D1Database): Promise<void> => {
   if (!ensureTablesPromise) {
-    ensureTablesPromise = db.exec(ALL_SQL)
-      .then(() => undefined)
+    ensureTablesPromise = (async () => {
+      await db.exec(ALL_SQL);
+      // Run column migrations individually — each may fail if the column already exists
+      for (const sql of COLUMN_MIGRATIONS) {
+        try { await db.prepare(sql).run(); } catch { /* column already exists */ }
+      }
+    })()
       .catch((err) => {
         ensureTablesPromise = null;
         throw err;

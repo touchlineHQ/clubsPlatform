@@ -2,9 +2,11 @@ import { createAuth } from "./auth";
 
 export interface Env {
   DB: D1Database;
+  ASSETS: { fetch(req: Request | string): Promise<Response> };
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
   MULTI_CLUB?: string;
+  PITCH_BOOKINGS?: string;
 }
 
 export function json(res: unknown, init?: ResponseInit): Response {
@@ -25,6 +27,12 @@ export function randomId(prefix: string): string {
 /** Returns true when MULTI_CLUB env var is set to a truthy value. */
 export function isMultiClubMode(env: Env): boolean {
   const v = env.MULTI_CLUB;
+  return !!(v && v !== "0" && v !== "false");
+}
+
+/** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */
+export function isPitchBookingsEnabled(env: Env): boolean {
+  const v = env.PITCH_BOOKINGS;
   return !!(v && v !== "0" && v !== "false");
 }
 

@@ -1,7 +1,10 @@
 {
-  "name": "eastleakefc",
-  "version": "1.0.0",
+  "name": "clubsplatform",
+  "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, getClubSlug } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
 type ClubRow = {
   id: string;
@@ -13,6 +13,7 @@ type ClubRow = {
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
   const multiClub = isMultiClubMode(context.env);
+  const pitchBookings = isPitchBookingsEnabled(context.env);
 
   const rows = await context.env.DB
     .prepare(`SELECT id, slug, name, active, primaryColor, createdAt FROM club_config ORDER BY createdAt ASC`)
@@ -28,7 +29,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     clubs = clubs.filter(c => c.slug !== 'demo');
   }
 
-  return json({ multiClub, clubs });
+  return json({ multiClub, pitchBookings, clubs });
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {

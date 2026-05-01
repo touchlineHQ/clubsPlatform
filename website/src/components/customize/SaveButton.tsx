@@ -1,41 +1,44 @@
 import { useState } from 'react';
 import { Button, Text, Group } from '@mantine/core';
 import { IconDeviceFloppy, IconCheck, IconX } from '@tabler/icons-react';
-import type { AppData } from '../../types';
+import type { AppData, Club } from '../../types';
+import { useClub } from '../../context/ClubContext';
 
 interface Props {
   data: AppData;
+  onSaved?: (club: Club) => void;
 }
 
-const FILE_MAP: { key: keyof Pick<AppData, 'teams' | 'committee' | 'news'>; file: string; wrap?: boolean }[] = [
-  { key: 'teams', file: 'website/public/data/teams.json' },
-  { key: 'committee', file: 'website/public/data/committee.json' },
-  { key: 'news', file: 'website/public/data/news.json', wrap: true },
-];
-
-export function SaveButton({ data }: Props) {
+export function SaveButton({ data, onSaved }: Props) {
+  const { clubSlug } = useClub();
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<'success' | 'error' | null>(null);
+
+  const h = (): HeadersInit => ({ 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug });
+
+  const req = async (method: string, url: string, body: unknown) => {
+    const res = await fetch(url, { method, headers: h(), body: JSON.stringify(body) });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({})) as { error?: string };
+      throw new Error(err.error ?? `${url} failed: ${res.status}`);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
     setResult(null);
-
     try {
-      for (const { key, file, wrap } of FILE_MAP) {
-        const content = wrap ? { items: data[key] } : data[key];
-        const res = await fetch('/api/content', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file, content }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error((err as { error?: string }).error ?? `Failed to save ${file}`);
-        }
-      }
+      await Promise.all([
+        req('PATCH', '/api/club', data.club),
+        req('POST', '/api/content', { file: 'website/public/data/teams.json', content: data.teams }),
+        req('POST', '/api/content', { file: 'website/public/data/committee.json', content: data.committee }),
+        req('POST', '/api/content', { file: 'website/public/data/news.json', content: { items: data.news } }),
+        req('POST', '/api/registration', { items: data.registration }),
+        req('POST', '/api/gallery', { items: data.gallery }),
+        req('POST', '/api/matchday', { items: data.matchday }),
+      ]);
       setResult('success');
+      onSaved?.(data.club);
     } catch {
       setResult('error');
     } finally {
@@ -57,7 +60,7 @@ export function SaveButton({ data }: Props) {
       {result === 'success' && (
         <Group gap={4}>
           <IconCheck size={14} color="green" />
-          <Text size="xs" c="green">Changes committed — site will redeploy shortly</Text>
+          <Text size="xs" c="green">Changes saved successfully</Text>
         </Group>
       )}
       {result === 'error' && (

@@ -14,3 +14,5 @@ migrations_dir = "migrations"
 BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 # Uncomment to enable multi-club platform mode (clubs managed via DB / data/clubs/index.json)
 MULTI_CLUB = "true"
+# Uncomment to enable pitch booking features (pitch schedule, booking requests)
+# PITCH_BOOKINGS = "true"

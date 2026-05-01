@@ -4,14 +4,14 @@ import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
-import { createClubTheme } from './theme';
+import { createClubTheme, createLandingTheme } from './theme';
 import { AuthProvider } from './context/AuthContext';
 import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteSidebar } from './components/SiteSidebar';
-import { ClubSelectorPage } from './pages/ClubSelectorPage';
+import { LandingPage } from './pages/LandingPage';
 import { HomePage } from './pages/HomePage';
 import { AboutPage } from './pages/AboutPage';
 import { TeamsPage } from './pages/TeamsPage';
@@ -39,10 +39,8 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
   return null;
 }
 
-const DEMO_SLUG = 'demo';
-
 export default function App() {
-  const [registry, setRegistry] = useState<{ multiClub: boolean; clubs: ClubEntry[] } | null>(null);
+  const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
@@ -57,16 +55,6 @@ export default function App() {
       let slug: string | null = null;
       if (reg.multiClub) {
         slug = parseClubSlugFromPath(reg.clubs);
-
-        // If no slug in the URL but only one real (non-demo) club exists,
-        // skip the selector and go straight to that club.
-        if (!slug) {
-          const realClubs = reg.clubs.filter(c => c.slug !== DEMO_SLUG);
-          if (realClubs.length === 1) {
-            window.location.replace(`/${realClubs[0].slug}/`);
-            return;
-          }
-        }
       } else {
         // Single-club: use the sole registered club
         slug = reg.clubs[0]?.slug ?? null;
@@ -77,9 +65,9 @@ export default function App() {
 
   // Step 2: once we have a club slug, load all club data
   useEffect(() => {
-    if (!clubSlug) return;
-    loadAllData(clubSlug).then(setFetchedData);
-  }, [clubSlug]);
+    if (!clubSlug || !registry) return;
+    loadAllData(clubSlug, registry.multiClub).then(setFetchedData);
+  }, [clubSlug, registry]);
 
   const data = previewData ?? fetchedData;
 
@@ -113,12 +101,12 @@ export default function App() {
     );
   }
 
-  // Multi-club platform root: no club in URL path → show selector
+  // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
     return (
-      <MantineProvider theme={createClubTheme()}>
+      <MantineProvider theme={createLandingTheme()}>
         <AuthProvider>
-          <ClubSelectorPage clubs={registry.clubs} />
+          <LandingPage clubs={registry.clubs} />
         </AuthProvider>
       </MantineProvider>
     );
@@ -157,6 +145,17 @@ export default function App() {
             sections={data.teams.sections}
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
+            pitchBookings={registry.pitchBookings}
+            visibility={{
+              '/about':     (data.club.about?.length ?? 0) > 0 || (data.club.history?.length ?? 0) > 0,
+              '/teams':     data.teams.sections.length > 0 || data.liveTeams.length > 0,
+              '/fixtures':  data.teams.sections.length > 0 || data.liveTeams.length > 0,
+              '/register':  data.registration.length > 0,
+              '/committee': (data.committee.committee?.length ?? 0) > 0,
+              '/news':      data.news.length > 0,
+              '/gallery':   data.gallery.length > 0,
+              '/matchday':  data.matchday.length > 0,
+            }}
           />
         </AppShell.Navbar>
 

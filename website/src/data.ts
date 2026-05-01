@@ -120,6 +120,39 @@ function clubHeaders(clubSlug: string): HeadersInit {
   return { 'X-Club-Slug': clubSlug };
 }
 
+async function loadClubFromApi(clubSlug: string): Promise<Club> {
+  const res = await fetch('/api/club', { headers: clubHeaders(clubSlug) });
+  if (!res.ok) throw new Error(`Failed to load club: ${res.status}`);
+  return res.json() as Promise<Club>;
+}
+
+async function loadRegistrationFromApi(clubSlug: string): Promise<RegistrationItem[]> {
+  try {
+    const res = await fetch('/api/registration', { headers: clubHeaders(clubSlug) });
+    if (!res.ok) return [];
+    const data = await res.json() as { items: RegistrationItem[] };
+    return data.items ?? [];
+  } catch { return []; }
+}
+
+async function loadGalleryFromApi(clubSlug: string): Promise<GalleryItem[]> {
+  try {
+    const res = await fetch('/api/gallery', { headers: clubHeaders(clubSlug) });
+    if (!res.ok) return [];
+    const data = await res.json() as { items: GalleryItem[] };
+    return data.items ?? [];
+  } catch { return []; }
+}
+
+async function loadMatchdayFromApi(clubSlug: string): Promise<MatchdayItem[]> {
+  try {
+    const res = await fetch('/api/matchday', { headers: clubHeaders(clubSlug) });
+    if (!res.ok) return [];
+    const data = await res.json() as { items: MatchdayItem[] };
+    return data.items ?? [];
+  } catch { return []; }
+}
+
 async function loadNewsFromApi(clubSlug: string): Promise<NewsItem[] | null> {
   try {
     const res = await fetch('/api/news', { headers: clubHeaders(clubSlug) });
@@ -186,13 +219,12 @@ async function loadTeamsFromApi(clubSlug: string): Promise<TeamsData | null> {
  * Load the club registry: list of clubs and whether multi-club mode is active.
  * Tries GET /api/clubs first; falls back to static /data/clubs/index.json.
  */
-export async function loadClubRegistry(): Promise<{ multiClub: boolean; clubs: ClubEntry[] }> {
+export async function loadClubRegistry(): Promise<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] }> {
   try {
     const res = await fetch('/api/clubs');
     if (res.ok) {
-      const data = await res.json() as { multiClub: boolean; clubs: ClubEntry[] };
-      // Always trust the API response — even empty clubs is valid in multi-club mode
-      return { multiClub: data.multiClub ?? false, clubs: data.clubs ?? [] };
+      const data = await res.json() as { multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] };
+      return { multiClub: data.multiClub ?? false, pitchBookings: data.pitchBookings ?? false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through to static fallback
@@ -202,21 +234,49 @@ export async function loadClubRegistry(): Promise<{ multiClub: boolean; clubs: C
     const res = await fetch('/data/clubs/index.json');
     if (res.ok) {
       const data = await res.json() as { clubs: ClubEntry[] };
-      return { multiClub: false, clubs: data.clubs ?? [] };
+      return { multiClub: false, pitchBookings: false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through
   }
 
-  return { multiClub: false, clubs: [] };
+  return { multiClub: false, pitchBookings: false, clubs: [] };
 }
 
-export async function loadAllData(clubSlug: string): Promise<AppData> {
-  // Load club config first so we can derive external feed URLs from it
-  const club = await load<Club>(clubSlug, 'club.json');
+export async function loadAllData(clubSlug: string, multiClub = false): Promise<AppData> {
+  let club: Club;
+  let registration: RegistrationItem[];
+  let gallery: GalleryItem[];
+  let matchday: MatchdayItem[];
+  let teams: TeamsData;
+  let committee: CommitteeData;
+  let news: NewsItem[];
 
-  const [teamsFromApi, committeeFromApi, newsFromApi, registration, gallery, matchday] =
-    await Promise.all([
+  if (multiClub) {
+    // API-only in multi-club mode. GET /api/club triggers seeding so it must be awaited
+    // first — by the time the parallel calls below fire, static data is already in the DB.
+    club = await loadClubFromApi(clubSlug);
+
+    const [teamsFromApi, committeeFromApi, newsFromApi, reg, gal, match] = await Promise.all([
+      loadTeamsFromApi(clubSlug),
+      loadCommitteeFromApi(clubSlug),
+      loadNewsFromApi(clubSlug),
+      loadRegistrationFromApi(clubSlug),
+      loadGalleryFromApi(clubSlug),
+      loadMatchdayFromApi(clubSlug),
+    ]);
+
+    teams = teamsFromApi ?? { sections: [] };
+    committee = committeeFromApi ?? { committee: [] };
+    news = newsFromApi ?? [];
+    registration = reg;
+    gallery = gal;
+    matchday = match;
+  } else {
+    // Single-club: static files are the source of truth; API supplements news/teams/committee
+    club = await load<Club>(clubSlug, 'club.json');
+
+    const [teamsFromApi, committeeFromApi, newsFromApi, reg, gal, match] = await Promise.all([
       loadTeamsFromApi(clubSlug),
       loadCommitteeFromApi(clubSlug),
       loadNewsFromApi(clubSlug),
@@ -225,10 +285,13 @@ export async function loadAllData(clubSlug: string): Promise<AppData> {
       load<{ items: MatchdayItem[] }>(clubSlug, 'matchday.json').then(d => d.items),
     ]);
 
-  // Fall back to static JSON if the DB is empty or unavailable
-  const teams = teamsFromApi ?? await load<TeamsData>(clubSlug, 'teams.json');
-  const committee = committeeFromApi ?? await load<CommitteeData>(clubSlug, 'committee.json');
-  const news = newsFromApi ?? await load<{ items: NewsItem[] }>(clubSlug, 'news.json').then(d => d.items);
+    teams = teamsFromApi ?? await load<TeamsData>(clubSlug, 'teams.json');
+    committee = committeeFromApi ?? await load<CommitteeData>(clubSlug, 'committee.json');
+    news = newsFromApi ?? await load<{ items: NewsItem[] }>(clubSlug, 'news.json').then(d => d.items);
+    registration = reg;
+    gallery = gal;
+    matchday = match;
+  }
 
   const feeds = await loadFeeds(club, teams);
 
