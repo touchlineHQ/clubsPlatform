@@ -1,7 +1,8 @@
-import { TextInput, Textarea, Select, Stack, Group, Title, Paper, Button, Text, Switch, Divider, Accordion, Alert, Badge } from '@mantine/core';
+import { TextInput, Textarea, Select, Autocomplete, Stack, Group, Title, Paper, Button, Text, Switch, Divider, Accordion, Alert, Badge } from '@mantine/core';
 import { IconPlus, IconTrash, IconInfoCircle } from '@tabler/icons-react';
-import type { TeamsData, TeamSection, Team } from '../../types';
+import type { TeamsData, TeamSection, Team, LiveTeam } from '../../types';
 import type { FeedTeamEntry } from '../../data';
+import { liveTeamsForSection } from '../../utils/teamMatching';
 import { ICON_OPTIONS } from './iconOptions';
 
 interface Props {
@@ -11,10 +12,11 @@ interface Props {
   teamSlugPrefix?: string;
 }
 
-function TeamEditor({ team, onChange, onRemove }: {
+function TeamEditor({ team, onChange, onRemove, feedTeamSlugs }: {
   team: Team;
   onChange: (t: Team) => void;
   onRemove: () => void;
+  feedTeamSlugs?: string[];
 }) {
   const update = <K extends keyof Team>(key: K, value: Team[K]) =>
     onChange({ ...team, [key]: value });
@@ -37,12 +39,15 @@ function TeamEditor({ team, onChange, onRemove }: {
         </Group>
         <Group grow>
           <TextInput label="Contact" value={team.contact} onChange={e => update('contact', e.target.value)} />
-          <TextInput
+          <Autocomplete
             label="Feed Team Slug"
             description="For live fixtures"
+            data={feedTeamSlugs ?? []}
             value={team.slug ?? ''}
-            onChange={e => update('slug', e.target.value || undefined)}
-            placeholder="e.g. my-club-first-team"
+            onChange={v => update('slug', v || undefined)}
+            onOptionSubmit={v => update('slug', v || undefined)}
+            limit={20}
+            placeholder={feedTeamSlugs && feedTeamSlugs.length > 0 ? 'Search or type a slug...' : 'e.g. my-club-first-team'}
           />
         </Group>
         <Switch
@@ -55,10 +60,12 @@ function TeamEditor({ team, onChange, onRemove }: {
   );
 }
 
-function SectionEditor({ section, onChange, onRemove }: {
+function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFeedTeams }: {
   section: TeamSection;
   onChange: (s: TeamSection) => void;
   onRemove: () => void;
+  feedTeamSlugs?: string[];
+  matchingFeedTeams?: FeedTeamEntry[];
 }) {
   const update = <K extends keyof TeamSection>(key: K, value: TeamSection[K]) =>
     onChange({ ...section, [key]: value });
@@ -92,13 +99,40 @@ function SectionEditor({ section, onChange, onRemove }: {
         </Group>
         <TextInput label="Logo Image Path" value={section.logo ?? ''} onChange={e => update('logo', e.target.value)} />
       </Stack>
+      {matchingFeedTeams !== undefined && (() => {
+        const sectionFeedTeams = liveTeamsForSection(section, matchingFeedTeams as LiveTeam[]);
+        const seen = new Set<string>();
+        const unique = sectionFeedTeams.filter(t => {
+          const key = `${t.slug}/${t.league}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        const slugDupes = new Set(
+          unique.filter((t, _, arr) => arr.filter(u => u.slug === t.slug).length > 1).map(t => t.slug)
+        );
+        return unique.length > 0 ? (
+          <Alert icon={<IconInfoCircle size={14} />} variant="light" color="teal" p="xs" mb="xs">
+            <Text size="xs" mb={4} c="dimmed">Feed teams matched to this section:</Text>
+            <Group gap={4} wrap="wrap">
+              {unique.map(t => (
+                <Badge key={`${t.league}/${t.slug}`} variant="outline" size="sm" style={{ textTransform: 'none' }}>
+                  {t.slug}{slugDupes.has(t.slug) ? ` (${/saturday/i.test(t.league) ? 'Sat' : /sunday/i.test(t.league) ? 'Sun' : t.league})` : ''}
+                </Badge>
+              ))}
+            </Group>
+          </Alert>
+        ) : (
+          <Text size="xs" c="dimmed" mb="xs">No feed teams matched to this section yet.</Text>
+        );
+      })()}
       <Divider label="Teams" mb="sm" />
       <Accordion variant="separated">
         {section.teams.map((team, i) => (
           <Accordion.Item key={i} value={String(i)}>
             <Accordion.Control>{team.name || `Team ${i + 1}`}</Accordion.Control>
             <Accordion.Panel>
-              <TeamEditor team={team} onChange={t => updateTeam(i, t)} onRemove={() => removeTeam(i)} />
+              <TeamEditor team={team} onChange={t => updateTeam(i, t)} onRemove={() => removeTeam(i)} feedTeamSlugs={feedTeamSlugs} />
             </Accordion.Panel>
           </Accordion.Item>
         ))}
@@ -128,6 +162,9 @@ export function TeamsForm({ teams, onChange, feedTeams, teamSlugPrefix }: Props)
         .sort((a, b) => a.slug.localeCompare(b.slug) || a.league.localeCompare(b.league))
     : undefined;
 
+  // Unique slugs for the Autocomplete dropdown in each TeamEditor
+  const feedTeamSlugs = Array.from(new Set(matchingFeedTeams?.map(t => t.slug) ?? []));
+
   // Detect slugs that appear in multiple leagues (e.g. Saturday + Sunday)
   const duplicateSlugs = new Set<string>();
   if (matchingFeedTeams) {
@@ -154,7 +191,7 @@ export function TeamsForm({ teams, onChange, feedTeams, teamSlugPrefix }: Props)
         </Alert>
       )}
       {teams.sections.map((section, i) => (
-        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} />
+        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} feedTeamSlugs={feedTeamSlugs} matchingFeedTeams={matchingFeedTeams} />
       ))}
       <Button variant="light" leftSection={<IconPlus size={14} />} onClick={addSection}>Add Section</Button>
     </Stack>
