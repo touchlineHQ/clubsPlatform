@@ -2,10 +2,13 @@
   "name": "eastleakefc",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "NODE_OPTIONS=--experimental-global-webcrypto vite",
-    "build": "NODE_OPTIONS=--experimental-global-webcrypto tsc && vite build",
-    "preview": "NODE_OPTIONS=--experimental-global-webcrypto vite preview",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
     "api:gen": "openapi-typescript ../openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {

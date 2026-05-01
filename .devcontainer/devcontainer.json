@@ -1,0 +1,15 @@
+{
+  "name": "clubsPlatform",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "postCreateCommand": "npm install && cd website && npm install",
+  "forwardPorts": [5173, 8787],
+  "portsAttributes": {
+    "5173": { "label": "Vite dev server" },
+    "8787": { "label": "Wrangler preview" }
+  }
+}

@@ -2,6 +2,9 @@
   "name": "clubsPlatform",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "cd website && npm run dev",
     "build": "cd website && npm run build",
