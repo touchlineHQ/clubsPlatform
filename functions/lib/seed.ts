@@ -27,7 +27,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
     .bind(slug)
     .run();
 
-  if (!result.meta.changes === false || result.meta.changes === 0) return; // another request already seeding
+  if (result.meta.changes === 0) return; // another request already seeding
 
   const base = `${origin}/data/clubs/${slug}`;
   const ts = Date.now();

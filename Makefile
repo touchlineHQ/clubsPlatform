@@ -34,7 +34,7 @@ install-ui:
 
 worker:
 	@mkdir -p "$(PERSIST_DIR)"
-	@npx wrangler pages dev \
+	@npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
 		--persist-to "$(PERSIST_DIR)"
 
@@ -52,7 +52,7 @@ ui-remote:
 dev:
 	@$(MAKE) db-migrate-local
 	@mkdir -p "$(PERSIST_DIR)"; \
-	npx wrangler pages dev \
+	npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
 		--persist-to "$(PERSIST_DIR)" & \
 	WRANGLER_PID=$$!; \
