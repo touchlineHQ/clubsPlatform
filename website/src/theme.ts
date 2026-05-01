@@ -22,4 +22,12 @@ export function createClubTheme(primaryColor = 'blue') {
   });
 }
 
+export function createLandingTheme() {
+  return createTheme({
+    primaryColor: 'orange',
+    colors: { orange: ORANGE_SHADES },
+    fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+  });
+}
+
 export const theme = createClubTheme();

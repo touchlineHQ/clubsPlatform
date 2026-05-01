@@ -4,14 +4,14 @@ import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
-import { createClubTheme } from './theme';
+import { createClubTheme, createLandingTheme } from './theme';
 import { AuthProvider } from './context/AuthContext';
 import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteSidebar } from './components/SiteSidebar';
-import { ClubSelectorPage } from './pages/ClubSelectorPage';
+import { LandingPage } from './pages/LandingPage';
 import { HomePage } from './pages/HomePage';
 import { AboutPage } from './pages/AboutPage';
 import { TeamsPage } from './pages/TeamsPage';
@@ -113,12 +113,12 @@ export default function App() {
     );
   }
 
-  // Multi-club platform root: no club in URL path → show selector
+  // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
     return (
-      <MantineProvider theme={createClubTheme()}>
+      <MantineProvider theme={createLandingTheme()}>
         <AuthProvider>
-          <ClubSelectorPage clubs={registry.clubs} />
+          <LandingPage clubs={registry.clubs} />
         </AuthProvider>
       </MantineProvider>
     );

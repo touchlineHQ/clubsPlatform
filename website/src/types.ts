@@ -33,6 +33,7 @@ export interface ClubEntry {
   name: string;
   badge?: string;
   primaryColor?: string | null;
+  location?: string;
 }
 
 export interface Club {
