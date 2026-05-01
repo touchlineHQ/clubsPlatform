@@ -58,13 +58,20 @@ export function ClubForm({ club, onChange, clubSlugs }: Props) {
         <TextInput label="What3Words" value={club.what3words} onChange={e => update('what3words', e.target.value)} />
       </Group>
 
-      <Divider label="Socials" />
+      <Divider label="Socials & Links" />
 
       <Group grow>
         <TextInput label="Facebook URL" value={club.socials.facebook} onChange={e => update('socials', { ...club.socials, facebook: e.target.value })} />
         <TextInput label="Instagram URL" value={club.socials.instagram} onChange={e => update('socials', { ...club.socials, instagram: e.target.value })} />
         <TextInput label="Twitter / X URL" value={club.socials.twitter} onChange={e => update('socials', { ...club.socials, twitter: e.target.value })} />
       </Group>
+      <TextInput
+        label="Club Shop URL"
+        description="If set, a Shop link appears in the sidebar. Leave blank to hide."
+        placeholder="https://shop.yourclub.co.uk"
+        value={club.shopUrl ?? ''}
+        onChange={e => update('shopUrl', e.target.value || undefined)}
+      />
 
       <Divider label="Appearance" />
 

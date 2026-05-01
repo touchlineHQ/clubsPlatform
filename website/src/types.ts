@@ -53,6 +53,7 @@ export interface Club {
   clubFeedSlug?: string;
   teamSlugPrefix?: string;
   homeBanner?: string;
+  shopUrl?: string;
   groundImage?: string;
   groundImageAlt?: string;
   matchdayBadges?: MatchdayBadge[];

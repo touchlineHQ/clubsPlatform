@@ -1,6 +1,6 @@
 import { NavLink, Stack, Text, Divider, Badge, Group, Paper, Button } from '@mantine/core';
 import { useLocation, Link } from 'react-router-dom';
-import { IconCalendar, IconClipboardList, IconSettings, IconUsers } from '@tabler/icons-react';
+import { IconCalendar, IconClipboardList, IconSettings, IconShoppingBag, IconUsers } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
@@ -120,6 +120,17 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBoo
           onClick={onNavClick}
         />
       ))}
+      {club.shopUrl && (
+        <NavLink
+          component="a"
+          href={club.shopUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          label="Club Shop"
+          leftSection={<IconShoppingBag size={16} />}
+          onClick={onNavClick}
+        />
+      )}
       {pitchBookings && (
         <NavLink
           component={Link}
