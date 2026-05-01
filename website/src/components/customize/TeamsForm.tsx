@@ -5,6 +5,14 @@ import type { FeedTeamEntry } from '../../data';
 import { liveTeamsForSection } from '../../utils/teamMatching';
 import { ICON_OPTIONS } from './iconOptions';
 
+function toSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/'/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 interface Props {
   teams: TeamsData;
   onChange: (teams: TeamsData) => void;
@@ -90,10 +98,10 @@ function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFee
         <Button size="compact-xs" variant="subtle" color="red" onClick={onRemove} leftSection={<IconTrash size={12} />}>Remove Section</Button>
       </Group>
       <Stack gap="xs" mb="md">
-        <Group grow>
-          <TextInput label="ID" description="Unique identifier (e.g. seniors)" value={section.id} onChange={e => update('id', e.target.value)} />
-          <TextInput label="Name" value={section.name} onChange={e => update('name', e.target.value)} />
-        </Group>
+        <TextInput label="Name" value={section.name} onChange={e => {
+          const name = e.target.value;
+          onChange({ ...section, name, id: toSlug(name) });
+        }} />
         <Group grow>
           <TextInput label="Subtitle" description="e.g. Men's Teams" value={section.subtitle} onChange={e => update('subtitle', e.target.value)} />
           <Select label="Icon" data={ICON_OPTIONS} value={section.icon} onChange={v => update('icon', v ?? 'fa-star')} searchable />
