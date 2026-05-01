@@ -23,7 +23,7 @@ UI_DIR ?= website
 UI_PORT ?= 5173
 WORKER_PORT ?= 8788
 PERSIST_DIR ?= .wrangler/state
-API_TARGET ?= https://elbantams.pages.dev
+API_TARGET ?= https://clubs.touchlinehq.co.uk
 
 install:
 	@npm install --ignore-scripts
@@ -66,7 +66,7 @@ preview:
 	@npx wrangler pages dev "$(UI_DIR)/dist"
 
 db-migrate-local:
-	@npx wrangler d1 migrations apply elbantams-auth --local
+	@npx wrangler d1 migrations apply clubsplatform-auth --local
 
 db-migrate-prod:
-	@npx wrangler d1 migrations apply elbantams-auth --remote
+	@npx wrangler d1 migrations apply clubsplatform-auth --remote

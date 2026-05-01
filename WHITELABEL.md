@@ -6,7 +6,7 @@ This site is designed to work for **any grassroots football club**. No coding re
 
 1. **Fork** this repository on GitHub
 2. **Set up Cloudflare Pages** — connect your fork, set build command to `cd website && npm ci && npm run build`, output to `website/dist`
-3. **Create a D1 database** — `npx wrangler d1 create elbantams-auth`, add the ID to `wrangler.toml`
+3. **Create a D1 database** — `npx wrangler d1 create clubsplatform-auth`, add the ID to `wrangler.toml`
 4. **Set secrets** in Cloudflare dashboard: `BETTER_AUTH_SECRET` (random string), `GITHUB_TOKEN` (repo write access)
 5. **Push to main** — your site deploys automatically
 

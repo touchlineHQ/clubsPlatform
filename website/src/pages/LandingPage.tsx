@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import {
   Anchor, Badge, Box, Button, Container, Group, Paper,
-  SimpleGrid, Stack, Text, TextInput, PasswordInput, ThemeIcon,
+  SimpleGrid, Stack, Text, TextInput, PasswordInput,
   Title, Alert,
 } from '@mantine/core';
 import {
-  IconBallFootball, IconBrandGithub, IconCalendar, IconCheck,
-  IconChevronRight, IconEdit,
+  IconBallFootball, IconCalendar, IconCheck, IconChevronRight,
   IconExternalLink, IconLogin, IconMail, IconMapPin, IconPlus,
   IconShield, IconUsers,
 } from '@tabler/icons-react';
@@ -52,7 +51,6 @@ export function LandingPage({ clubs }: LandingPageProps) {
       <LandingHeader onLoginClick={handleLoginClick} />
       <HeroSection />
       <ClubDirectorySection clubs={clubs} />
-      <FeaturesSection />
       <GetStartedSection authTab={authTab} onTabChange={setAuthTab} />
       <ContactSection />
       <LandingFooter />
@@ -145,8 +143,9 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
               size="compact-sm"
               leftSection={<IconBallFootball size={14} />}
               onClick={e => { e.preventDefault(); scrollTo('getstarted'); }}
+              visibleFrom="xs"
             >
-              Get your club
+              Create your club
             </Button>
           </Group>
         </Group>
@@ -172,9 +171,6 @@ function HeroSection() {
           {/* Left — copy */}
           <Stack gap="xl">
             <div>
-              <Badge color="orange" variant="light" radius="xl" size="sm" mb="lg">
-                Grassroots football, online
-              </Badge>
               <Title order={1} fw={800} style={{ fontSize: '3.25rem', lineHeight: 1.08, marginBottom: 20, textWrap: 'balance' } as React.CSSProperties}>
                 Your club's{' '}
                 <span style={{ color: O5 }}>digital home,</span>{' '}
@@ -196,20 +192,23 @@ function HeroSection() {
                 onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.92)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
                 onMouseLeave={e => { e.currentTarget.style.filter = ''; e.currentTarget.style.transform = ''; }}
               >
-                Get your club online
+                Get Your Club Online
               </Button>
               <Button
+                component="a" 
+                href={`/${DEMO_SLUG}/`}
+                target="_blank"
+                rel="noopener noreferrer"
                 size="lg"
                 radius="xl"
                 variant="outline"
                 color="orange"
                 leftSection={<IconBallFootball size={18} />}
-                onClick={() => scrollTo('clubs')}
                 style={{ transition: 'background 0.15s, transform 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = O0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.transform = ''; }}
               >
-                Browse clubs
+                View Demo Club
               </Button>
             </Group>
 
@@ -347,7 +346,7 @@ function ClubDirectorySection({ clubs }: { clubs: ClubEntry[] }) {
           <div>
             <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5, marginBottom: 10 }}>Club directory</Text>
             <Title order={2} fw={800} style={{ fontSize: '2.1rem', marginBottom: 12 }}>Clubs on the platform.</Title>
-            <Text size="md" c="dimmed" maw={560}>Every club gets a fully branded site, their own subdomain, and admin access. Browse what's already live.</Text>
+            <Text size="md" c="dimmed" maw={560}>Every club gets a fully branded site, their own space, and admin access. Browse what's already live.</Text>
           </div>
           <Button color="orange" radius="xl" leftSection={<IconPlus size={14} />} onClick={() => scrollTo('getstarted')}>
             Add your club
@@ -484,76 +483,6 @@ function AddClubCard({ onClick }: { onClick: () => void }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FeaturesSection
-// ─────────────────────────────────────────────────────────────────────────────
-const FEATURES = [
-  {
-    icon: <IconUsers size={22} />,
-    title: 'Team Pages',
-    desc: 'A dedicated page for every squad — U6s through to First Team — with manager info, fixtures, and results.',
-    points: ['Coach & manager contacts', 'Subscribe to follow a team', 'FA safeguarding compliant'],
-  },
-  {
-    icon: <IconCalendar size={22} />,
-    title: 'Live Fixture Sync',
-    desc: 'Fixtures and results pulled automatically from FA Full-Time. Google Calendar and iCal integration built in.',
-    points: ['Daily automatic updates', 'Google Calendar & iCal sync', 'W/D/L form tracker'],
-  },
-  {
-    icon: <IconEdit size={22} />,
-    title: 'Easy Admin',
-    desc: 'A simple dashboard for club volunteers. Update news, manage teams, and edit club details — no code needed.',
-    points: ['JSON-driven content editing', 'Role-based access (admin / manager)', 'Mobile-friendly'],
-  },
-  {
-    icon: <IconShield size={22} />,
-    title: 'Privacy First',
-    desc: 'GDPR-compliant by design. No personal player data stored. Scores hidden for younger age groups automatically.',
-    points: ['FAN-based references only', 'No personal data stored', 'Scores hidden for U12s & under'],
-  },
-  {
-    icon: <IconBrandGithub size={22} />,
-    title: 'Open Source',
-    desc: 'Fork it, self-host it, contribute to it. No lock-in, no hidden fees, full data portability.',
-    points: ['MIT licensed on GitHub', 'Self-host on Cloudflare Pages', 'touchlineHQ managed option available'],
-  },
-];
-
-function FeaturesSection() {
-  return (
-    <Box id="features" style={{ background: DARK, padding: '80px 24px' }}>
-      <Container size="xl">
-        <div style={{ maxWidth: 560, marginBottom: 48 }}>
-          <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5, marginBottom: 10 }}>What's included</Text>
-          <Title order={2} fw={800} c="white" style={{ fontSize: '2.1rem', marginBottom: 12 }}>Everything a grassroots club needs.</Title>
-          <Text c="gray.4">Built for volunteers, not developers. No coding, no subscriptions, no lock-in.</Text>
-        </div>
-
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-          {FEATURES.map(({ icon, title, desc, points }) => (
-            <div key={title} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: '28px 24px' }}>
-              <ThemeIcon size={48} radius="lg" style={{ background: `rgba(240,120,32,0.15)`, color: O5, marginBottom: 16 }}>
-                {icon}
-              </ThemeIcon>
-              <Text fw={700} c="white" mb={8}>{title}</Text>
-              <Text size="sm" c="gray.4" lh={1.6} mb={16}>{desc}</Text>
-              <Stack gap={6}>
-                {points.map(p => (
-                  <Group key={p} gap={7} align="flex-start">
-                    <IconCheck size={12} color={G5} style={{ flexShrink: 0, marginTop: 2 }} />
-                    <Text size="xs" c="gray.5">{p}</Text>
-                  </Group>
-                ))}
-              </Stack>
-            </div>
-          ))}
-        </SimpleGrid>
-      </Container>
-    </Box>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // GetStartedSection
 // ─────────────────────────────────────────────────────────────────────────────
 interface GetStartedProps {
@@ -610,7 +539,7 @@ function GetStartedSection({ authTab, onTabChange }: GetStartedProps) {
             </Paper>
           </Stack>
 
-          {/* Right — auth card */}
+          {/* Left — auth card */}
           <AuthCard authTab={authTab} onTabChange={onTabChange} />
         </SimpleGrid>
       </Container>
@@ -809,7 +738,7 @@ function ContactSection() {
         <div style={{ background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 20, padding: 36, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}>
           <Button
             component="a"
-            href="mailto:hello@touchlinehq.co.uk"
+            href={`mailto:hello@touchlinehq.co.uk?subject=Setup%20Request`}
             size="lg"
             radius="xl"
             color="orange"
@@ -823,13 +752,6 @@ function ContactSection() {
           <Text size="sm" style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', maxWidth: 400 }}>
             We typically reply within one working day. Tell us your club name, how many teams you have, and what you're looking for.
           </Text>
-          <Group gap="xs" align="center" justify="center" wrap="nowrap">
-            <Anchor href="https://touchlinehq.co.uk" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>touchlineHQ.co.uk</Anchor>
-            <Text size="sm" style={{ color: 'rgba(255,255,255,0.2)' }}>·</Text>
-            <Anchor href="https://github.com/touchlineHQ" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>GitHub</Anchor>
-            <Text size="sm" style={{ color: 'rgba(255,255,255,0.2)' }}>·</Text>
-            <Anchor href="https://github.com/touchlineHQ/clubsPlatform" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>clubsPlatform repo</Anchor>
-          </Group>
         </div>
       </div>
     </Box>
@@ -849,9 +771,9 @@ function LandingFooter() {
         padding: '28px 24px',
       }}
     >
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         {/* Brand */}
-        <Box component="a" href="#" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+        <Box component="a" href="#" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, margin: 'auto' }}>
           <div style={{ width: 28, height: 28, borderRadius: 7, background: O5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <IconBallFootball size={14} color="#fff" />
           </div>
@@ -860,12 +782,10 @@ function LandingFooter() {
           </Text>
         </Box>
 
-        <Text size="xs" c="gray.5">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
+        <Text size="xs" c="gray.5" m="auto">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
 
-        <Group gap={16} wrap="nowrap" style={{ flexShrink: 0 }}>
+        <Group gap={16} wrap="nowrap" style={{ flexShrink: 0, margin: 'auto' }}>
           <Anchor href="https://touchlinehq.co.uk" target="_blank" size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>touchlineHQ.co.uk ↗</Anchor>
-          <Anchor href="https://github.com/touchlineHQ/clubsPlatform" target="_blank" size="xs" c="gray.5" style={{ textDecoration: 'none' }}>GitHub</Anchor>
-          <Anchor href="#" size="xs" c="gray.5" style={{ textDecoration: 'none' }}>Privacy</Anchor>
         </Group>
       </div>
     </Box>
