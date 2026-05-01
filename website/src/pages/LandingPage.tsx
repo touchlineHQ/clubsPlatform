@@ -337,6 +337,7 @@ function HeroSection() {
 // ClubDirectorySection
 // ─────────────────────────────────────────────────────────────────────────────
 function ClubDirectorySection({ clubs }: { clubs: ClubEntry[] }) {
+  const demoClub = clubs.find(c => c.slug === DEMO_SLUG);
   const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG);
 
   return (
@@ -354,6 +355,17 @@ function ClubDirectorySection({ clubs }: { clubs: ClubEntry[] }) {
         </Group>
 
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+          {demoClub && (
+            <ClubCard
+              name={demoClub.name}
+              location="Demo Town, Demo County"
+              sections={['Seniors', 'Juniors', 'Women']}
+              badgeBg={O1}
+              badgeEmoji="⚽"
+              isDemo
+              href={`/${DEMO_SLUG}/`}
+            />
+          )}
           {realClubs.map(club => (
             <ClubCard
               key={club.slug}
@@ -380,11 +392,12 @@ interface ClubCardProps {
   sections: string[];
   badgeBg: string;
   badgeEmoji: string;
+  isDemo?: boolean;
   href: string;
   onClick?: () => void;
 }
 
-function ClubCard({ name, location, sections, badgeBg, badgeEmoji, href, onClick }: ClubCardProps) {
+function ClubCard({ name, location, sections, badgeBg, badgeEmoji, isDemo, href, onClick }: ClubCardProps) {
   const [hovered, setHovered] = useState(false);
   return (
     <Box
@@ -393,7 +406,7 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, href, onClick
       onClick={onClick ? (e: React.MouseEvent) => { e.preventDefault(); onClick(); } : undefined}
       style={{
         display: 'block', textDecoration: 'none', color: 'inherit',
-        border: '1px solid var(--mantine-color-gray-3)',
+        border: `${isDemo ? 2 : 1}px solid ${isDemo ? O5 : 'var(--mantine-color-gray-3)'}`,
         borderRadius: 16, overflow: 'hidden',
         boxShadow: hovered ? '0 10px 15px -3px rgba(0,0,0,0.1)' : 'none',
         transform: hovered ? 'translateY(-3px)' : 'none',
@@ -407,7 +420,7 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, href, onClick
       <div style={{
         padding: '20px 20px 16px',
         borderBottom: '1px solid var(--mantine-color-gray-2)',
-        background: '#fff',
+        background: isDemo ? `linear-gradient(135deg, ${O0} 0%, #fff 100%)` : '#fff',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
       }}>
         <Group gap={12} align="flex-start">
@@ -415,7 +428,10 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, href, onClick
             {badgeEmoji}
           </div>
           <div>
-            <Text fw={700} size="md" mb={3} style={{ color: 'var(--mantine-color-gray-9)' }}>{name}</Text>
+            <Group gap={7} mb={3} align="center">
+              <Text fw={700} size="md" style={{ color: 'var(--mantine-color-gray-9)' }}>{name}</Text>
+              {isDemo && <Badge size="xs" color="orange" variant="light" style={{ fontSize: '0.65rem', padding: '2px 8px' }}>Demo</Badge>}
+            </Group>
             {location && (
               <Text size="xs" c="gray.5" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <IconMapPin size={11} />
