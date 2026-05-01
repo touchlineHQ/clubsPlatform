@@ -6,7 +6,7 @@ import {
 } from '@mantine/core';
 import {
   IconBallFootball, IconBrandGithub, IconCalendar, IconCheck,
-  IconChevronRight, IconCreditCard, IconDeviceDesktop, IconEdit,
+  IconChevronRight, IconEdit,
   IconExternalLink, IconLogin, IconMail, IconMapPin, IconPlus,
   IconShield, IconUsers,
 } from '@tabler/icons-react';
@@ -51,7 +51,6 @@ export function LandingPage({ clubs }: LandingPageProps) {
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
       <LandingHeader onLoginClick={handleLoginClick} />
       <HeroSection />
-      <DemoClubSection />
       <ClubDirectorySection clubs={clubs} />
       <FeaturesSection />
       <GetStartedSection authTab={authTab} onTabChange={setAuthTab} />
@@ -88,9 +87,8 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
           </Box>
 
           {/* Centre nav links — hidden on mobile */}
-          <Group gap={2} style={{ flex: 1 }} visibleFrom="md">
+          <Group gap={2} wrap="nowrap" style={{ flex: 1 }} visibleFrom="md">
             {[
-              { label: 'Demo Club', icon: <IconDeviceDesktop size={14} />, href: '#demo' },
               { label: 'Directory', icon: <IconBallFootball size={14} />, href: '#clubs' },
               { label: 'Features', icon: <IconShield size={14} />, href: '#features' },
               { label: 'Get Started', icon: <IconUsers size={14} />, href: '#getstarted' },
@@ -183,7 +181,7 @@ function HeroSection() {
                 ready in minutes.
               </Title>
               <Text size="xl" c="dimmed" maw={480} lh={1.65}>
-                A fully branded club website with live fixtures, team pages, pitch bookings, and a built-in admin — powered by the FA Full-Time feed.
+                A fully branded club website with live fixtures, team pages, news, and a built-in admin — powered by the FA Full-Time feed.
               </Text>
             </div>
 
@@ -192,33 +190,32 @@ function HeroSection() {
                 size="lg"
                 radius="xl"
                 color="orange"
-                leftSection={<IconDeviceDesktop size={18} />}
-                onClick={() => scrollTo('demo')}
+                leftSection={<IconUsers size={18} />}
+                onClick={() => scrollTo('getstarted')}
                 style={{ transition: 'filter 0.15s, transform 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.92)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
                 onMouseLeave={e => { e.currentTarget.style.filter = ''; e.currentTarget.style.transform = ''; }}
               >
-                See a live demo club
+                Get your club online
               </Button>
               <Button
                 size="lg"
                 radius="xl"
                 variant="outline"
                 color="orange"
-                leftSection={<IconUsers size={18} />}
-                onClick={() => scrollTo('getstarted')}
+                leftSection={<IconBallFootball size={18} />}
+                onClick={() => scrollTo('clubs')}
                 style={{ transition: 'background 0.15s, transform 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = O0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
                 onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.transform = ''; }}
               >
-                Create your club
+                Browse clubs
               </Button>
             </Group>
 
             <Group gap="xl" mt="xs">
               {[
                 { num: 'Live', lbl: 'FA fixture feed' },
-                { num: 'GDPR', lbl: 'Compliant' },
                 { num: 'Free', lbl: 'Open source' },
                 { num: '10 min', lbl: 'To go live' },
               ].map(({ num, lbl }) => (
@@ -296,8 +293,8 @@ function HeroSection() {
 
                 <Box
                   component="a"
-                  href="#demo"
-                  onClick={e => { e.preventDefault(); scrollTo('demo'); }}
+                  href="#clubs"
+                  onClick={e => { e.preventDefault(); scrollTo('clubs'); }}
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     padding: 10, background: O0, borderRadius: 10,
@@ -307,7 +304,7 @@ function HeroSection() {
                   onMouseEnter={e => (e.currentTarget.style.background = O1)}
                   onMouseLeave={e => (e.currentTarget.style.background = O0)}
                 >
-                  View full site
+                  Browse all clubs
                   <IconChevronRight size={14} />
                 </Box>
               </Box>
@@ -337,172 +334,9 @@ function HeroSection() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DemoClubSection
-// ─────────────────────────────────────────────────────────────────────────────
-function DemoClubSection() {
-  return (
-    <Box
-      id="demo"
-      style={{
-        background: 'var(--mantine-color-gray-0)',
-        borderTop: '1px solid var(--mantine-color-gray-2)',
-        borderBottom: '1px solid var(--mantine-color-gray-2)',
-        padding: '80px 24px',
-      }}
-    >
-      <Container size="xl">
-        <Group justify="space-between" align="flex-end" wrap="wrap" gap="md" mb={48}>
-          <div>
-            <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5, marginBottom: 10 }}>Live demo club</Text>
-            <Title order={2} fw={800} style={{ fontSize: '2.1rem', marginBottom: 12 }}>See it in the wild.</Title>
-            <Text size="md" c="dimmed" maw={560}>Demo FC is a real demo grassroots club using clubsPlatform. Browse their live site to see what's possible.</Text>
-          </div>
-          <Badge color="orange" variant="light" radius="xl" size="lg" style={{ flexShrink: 0 }}>Demo Club</Badge>
-        </Group>
-
-        <SimpleGrid cols={{ base: 1, md: 2 }} spacing={56} style={{ alignItems: 'center' }}>
-          {/* Left — club info */}
-          <Stack gap="xl">
-            <div>
-              <Text fw={800} style={{ fontSize: '2rem', color: O5, marginBottom: 4 }}>Demo FC</Text>
-              <Text c="gray.6">Your demo grassroots club site</Text>
-            </div>
-
-            <Group gap={8} wrap="wrap">
-              {[
-                { icon: <IconShield size={13} color={O5} />, label: 'Seniors — 1st & Reserves' },
-                { icon: <span style={{ color: '#db2777', fontSize: 13 }}>♥</span>, label: "Women's Team" },
-                { icon: <span style={{ color: '#f59e0b', fontSize: 13 }}>★</span>, label: 'Juniors — U7 to U18' },
-              ].map(({ icon, label }) => (
-                <Paper key={label} withBorder radius="xl" style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {icon}
-                  <Text size="sm" fw={600} c="gray.7">{label}</Text>
-                </Paper>
-              ))}
-            </Group>
-
-            <SimpleGrid cols={2} spacing="sm">
-              {[
-                { label: 'Colours', val: 'Orange, white & black' },
-                { label: 'Ground', val: 'Demo Ground' },
-                { label: 'Teams', val: '15 squads across 3 sections' },
-                { label: 'Accreditations', val: 'FA Charter Standard · FA Respect' },
-              ].map(({ label, val }) => (
-                <Paper key={label} withBorder radius="md" p="md">
-                  <Text size="xs" fw={600} c="gray.5" tt="uppercase" style={{ letterSpacing: '0.05em', marginBottom: 4 }}>{label}</Text>
-                  <Text size="sm" fw={600}>{val}</Text>
-                </Paper>
-              ))}
-            </SimpleGrid>
-
-            <Group gap={10} wrap="wrap">
-              <Button
-                component="a"
-                href={`/demo/`}
-                color="orange"
-                radius="xl"
-                leftSection={<IconDeviceDesktop size={15} />}
-                style={{ transition: 'filter 0.15s' }}
-                onMouseEnter={e => (e.currentTarget.style.filter = 'brightness(0.92)')}
-                onMouseLeave={e => (e.currentTarget.style.filter = '')}
-              >
-                Visit Demo FC site
-              </Button>
-              <Button
-                variant="outline"
-                color="orange"
-                radius="xl"
-                onClick={() => scrollTo('getstarted')}
-                style={{ transition: 'background 0.15s' }}
-                onMouseEnter={e => (e.currentTarget.style.background = O0)}
-                onMouseLeave={e => (e.currentTarget.style.background = '')}
-              >
-                Get a site like this
-              </Button>
-            </Group>
-
-            <Group gap={8} wrap="wrap">
-              <Badge color="orange" variant="light" radius="xl">FA Charter Standard</Badge>
-              <Badge color="blue" variant="light" radius="xl">FA Respect</Badge>
-              <Badge style={{ background: '#fdf2f8', color: '#9d174d', border: 'none' }} radius="xl">Proud For All</Badge>
-            </Group>
-          </Stack>
-
-          {/* Right — fixture screens */}
-          <Stack gap={10}>
-            {/* Screen 1 — Fixtures */}
-            <Paper withBorder radius="lg" style={{ overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-              <div style={{ background: DARK, padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text size="sm" fw={800} c="white">Demo FC · Fixtures &amp; Results</Text>
-                <Badge size="xs" color="orange" variant="light" style={{ fontSize: '0.65rem' }}>Notts Alliance</Badge>
-              </div>
-              <div style={{ display: 'flex', gap: 16, padding: '0 16px', borderBottom: '1px solid var(--mantine-color-gray-2)' }}>
-                {['Fixtures (5)', 'Results (14)'].map((tab, i) => (
-                  <Text
-                    key={tab}
-                    size="sm"
-                    fw={600}
-                    py={10}
-                    style={{ color: i === 0 ? '#fff' : 'rgba(255,255,255,0.4)', borderBottom: i === 0 ? `2px solid ${O5}` : '2px solid transparent', background: DARK }}
-                  >
-                    {tab}
-                  </Text>
-                ))}
-              </div>
-              <Box p="sm" style={{ background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {[
-                  { home: 'Demo FC 1st', away: 'Keyworth United' },
-                  { home: 'Radcliffe Olympic', away: 'Demo FC 1st' },
-                ].map(({ home, away }) => (
-                  <div key={home + away} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8, padding: '8px 12px', border: '1px solid var(--mantine-color-gray-2)', borderRadius: 8 }}>
-                    <Text size="xs" fw={600} c="gray.8" ta="right">{home}</Text>
-                    <Text size="xs" c="gray.5">vs</Text>
-                    <Text size="xs" fw={600} c="gray.8">{away}</Text>
-                  </div>
-                ))}
-              </Box>
-            </Paper>
-
-            {/* Screen 2 — Results */}
-            <Paper withBorder radius="lg" style={{ overflow: 'hidden', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}>
-              <div style={{ background: DARK, padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text size="sm" fw={800} c="white">Results — Season so far</Text>
-                <Group gap={4} align="center">
-                  <Text size="xs" c="rgba(255,255,255,0.5)">Form:</Text>
-                  {[
-                    { r: 'W', bg: '#16a34a' }, { r: 'W', bg: '#16a34a' }, { r: 'D', bg: '#ca8a04' },
-                    { r: 'L', bg: '#dc2626' }, { r: 'W', bg: '#16a34a' },
-                  ].map(({ r, bg }, i) => (
-                    <div key={i} style={{ background: bg, color: '#fff', borderRadius: 4, padding: '2px 5px', fontSize: '0.65rem', fontWeight: 700 }}>{r}</div>
-                  ))}
-                </Group>
-              </div>
-              <Box p="sm" style={{ background: '#fff', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {[
-                  { home: 'Demo FC 1st', score: '2 – 0', away: 'Keyworth United' },
-                  { home: 'Radcliffe Olympic', score: '1 – 1', away: 'Demo FC 1st' },
-                  { home: 'Demo FC 1st', score: '3 – 2', away: 'Awsworth Villa' },
-                ].map(({ home, score, away }) => (
-                  <div key={home + away} style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8, padding: '8px 12px', border: '1px solid var(--mantine-color-gray-2)', borderRadius: 8 }}>
-                    <Text size="xs" fw={600} c="gray.8" ta="right">{home}</Text>
-                    <Text size="sm" fw={800}>{score}</Text>
-                    <Text size="xs" fw={600} c="gray.8">{away}</Text>
-                  </div>
-                ))}
-              </Box>
-            </Paper>
-          </Stack>
-        </SimpleGrid>
-      </Container>
-    </Box>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ClubDirectorySection
 // ─────────────────────────────────────────────────────────────────────────────
 function ClubDirectorySection({ clubs }: { clubs: ClubEntry[] }) {
-  const demoClub = clubs.find(c => c.slug === DEMO_SLUG);
   const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG);
 
   return (
@@ -520,21 +354,6 @@ function ClubDirectorySection({ clubs }: { clubs: ClubEntry[] }) {
         </Group>
 
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
-          {/* Demo club — highlighted */}
-          {demoClub && (
-            <ClubCard
-              name={demoClub.name}
-              location="Your Town, Your County"
-              sections={['Seniors', 'Juniors', 'Women']}
-              badgeBg={O1}
-              badgeEmoji="⚽"
-              isDemo
-              href="#demo"
-              onClick={() => scrollTo('demo')}
-            />
-          )}
-
-          {/* Real clubs */}
           {realClubs.map(club => (
             <ClubCard
               key={club.slug}
@@ -561,12 +380,11 @@ interface ClubCardProps {
   sections: string[];
   badgeBg: string;
   badgeEmoji: string;
-  isDemo?: boolean;
   href: string;
   onClick?: () => void;
 }
 
-function ClubCard({ name, location, sections, badgeBg, badgeEmoji, isDemo, href, onClick }: ClubCardProps) {
+function ClubCard({ name, location, sections, badgeBg, badgeEmoji, href, onClick }: ClubCardProps) {
   const [hovered, setHovered] = useState(false);
   return (
     <Box
@@ -575,7 +393,7 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, isDemo, href,
       onClick={onClick ? (e: React.MouseEvent) => { e.preventDefault(); onClick(); } : undefined}
       style={{
         display: 'block', textDecoration: 'none', color: 'inherit',
-        border: `${isDemo ? 2 : 1}px solid ${isDemo ? O5 : 'var(--mantine-color-gray-3)'}`,
+        border: '1px solid var(--mantine-color-gray-3)',
         borderRadius: 16, overflow: 'hidden',
         boxShadow: hovered ? '0 10px 15px -3px rgba(0,0,0,0.1)' : 'none',
         transform: hovered ? 'translateY(-3px)' : 'none',
@@ -589,7 +407,7 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, isDemo, href,
       <div style={{
         padding: '20px 20px 16px',
         borderBottom: '1px solid var(--mantine-color-gray-2)',
-        background: isDemo ? `linear-gradient(135deg, ${O0} 0%, #fff 100%)` : '#fff',
+        background: '#fff',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
       }}>
         <Group gap={12} align="flex-start">
@@ -597,10 +415,7 @@ function ClubCard({ name, location, sections, badgeBg, badgeEmoji, isDemo, href,
             {badgeEmoji}
           </div>
           <div>
-            <Group gap={7} mb={3} align="center">
-              <Text fw={700} size="md" style={{ color: 'var(--mantine-color-gray-9)' }}>{name}</Text>
-              {isDemo && <Badge size="xs" color="orange" variant="light" style={{ fontSize: '0.65rem', padding: '2px 8px' }}>Demo</Badge>}
-            </Group>
+            <Text fw={700} size="md" mb={3} style={{ color: 'var(--mantine-color-gray-9)' }}>{name}</Text>
             {location && (
               <Text size="xs" c="gray.5" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                 <IconMapPin size={11} />
@@ -681,12 +496,6 @@ const FEATURES = [
     points: ['FAN-based references only', 'No personal data stored', 'Scores hidden for U12s & under'],
   },
   {
-    icon: <IconCreditCard size={22} />,
-    title: 'Pitch Bookings',
-    desc: 'Managers request pitch slots. Admins approve via a simple dashboard. No more group chats.',
-    points: ['Request & approval flow', 'Pitch schedule view', 'Manager & admin roles'],
-  },
-  {
     icon: <IconBrandGithub size={22} />,
     title: 'Open Source',
     desc: 'Fork it, self-host it, contribute to it. No lock-in, no hidden fees, full data portability.',
@@ -765,13 +574,13 @@ function GetStartedSection({ authTab, onTabChange }: GetStartedProps) {
                 { n: 2, label: 'Fill in your club details', desc: 'Name, colours, badge, teams — all editable from your browser.' },
                 { n: 3, label: 'Go live', desc: 'Your site deploys automatically. Share the link with your players.' },
               ].map(({ n, label, desc }) => (
-                <Group key={n} gap={14} align="flex-start">
-                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: O5, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0, marginTop: 2 }}>{n}</div>
-                  <div>
-                    <Text fw={600} size="sm">{label}</Text>
-                    <Text size="xs" c="gray.6">{desc}</Text>
-                  </div>
-                </Group>
+                <div key={n} style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: O5, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0, marginTop: 1 }}>{n}</div>
+                  <Stack gap={2}>
+                    <Text fw={600} size="sm" lh={1.4}>{label}</Text>
+                    <Text size="sm" c="gray.6" lh={1.5}>{desc}</Text>
+                  </Stack>
+                </div>
               ))}
             </Stack>
 
@@ -985,11 +794,11 @@ function ContactSection() {
           <Button
             component="a"
             href="mailto:hello@touchlinehq.co.uk"
-            size="xl"
+            size="lg"
             radius="xl"
             color="orange"
-            leftSection={<IconMail size={20} />}
-            style={{ transition: 'filter 0.15s' }}
+            leftSection={<IconMail size={18} />}
+            style={{ transition: 'filter 0.15s', fontSize: '1rem' }}
             onMouseEnter={e => (e.currentTarget.style.filter = 'brightness(0.92)')}
             onMouseLeave={e => (e.currentTarget.style.filter = '')}
           >
@@ -998,26 +807,12 @@ function ContactSection() {
           <Text size="sm" style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', maxWidth: 400 }}>
             We typically reply within one working day. Tell us your club name, how many teams you have, and what you're looking for.
           </Text>
-          <Group gap={20} align="center">
-            {[
-              { label: 'touchlineHQ.co.uk', href: 'https://touchlinehq.co.uk' },
-              { label: 'GitHub', href: 'https://github.com/touchlineHQ' },
-              { label: 'clubsPlatform repo', href: 'https://github.com/touchlineHQ/clubsPlatform' },
-            ].map(({ label, href }, i) => (
-              <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-                {i > 0 && <span style={{ color: 'rgba(255,255,255,0.2)' }}>·</span>}
-                <Anchor
-                  href={href}
-                  target="_blank"
-                  rel="noopener"
-                  style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)', textDecoration: 'none', transition: 'color 0.15s' }}
-                  onMouseEnter={e => (e.currentTarget.style.color = '#fff')}
-                  onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}
-                >
-                  {label}
-                </Anchor>
-              </span>
-            ))}
+          <Group gap="xs" align="center">
+            <Anchor href="https://touchlinehq.co.uk" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>touchlineHQ.co.uk</Anchor>
+            <Text size="sm" style={{ color: 'rgba(255,255,255,0.2)' }}>·</Text>
+            <Anchor href="https://github.com/touchlineHQ" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>GitHub</Anchor>
+            <Text size="sm" style={{ color: 'rgba(255,255,255,0.2)' }}>·</Text>
+            <Anchor href="https://github.com/touchlineHQ/clubsPlatform" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>clubsPlatform repo</Anchor>
           </Group>
         </div>
       </div>
@@ -1049,7 +844,7 @@ function LandingFooter() {
           </Text>
         </Box>
 
-        <Text size="xs" c="gray.5">© 2025 touchlineHQ. Made in the UK.</Text>
+        <Text size="xs" c="gray.5">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
 
         <Group gap={16}>
           <Anchor href="https://touchlinehq.co.uk" target="_blank" size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>touchlineHQ.co.uk ↗</Anchor>
