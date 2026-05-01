@@ -1,13 +1,13 @@
 import { D1Database } from "@cloudflare/workers-types";
 
 type AnyRow = Record<string, unknown>;
+type AssetFetcher = { fetch(req: Request | string): Promise<Response> };
 
-async function fetchJson(url: string): Promise<AnyRow | null> {
+async function fetchJson(assets: AssetFetcher, url: string): Promise<AnyRow | null> {
   try {
-    const res = await fetch(url);
+    const res = await assets.fetch(url);
     if (!res.ok) return null;
     const text = await res.text();
-    // Guard against Cloudflare Pages returning index.html as 200 fallback
     if (text.trimStart().startsWith('<')) return null;
     return JSON.parse(text) as AnyRow;
   } catch {
@@ -19,8 +19,9 @@ async function fetchJson(url: string): Promise<AnyRow | null> {
  * Seed all static JSON data for a club into the DB on first access.
  * Sets seeded=1 on club_config so this only runs once per club.
  * Safe to call concurrently — the UPDATE is atomic.
+ * Uses the ASSETS binding to read static files directly without HTTP.
  */
-export async function seedClubData(db: D1Database, slug: string, origin: string): Promise<void> {
+export async function seedClubData(db: D1Database, slug: string, origin: string, assets: AssetFetcher): Promise<void> {
   // Claim the seeding slot atomically — only one request wins
   const result = await db
     .prepare(`UPDATE club_config SET seeded = 1 WHERE slug = ? AND seeded = 0`)
@@ -33,7 +34,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   const ts = Date.now();
 
   // ── club.json ────────────────────────────────────────────────────────────
-  const clubData = await fetchJson(`${base}/club.json`);
+  const clubData = await fetchJson(assets, `${base}/club.json`);
   if (clubData) {
     await db
       .prepare(`UPDATE club_config SET data = ? WHERE slug = ?`)
@@ -44,7 +45,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   const stmts: D1PreparedStatement[] = [];
 
   // ── registration.json ────────────────────────────────────────────────────
-  const regData = await fetchJson(`${base}/registration.json`);
+  const regData = await fetchJson(assets, `${base}/registration.json`);
   const regItems = (regData?.items ?? []) as Array<AnyRow>;
   for (let i = 0; i < regItems.length; i++) {
     const item = regItems[i];
@@ -61,7 +62,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   }
 
   // ── gallery.json ─────────────────────────────────────────────────────────
-  const galleryData = await fetchJson(`${base}/gallery.json`);
+  const galleryData = await fetchJson(assets, `${base}/gallery.json`);
   const galleryItems = (galleryData?.items ?? []) as Array<AnyRow>;
   for (let i = 0; i < galleryItems.length; i++) {
     const item = galleryItems[i];
@@ -77,7 +78,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   }
 
   // ── matchday.json ─────────────────────────────────────────────────────────
-  const matchdayData = await fetchJson(`${base}/matchday.json`);
+  const matchdayData = await fetchJson(assets, `${base}/matchday.json`);
   const matchdayItems = (matchdayData?.items ?? []) as Array<AnyRow>;
   for (let i = 0; i < matchdayItems.length; i++) {
     const item = matchdayItems[i];
@@ -93,7 +94,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   }
 
   // ── news.json ─────────────────────────────────────────────────────────────
-  const newsData = await fetchJson(`${base}/news.json`);
+  const newsData = await fetchJson(assets, `${base}/news.json`);
   const newsItems = (newsData?.items ?? []) as Array<AnyRow>;
   for (const item of newsItems) {
     stmts.push(
@@ -111,7 +112,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   }
 
   // ── teams.json ────────────────────────────────────────────────────────────
-  const teamsData = await fetchJson(`${base}/teams.json`);
+  const teamsData = await fetchJson(assets, `${base}/teams.json`);
   const sections = (teamsData?.sections ?? []) as Array<AnyRow>;
   for (let si = 0; si < sections.length; si++) {
     const section = sections[si];
@@ -145,7 +146,7 @@ export async function seedClubData(db: D1Database, slug: string, origin: string)
   }
 
   // ── committee.json ────────────────────────────────────────────────────────
-  const committeeData = await fetchJson(`${base}/committee.json`);
+  const committeeData = await fetchJson(assets, `${base}/committee.json`);
   const committeeMembers = (committeeData?.committee ?? []) as Array<AnyRow>;
   for (let i = 0; i < committeeMembers.length; i++) {
     const member = committeeMembers[i];

@@ -41,7 +41,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // Seed from static JSON on first access (awaited so parallel requests see seeded data)
   if (!row.seeded) {
     const origin = new URL(context.request.url).origin;
-    await seedClubData(context.env.DB, clubSlug, origin);
+    await seedClubData(context.env.DB, clubSlug, origin, context.env.ASSETS);
     // Re-fetch after seeding
     const seeded = await context.env.DB
       .prepare(`SELECT data FROM club_config WHERE slug = ?`)

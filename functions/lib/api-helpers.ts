@@ -2,6 +2,7 @@ import { createAuth } from "./auth";
 
 export interface Env {
   DB: D1Database;
+  ASSETS: { fetch(req: Request | string): Promise<Response> };
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
   MULTI_CLUB?: string;
