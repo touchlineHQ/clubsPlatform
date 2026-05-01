@@ -58,10 +58,11 @@ interface Props {
   sections: TeamSection[];
   sidebarFeeds?: { feed: TeamFeed; label: string; sectionId: string }[];
   onNavClick: () => void;
+  pitchBookings?: boolean;
   visibility?: Record<string, boolean>;
 }
 
-export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, visibility }: Props) {
+export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, isManager } = useAuth();
@@ -119,14 +120,16 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, visibili
           onClick={onNavClick}
         />
       ))}
-      <NavLink
-        component={Link}
-        to="/schedule"
-        label="Pitch Schedule"
-        leftSection={<IconCalendar size={16} />}
-        active={pathname === '/schedule'}
-        onClick={onNavClick}
-      />
+      {pitchBookings && (
+        <NavLink
+          component={Link}
+          to="/schedule"
+          label="Pitch Schedule"
+          leftSection={<IconCalendar size={16} />}
+          active={pathname === '/schedule'}
+          onClick={onNavClick}
+        />
+      )}
 
       {visibleFeeds?.map(({ feed, label }) => (
         <NextTeamFixture key={label} feed={feed} label={`Next ${label} Fixture`} />
@@ -155,7 +158,7 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, visibili
         </>
       )}
 
-      {user && (isManager || isAdmin) && (
+      {pitchBookings && user && (isManager || isAdmin) && (
         <div style={{ marginTop: 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
@@ -188,14 +191,16 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, visibili
             active={pathname === '/admin/users'}
             onClick={onNavClick}
           />
-          <NavLink
-            component={Link}
-            to="/admin/bookings"
-            label="Booking Requests"
-            leftSection={<IconClipboardList size={16} />}
-            active={pathname === '/admin/bookings'}
-            onClick={onNavClick}
-          />
+          {pitchBookings && (
+            <NavLink
+              component={Link}
+              to="/admin/bookings"
+              label="Booking Requests"
+              leftSection={<IconClipboardList size={16} />}
+              active={pathname === '/admin/bookings'}
+              onClick={onNavClick}
+            />
+          )}
         </div>
       )}
     </Stack>

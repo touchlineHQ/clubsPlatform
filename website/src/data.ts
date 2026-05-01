@@ -219,13 +219,12 @@ async function loadTeamsFromApi(clubSlug: string): Promise<TeamsData | null> {
  * Load the club registry: list of clubs and whether multi-club mode is active.
  * Tries GET /api/clubs first; falls back to static /data/clubs/index.json.
  */
-export async function loadClubRegistry(): Promise<{ multiClub: boolean; clubs: ClubEntry[] }> {
+export async function loadClubRegistry(): Promise<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] }> {
   try {
     const res = await fetch('/api/clubs');
     if (res.ok) {
-      const data = await res.json() as { multiClub: boolean; clubs: ClubEntry[] };
-      // Always trust the API response — even empty clubs is valid in multi-club mode
-      return { multiClub: data.multiClub ?? false, clubs: data.clubs ?? [] };
+      const data = await res.json() as { multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] };
+      return { multiClub: data.multiClub ?? false, pitchBookings: data.pitchBookings ?? false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through to static fallback
@@ -235,13 +234,13 @@ export async function loadClubRegistry(): Promise<{ multiClub: boolean; clubs: C
     const res = await fetch('/data/clubs/index.json');
     if (res.ok) {
       const data = await res.json() as { clubs: ClubEntry[] };
-      return { multiClub: false, clubs: data.clubs ?? [] };
+      return { multiClub: false, pitchBookings: false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through
   }
 
-  return { multiClub: false, clubs: [] };
+  return { multiClub: false, pitchBookings: false, clubs: [] };
 }
 
 export async function loadAllData(clubSlug: string, multiClub = false): Promise<AppData> {

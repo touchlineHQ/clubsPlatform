@@ -40,7 +40,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
 }
 
 export default function App() {
-  const [registry, setRegistry] = useState<{ multiClub: boolean; clubs: ClubEntry[] } | null>(null);
+  const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
@@ -145,6 +145,7 @@ export default function App() {
             sections={data.teams.sections}
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
+            pitchBookings={registry.pitchBookings}
             visibility={{
               '/about':     (data.club.about?.length ?? 0) > 0 || (data.club.history?.length ?? 0) > 0,
               '/teams':     data.teams.sections.length > 0 || data.liveTeams.length > 0,
