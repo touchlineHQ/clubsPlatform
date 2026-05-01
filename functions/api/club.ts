@@ -77,9 +77,18 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const body = await context.request.json() as Record<string, unknown>;
   const updated = { ...existing, ...body, slug: clubSlug };
 
+  // Keep club_config.primaryColor in sync so the directory listing reflects the change
+  const sets = ['data = ?', 'seeded = 1'];
+  const binds: unknown[] = [JSON.stringify(updated)];
+  if ('primaryColor' in body) {
+    sets.push('primaryColor = ?');
+    binds.push(body.primaryColor ?? null);
+  }
+  binds.push(clubSlug);
+
   await context.env.DB
-    .prepare(`UPDATE club_config SET data = ?, seeded = 1 WHERE slug = ?`)
-    .bind(JSON.stringify(updated), clubSlug)
+    .prepare(`UPDATE club_config SET ${sets.join(', ')} WHERE slug = ?`)
+    .bind(...binds)
     .run();
 
   return json({ ok: true });

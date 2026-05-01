@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Tabs, Stack, Title, Text, Group, Button, Paper, Select, Alert } from '@mantine/core';
+import { Tabs, Stack, Title, Text, Group, Button, Paper, Alert } from '@mantine/core';
 import {
-  IconUsers, IconId, IconNews, IconRefresh, IconPalette,
+  IconUsers, IconId, IconNews, IconRefresh, IconBuildingStore,
+  IconPhoto, IconCalendarEvent, IconInfoCircle,
 } from '@tabler/icons-react';
 import type { AppData } from '../types';
-import { loadFeeds, loadClubSlugs, loadAllFeedTeams } from '../data';
+import { loadFeeds, loadAllFeedTeams, loadClubSlugs } from '../data';
 import type { FeedTeamEntry } from '../data';
+import { ClubForm } from '../components/customize/ClubForm';
 import { TeamsForm } from '../components/customize/TeamsForm';
 import { CommitteeForm } from '../components/customize/CommitteeForm';
 import { NewsForm } from '../components/customize/NewsForm';
+import { RegistrationForm } from '../components/customize/RegistrationForm';
+import { GalleryForm } from '../components/customize/GalleryForm';
+import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
-import { COLOR_OPTIONS } from '../components/customize/iconOptions';
 import { useClub } from '../context/ClubContext';
 
 interface Props {
@@ -23,69 +27,6 @@ interface Props {
   onPrimaryColorSaved?: (color: string | null) => void;
 }
 
-interface AppearanceTabProps {
-  currentColor: string | null;
-  onColorSaved: (color: string | null) => void;
-}
-
-function AppearanceTab({ currentColor, onColorSaved }: AppearanceTabProps) {
-  const { clubSlug } = useClub();
-  const [color, setColor] = useState<string | null>(currentColor);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const res = await fetch('/api/clubs', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
-        body: JSON.stringify({ primaryColor: color }),
-      });
-      const data = await res.json() as { ok?: boolean; error?: string };
-      if (!res.ok) {
-        setError(data.error ?? `Request failed: ${res.status}`);
-      } else {
-        setSaved(true);
-        onColorSaved(color);
-        setTimeout(() => setSaved(false), 3000);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const colorData = COLOR_OPTIONS.map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }));
-
-  return (
-    <Stack gap="md" maw={400}>
-      <div>
-        <Text fw={600} mb={4}>Theme colour</Text>
-        <Text size="sm" c="dimmed" mb="sm">
-          Choose the primary colour for your club's site. Changes take effect immediately after saving.
-        </Text>
-        <Select
-          data={colorData}
-          value={color}
-          onChange={setColor}
-          placeholder="Default (blue)"
-          clearable
-        />
-      </div>
-      {error && <Alert color="red">{error}</Alert>}
-      {saved && <Alert color="green">Colour saved successfully.</Alert>}
-      <Group>
-        <Button onClick={handleSave} loading={saving}>Save colour</Button>
-      </Group>
-    </Stack>
-  );
-}
-
 export function CustomizePage({
   originalData,
   editingData,
@@ -95,23 +36,23 @@ export function CustomizePage({
   previewActive,
   onPrimaryColorSaved,
 }: Props) {
-  const { clubs, clubSlug } = useClub();
-  const clubEntry = clubs.find(c => c.slug === clubSlug);
-
+  const { clubSlug } = useClub();
   const [loadingFeeds, setLoadingFeeds] = useState(false);
   const [feedTeams, setFeedTeams] = useState<FeedTeamEntry[]>([]);
+  const [clubSlugs, setClubSlugs] = useState<string[]>([]);
 
   useEffect(() => {
     if (!editingData) {
       onEditingChange(JSON.parse(JSON.stringify(originalData)));
     }
     loadAllFeedTeams().then(setFeedTeams);
+    loadClubSlugs().then(setClubSlugs);
   }, []);
 
   if (!editingData) return null;
 
   const localData = editingData;
-  const setLocalData = (updater: AppData | ((prev: AppData) => AppData)) => {
+  const set = (updater: AppData | ((prev: AppData) => AppData)) => {
     const next = typeof updater === 'function' ? updater(editingData) : updater;
     onEditingChange(next);
   };
@@ -143,19 +84,22 @@ export function CustomizePage({
       <div>
         <Title order={2} mb="xs">Site Admin</Title>
         <Text c="dimmed" size="sm">
-          Edit your club's teams, committee, and news below. Preview changes live, then save to publish.
+          Edit your club's content below. Preview changes live, then save to publish.
         </Text>
       </div>
 
       <Paper p="md" withBorder>
         <Group justify="space-between" wrap="wrap">
           <Group gap="sm">
-            <SaveButton data={localData} />
-            <Button
-              variant="light"
-              onClick={applyPreview}
-              loading={loadingFeeds}
-            >
+            <SaveButton
+              data={localData}
+              onSaved={(savedClub) => {
+                if (savedClub?.primaryColor !== undefined) {
+                  onPrimaryColorSaved?.(savedClub.primaryColor ?? null);
+                }
+              }}
+            />
+            <Button variant="light" onClick={applyPreview} loading={loadingFeeds}>
               Apply Preview
             </Button>
             {previewActive && (
@@ -170,40 +114,69 @@ export function CustomizePage({
         </Group>
       </Paper>
 
-      <Tabs defaultValue="teams">
+      <Tabs defaultValue="club">
         <Tabs.List>
+          <Tabs.Tab value="club" leftSection={<IconInfoCircle size={14} />}>Club Info</Tabs.Tab>
           <Tabs.Tab value="teams" leftSection={<IconUsers size={14} />}>Teams</Tabs.Tab>
           <Tabs.Tab value="committee" leftSection={<IconId size={14} />}>Committee</Tabs.Tab>
           <Tabs.Tab value="news" leftSection={<IconNews size={14} />}>News</Tabs.Tab>
-          <Tabs.Tab value="appearance" leftSection={<IconPalette size={14} />}>Appearance</Tabs.Tab>
+          <Tabs.Tab value="registration" leftSection={<IconBuildingStore size={14} />}>Registration</Tabs.Tab>
+          <Tabs.Tab value="gallery" leftSection={<IconPhoto size={14} />}>Gallery</Tabs.Tab>
+          <Tabs.Tab value="matchday" leftSection={<IconCalendarEvent size={14} />}>Matchday</Tabs.Tab>
         </Tabs.List>
 
+        <Tabs.Panel value="club" pt="md">
+          <ClubForm
+            club={localData.club}
+            onChange={club => {
+              set(d => ({ ...d, club }));
+            }}
+            clubSlugs={clubSlugs}
+          />
+        </Tabs.Panel>
+
         <Tabs.Panel value="teams" pt="md">
-          <TeamsForm teams={localData.teams} onChange={teams => setLocalData(d => ({ ...d, teams }))} feedTeams={feedTeams} teamSlugPrefix={localData.club.teamSlugPrefix} />
+          <TeamsForm
+            teams={localData.teams}
+            onChange={teams => set(d => ({ ...d, teams }))}
+            feedTeams={feedTeams}
+            teamSlugPrefix={localData.club.teamSlugPrefix}
+          />
         </Tabs.Panel>
 
         <Tabs.Panel value="committee" pt="md">
-          <CommitteeForm committee={localData.committee} onChange={committee => setLocalData(d => ({ ...d, committee }))} />
+          <CommitteeForm
+            committee={localData.committee}
+            onChange={committee => set(d => ({ ...d, committee }))}
+          />
         </Tabs.Panel>
 
         <Tabs.Panel value="news" pt="md">
-          <NewsForm news={localData.news} onChange={news => setLocalData(d => ({ ...d, news }))} />
+          <NewsForm
+            news={localData.news}
+            onChange={news => set(d => ({ ...d, news }))}
+          />
         </Tabs.Panel>
 
-        <Tabs.Panel value="appearance" pt="md">
-          {clubEntry ? (
-            <AppearanceTab
-              currentColor={localData.club.primaryColor ?? null}
-              onColorSaved={(color) => {
-                const updated = { ...localData, club: { ...localData.club, primaryColor: color ?? undefined } };
-                onEditingChange(updated);
-                onApplyPreview(updated);
-                onPrimaryColorSaved?.(color);
-              }}
-            />
-          ) : (
-            <Alert color="yellow">Club registry entry not found — cannot update appearance.</Alert>
-          )}
+        <Tabs.Panel value="registration" pt="md">
+          <RegistrationForm
+            registration={localData.registration}
+            onChange={registration => set(d => ({ ...d, registration }))}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="gallery" pt="md">
+          <GalleryForm
+            gallery={localData.gallery}
+            onChange={gallery => set(d => ({ ...d, gallery }))}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="matchday" pt="md">
+          <MatchdayForm
+            matchday={localData.matchday}
+            onChange={matchday => set(d => ({ ...d, matchday }))}
+          />
         </Tabs.Panel>
       </Tabs>
     </Stack>
