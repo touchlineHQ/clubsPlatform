@@ -127,7 +127,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
           </Group>
 
           {/* Right actions */}
-          <Group gap={8} style={{ marginLeft: 'auto' }}>
+          <Group gap={8} wrap="nowrap" style={{ marginLeft: 'auto', flexShrink: 0 }}>
             <Button
               variant="subtle"
               size="compact-sm"
@@ -823,7 +823,7 @@ function ContactSection() {
           <Text size="sm" style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', maxWidth: 400 }}>
             We typically reply within one working day. Tell us your club name, how many teams you have, and what you're looking for.
           </Text>
-          <Group gap="xs" align="center">
+          <Group gap="xs" align="center" justify="center" wrap="nowrap">
             <Anchor href="https://touchlinehq.co.uk" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>touchlineHQ.co.uk</Anchor>
             <Text size="sm" style={{ color: 'rgba(255,255,255,0.2)' }}>·</Text>
             <Anchor href="https://github.com/touchlineHQ" target="_blank" rel="noopener" size="sm" style={{ color: 'rgba(255,255,255,0.5)', textDecoration: 'none' }} onMouseEnter={e => (e.currentTarget.style.color = '#fff')} onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255,255,255,0.5)')}>GitHub</Anchor>
@@ -849,9 +849,9 @@ function LandingFooter() {
         padding: '28px 24px',
       }}
     >
-      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         {/* Brand */}
-        <Box component="a" href="#" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Box component="a" href="#" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <div style={{ width: 28, height: 28, borderRadius: 7, background: O5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <IconBallFootball size={14} color="#fff" />
           </div>
@@ -862,7 +862,7 @@ function LandingFooter() {
 
         <Text size="xs" c="gray.5">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
 
-        <Group gap={16}>
+        <Group gap={16} wrap="nowrap" style={{ flexShrink: 0 }}>
           <Anchor href="https://touchlinehq.co.uk" target="_blank" size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>touchlineHQ.co.uk ↗</Anchor>
           <Anchor href="https://github.com/touchlineHQ/clubsPlatform" target="_blank" size="xs" c="gray.5" style={{ textDecoration: 'none' }}>GitHub</Anchor>
           <Anchor href="#" size="xs" c="gray.5" style={{ textDecoration: 'none' }}>Privacy</Anchor>
