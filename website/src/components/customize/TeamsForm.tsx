@@ -215,7 +215,7 @@ export function TeamsForm({ teams, onChange, feedTeams, teamSlugPrefix }: Props)
         </Alert>
       )}
       {teams.sections.map((section, i) => (
-        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} feedTeamSlugs={feedTeamSlugs} matchingFeedTeams={matchingFeedTeams} />
+        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} feedTeamSlugs={feedTeamSlugs} matchingFeedTeams={matchingFeedTeams ?? (feedTeams?.length ? feedTeams : undefined)} />
       ))}
       <Button variant="light" leftSection={<IconPlus size={14} />} onClick={addSection}>Add Section</Button>
     </Stack>
