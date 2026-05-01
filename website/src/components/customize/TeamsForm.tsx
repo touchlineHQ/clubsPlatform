@@ -60,12 +60,13 @@ function TeamEditor({ team, onChange, onRemove, feedTeamSlugs }: {
   );
 }
 
-function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFeedTeams }: {
+function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFeedTeams, allFeedTeams }: {
   section: TeamSection;
   onChange: (s: TeamSection) => void;
   onRemove: () => void;
   feedTeamSlugs?: string[];
   matchingFeedTeams?: FeedTeamEntry[];
+  allFeedTeams?: FeedTeamEntry[];
 }) {
   const update = <K extends keyof TeamSection>(key: K, value: TeamSection[K]) =>
     onChange({ ...section, [key]: value });
@@ -102,44 +103,60 @@ function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFee
       {(() => {
         const teamsWithSlugs = section.teams.filter(t => t.slug);
 
-        // Without feed data, just show the raw stored slugs
-        if (!matchingFeedTeams) {
-          if (teamsWithSlugs.length === 0) return null;
+        // With prefix-filtered feed data: full resolution including dynamic name matching
+        if (matchingFeedTeams) {
+          const resolved = liveTeamsForSection(section, matchingFeedTeams as LiveTeam[]);
+          const seen = new Set<string>();
+          const unique = resolved.filter(t => {
+            const key = `${t.slug}/${t.league}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          const slugDupes = new Set(
+            unique.filter((t, _, arr) => arr.filter(u => u.slug === t.slug).length > 1).map(t => t.slug)
+          );
+          if (unique.length === 0) {
+            return <Text size="xs" c="dimmed" mb="xs">No feed teams linked to this section yet.</Text>;
+          }
           return (
             <Alert icon={<IconInfoCircle size={14} />} variant="light" color="teal" p="xs" mb="xs">
               <Text size="xs" mb={4} c="dimmed">Feed teams in this section:</Text>
               <Group gap={4} wrap="wrap">
-                {teamsWithSlugs.map(t => (
-                  <Badge key={t.slug} color="teal" size="sm" style={{ textTransform: 'none' }}>{t.slug}</Badge>
+                {unique.map(t => (
+                  <Badge key={`${t.league}/${t.slug}`} color="teal" size="sm" style={{ textTransform: 'none' }}>
+                    {t.slug}{slugDupes.has(t.slug) ? ` (${/saturday/i.test(t.league) ? 'Sat' : /sunday/i.test(t.league) ? 'Sun' : t.league})` : ''}
+                  </Badge>
                 ))}
               </Group>
             </Alert>
           );
         }
 
-        // With feed data, resolve slugs through the matching logic so partial slugs
-        // (e.g. "east-leake-robins") expand to their actual feed teams
-        const resolved = liveTeamsForSection(section, matchingFeedTeams as LiveTeam[]);
+        // No prefix data: expand explicit slugs using startsWith only (safe — slug is
+        // club-specific, avoids name-based matching against unrelated clubs)
+        if (teamsWithSlugs.length === 0) return null;
+
+        const expanded: FeedTeamEntry[] = [];
         const seen = new Set<string>();
-        const unique = resolved.filter(t => {
-          const key = `${t.slug}/${t.league}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        const slugDupes = new Set(
-          unique.filter((t, _, arr) => arr.filter(u => u.slug === t.slug).length > 1).map(t => t.slug)
-        );
-
-        if (unique.length === 0) {
-          return <Text size="xs" c="dimmed" mb="xs">No feed teams linked to this section yet.</Text>;
+        for (const team of teamsWithSlugs) {
+          const slug = team.slug!;
+          const matches = allFeedTeams
+            ? allFeedTeams.filter(t => t.slug === slug || t.slug.startsWith(slug + '-'))
+            : [{ name: team.name, slug, league: '' } as FeedTeamEntry];
+          for (const m of matches) {
+            const key = `${m.slug}/${m.league}`;
+            if (!seen.has(key)) { expanded.push(m); seen.add(key); }
+          }
         }
-
+        const slugDupes = new Set(
+          expanded.filter((t, _, arr) => arr.filter(u => u.slug === t.slug).length > 1).map(t => t.slug)
+        );
         return (
           <Alert icon={<IconInfoCircle size={14} />} variant="light" color="teal" p="xs" mb="xs">
             <Text size="xs" mb={4} c="dimmed">Feed teams in this section:</Text>
             <Group gap={4} wrap="wrap">
-              {unique.map(t => (
+              {expanded.map(t => (
                 <Badge key={`${t.league}/${t.slug}`} color="teal" size="sm" style={{ textTransform: 'none' }}>
                   {t.slug}{slugDupes.has(t.slug) ? ` (${/saturday/i.test(t.league) ? 'Sat' : /sunday/i.test(t.league) ? 'Sun' : t.league})` : ''}
                 </Badge>
@@ -215,7 +232,7 @@ export function TeamsForm({ teams, onChange, feedTeams, teamSlugPrefix }: Props)
         </Alert>
       )}
       {teams.sections.map((section, i) => (
-        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} feedTeamSlugs={feedTeamSlugs} matchingFeedTeams={matchingFeedTeams ?? (feedTeams?.length ? feedTeams : undefined)} />
+        <SectionEditor key={i} section={section} onChange={s => updateSection(i, s)} onRemove={() => removeSection(i)} feedTeamSlugs={feedTeamSlugs} matchingFeedTeams={matchingFeedTeams} allFeedTeams={feedTeams?.length ? feedTeams : undefined} />
       ))}
       <Button variant="light" leftSection={<IconPlus size={14} />} onClick={addSection}>Add Section</Button>
     </Stack>
