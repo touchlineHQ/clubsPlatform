@@ -73,30 +73,33 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props)
 
   return (
     <Stack gap={0} h="100%" style={{ overflowY: 'auto' }}>
-      <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pt="md" pb="xs">
-        View
-      </Text>
-      <Group gap={4} px="md" pb="sm" wrap="wrap">
-        <Button
-          size="compact-xs"
-          variant={activeSection === 'all' ? 'filled' : 'outline'}
-          onClick={() => setActiveSection('all')}
-        >
-          All
-        </Button>
-        {sections.map(s => (
-          <Button
-            key={s.id}
-            size="compact-xs"
-            variant={activeSection === s.id ? 'filled' : 'outline'}
-              onClick={() => setActiveSection(s.id)}
-          >
-            {s.name} {s.subtitle}
-          </Button>
-        ))}
-      </Group>
-
-      <Divider mx="md" mb="xs" />
+      {sections.length > 0 && (
+        <>
+          <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pt="md" pb="xs">
+            View
+          </Text>
+          <Group gap={4} px="md" pb="sm" wrap="wrap">
+            <Button
+              size="compact-xs"
+              variant={activeSection === 'all' ? 'filled' : 'outline'}
+              onClick={() => setActiveSection('all')}
+            >
+              All
+            </Button>
+            {sections.map(s => (
+              <Button
+                key={s.id}
+                size="compact-xs"
+                variant={activeSection === s.id ? 'filled' : 'outline'}
+                onClick={() => setActiveSection(s.id)}
+              >
+                {s.name}{s.subtitle ? ` ${s.subtitle}` : ''}
+              </Button>
+            ))}
+          </Group>
+          <Divider mx="md" mb="xs" />
+        </>
+      )}
 
       <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
         Menu
@@ -126,20 +129,28 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props)
         <NextTeamFixture key={label} feed={feed} label={`Next ${label} Fixture`} />
       ))}
 
-      <Divider my="sm" mx="md" />
-      <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
-        Get in Touch
-      </Text>
-      <Stack gap={4} px="md" pb="md">
-        <Text size="xs">
-          <Text component="a" href={`mailto:${club.email}`} c="var(--mantine-primary-color-filled)" size="xs">
-            {club.email}
+      {(club.email || club.address?.line1 || club.address?.line2 || club.address?.postcode) && (
+        <>
+          <Divider my="sm" mx="md" />
+          <Text fw={600} size="xs" tt="uppercase" c="dimmed" px="md" pb="xs">
+            Get in Touch
           </Text>
-        </Text>
-        <Text size="xs" c="dimmed">
-          {club.address.line1}, {club.address.line2}, {club.address.postcode}
-        </Text>
-      </Stack>
+          <Stack gap={4} px="md" pb="md">
+            {club.email && (
+              <Text size="xs">
+                <Text component="a" href={`mailto:${club.email}`} c="var(--mantine-primary-color-filled)" size="xs">
+                  {club.email}
+                </Text>
+              </Text>
+            )}
+            {[club.address?.line1, club.address?.line2, club.address?.postcode].filter(Boolean).length > 0 && (
+              <Text size="xs" c="dimmed">
+                {[club.address?.line1, club.address?.line2, club.address?.postcode].filter(Boolean).join(', ')}
+              </Text>
+            )}
+          </Stack>
+        </>
+      )}
 
       {user && (isManager || isAdmin) && (
         <div style={{ marginTop: 'auto' }}>
