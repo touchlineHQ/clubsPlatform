@@ -99,8 +99,15 @@ function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFee
         </Group>
         <TextInput label="Logo Image Path" value={section.logo ?? ''} onChange={e => update('logo', e.target.value)} />
       </Stack>
-      {matchingFeedTeams !== undefined && (() => {
-        const sectionFeedTeams = liveTeamsForSection(section, matchingFeedTeams as LiveTeam[]);
+      {(() => {
+        // Teams in this section with explicit feed slugs already assigned
+        const linkedTeams = section.teams.filter(t => t.slug);
+        const explicitSlugs = new Set(linkedTeams.map(t => t.slug));
+
+        // Additional auto-matched teams via dynamic matching (requires prefix data)
+        const sectionFeedTeams = matchingFeedTeams
+          ? liveTeamsForSection(section, matchingFeedTeams as LiveTeam[])
+          : [];
         const seen = new Set<string>();
         const unique = sectionFeedTeams.filter(t => {
           const key = `${t.slug}/${t.league}`;
@@ -108,22 +115,33 @@ function SectionEditor({ section, onChange, onRemove, feedTeamSlugs, matchingFee
           seen.add(key);
           return true;
         });
+        const autoMatched = unique.filter(t => !explicitSlugs.has(t.slug));
         const slugDupes = new Set(
           unique.filter((t, _, arr) => arr.filter(u => u.slug === t.slug).length > 1).map(t => t.slug)
         );
-        return unique.length > 0 ? (
+
+        if (linkedTeams.length === 0 && autoMatched.length === 0) {
+          return matchingFeedTeams !== undefined ? (
+            <Text size="xs" c="dimmed" mb="xs">No feed teams linked to this section yet.</Text>
+          ) : null;
+        }
+
+        return (
           <Alert icon={<IconInfoCircle size={14} />} variant="light" color="teal" p="xs" mb="xs">
-            <Text size="xs" mb={4} c="dimmed">Feed teams matched to this section:</Text>
+            <Text size="xs" mb={4} c="dimmed">Feed teams in this section:</Text>
             <Group gap={4} wrap="wrap">
-              {unique.map(t => (
+              {linkedTeams.map(t => (
+                <Badge key={t.slug} color="teal" size="sm" style={{ textTransform: 'none' }}>
+                  {t.slug}
+                </Badge>
+              ))}
+              {autoMatched.map(t => (
                 <Badge key={`${t.league}/${t.slug}`} variant="outline" size="sm" style={{ textTransform: 'none' }}>
                   {t.slug}{slugDupes.has(t.slug) ? ` (${/saturday/i.test(t.league) ? 'Sat' : /sunday/i.test(t.league) ? 'Sun' : t.league})` : ''}
                 </Badge>
               ))}
             </Group>
           </Alert>
-        ) : (
-          <Text size="xs" c="dimmed" mb="xs">No feed teams matched to this section yet.</Text>
         );
       })()}
       <Divider label="Teams" mb="sm" />
@@ -162,8 +180,10 @@ export function TeamsForm({ teams, onChange, feedTeams, teamSlugPrefix }: Props)
         .sort((a, b) => a.slug.localeCompare(b.slug) || a.league.localeCompare(b.league))
     : undefined;
 
-  // Unique slugs for the Autocomplete dropdown in each TeamEditor
-  const feedTeamSlugs = Array.from(new Set(matchingFeedTeams?.map(t => t.slug) ?? []));
+  // Unique slugs for the Autocomplete: prefer prefix-filtered list, fall back to all feed teams
+  const feedTeamSlugs = Array.from(new Set(
+    (matchingFeedTeams ?? feedTeams ?? []).map(t => t.slug)
+  ));
 
   // Detect slugs that appear in multiple leagues (e.g. Saturday + Sunday)
   const duplicateSlugs = new Set<string>();
