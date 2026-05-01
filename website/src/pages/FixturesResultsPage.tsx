@@ -1,12 +1,14 @@
 import { useState, useMemo } from 'react';
 import {
-  Title, Text, Stack, Paper, Badge, Group, Select, Tabs,
+  Text, Stack, Paper, Badge, Group, Select, Tabs, Box,
   Table, Alert,
 } from '@mantine/core';
 import { IconCalendar, IconTrophy, IconAlertCircle } from '@tabler/icons-react';
 import type { ClubFeed, LiveResult, LiveFixture, TeamsData, LiveTeam } from '../types';
 import { useSection } from '../context/SectionContext';
 import { findDuplicateTeamNames, teamDisplayLabel, liveTeamsForSection } from '../utils/teamMatching';
+import { PageHeader } from '../components/club/PageHeader';
+import { clubDesign } from '../theme';
 
 const FORM_GAMES = 5;
 
@@ -19,6 +21,18 @@ function getOutcome(r: LiveResult): 'W' | 'D' | 'L' | null {
 
 const outcomeColor: Record<'W' | 'D' | 'L', string> = { W: 'green', D: 'yellow', L: 'red' };
 
+function FormBadges({ outcomes }: { outcomes: ('W' | 'D' | 'L')[] }) {
+  return (
+    <Group gap={4} wrap="nowrap">
+      {outcomes.map((o, i) => (
+        <Badge key={i} color={outcomeColor[o]} variant="filled" size="sm" radius="sm" fw={800}>
+          {o}
+        </Badge>
+      ))}
+    </Group>
+  );
+}
+
 function ResultsStats({ results }: { results: LiveResult[] }) {
   const outcomes = results.map(getOutcome).filter((o): o is 'W' | 'D' | 'L' => o !== null);
   if (outcomes.length === 0) return null;
@@ -29,7 +43,7 @@ function ResultsStats({ results }: { results: LiveResult[] }) {
   const form = outcomes.slice(0, FORM_GAMES);
 
   return (
-    <Paper p="sm" withBorder radius="md">
+    <Paper p="md" withBorder radius="md">
       <Group gap="lg" wrap="wrap">
         <Group gap="xs">
           <Text size="xs" c="dimmed" fw={500}>P</Text>
@@ -41,11 +55,11 @@ function ResultsStats({ results }: { results: LiveResult[] }) {
           <Text size="xs" c="red" fw={500} ml={4}>L</Text>
           <Text size="sm" fw={700} c="red">{l}</Text>
         </Group>
-        <Group gap={4} align="center">
-          <Text size="xs" c="dimmed">Form</Text>
-          {form.map((o, i) => (
-            <Badge key={i} color={outcomeColor[o]} variant="filled" size="xs" radius="sm">{o}</Badge>
-          ))}
+        <Group gap="xs" align="center">
+          <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>
+            Form
+          </Text>
+          <FormBadges outcomes={form} />
         </Group>
       </Group>
     </Paper>
@@ -89,7 +103,6 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     for (const f of feed.fixtures) if (f.team) keys.add(fixtureKey(f));
     for (const r of feed.results) if (r.team) keys.add(fixtureKey(r));
 
-    // If section is filtered, only keep keys whose team name matches allowed team names
     const filtered = allowedTeamNames
       ? Array.from(keys).filter(k => {
           const [name] = k.split('\0');
@@ -105,10 +118,8 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [feed, allowedTeamNames, duplicateNames]);
 
-  // Reset team dropdown when it's no longer in the available list
   const effectiveTeam = selectedTeam && teamOptions.some(o => o.value === selectedTeam) ? selectedTeam : null;
 
-  // Filter by team name from liveTeams that match section teams
   const isAllowed = (f: LiveFixture | LiveResult) => {
     if (!allowedTeamNames) return true;
     return allowedTeamNames.has(f.team);
@@ -146,28 +157,50 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     return [...list].sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time));
   }, [feed, effectiveTeam, allowedTeamNames]);
 
+  // Recent form across all visible results (mirrors the design's "1st Team form" strip)
+  const recentForm = useMemo(() => {
+    return results.slice(0, FORM_GAMES).map(getOutcome).filter((o): o is 'W' | 'D' | 'L' => o !== null);
+  }, [results]);
+
   if (!feed) {
     return (
       <Stack gap="md">
-        <Title order={2}>Fixtures & Results</Title>
-        <Alert icon={<IconAlertCircle size={16} />}>
+        <PageHeader title="Fixtures &amp; Results" subtitle="Powered by FA Full-Time" />
+        <Alert icon={<IconAlertCircle size={16} />} color="orange" variant="light">
           Live fixture and result data is currently unavailable. Please check back later.
         </Alert>
       </Stack>
     );
   }
 
-  return (
-    <Stack gap="md">
-      <Title order={2}>Fixtures & Results</Title>
+  const lastUpdated = new Date(feed.generated).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
 
-      <Text size="sm" c="dimmed">
-        Data sourced from FA Full-Time via{' '}
-        <Text component="a" href="https://github.com/touchlineHQ/fulltimeFeeds" c="var(--mantine-primary-color-filled)" size="sm">
-          fulltimeFeeds
-        </Text>
-        . Last updated: {new Date(feed.generated).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}.
-      </Text>
+  return (
+    <Stack gap="lg">
+      <PageHeader
+        title="Fixtures &amp; Results"
+        subtitle={
+          <>
+            Data sourced from FA Full-Time via{' '}
+            <Text component="a" href="https://github.com/touchlineHQ/fulltimeFeeds" c="var(--mantine-primary-color-filled)" size="sm" fw={600} style={{ textDecoration: 'none' }}>
+              fulltimeFeeds
+            </Text>
+            . Last updated: {lastUpdated}.
+          </>
+        }
+        below={
+          recentForm.length > 0 ? (
+            <Group justify="space-between" px="xl" py="sm" wrap="wrap" gap="xs">
+              <Text size="xs" c="dimmed" fw={700} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                Recent form
+              </Text>
+              <FormBadges outcomes={recentForm} />
+            </Group>
+          ) : null
+        }
+      />
 
       <Select
         label="Filter by team"
@@ -178,9 +211,10 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
         clearable
         searchable
         allowDeselect={false}
+        radius="md"
       />
 
-      <Tabs defaultValue="fixtures">
+      <Tabs defaultValue="fixtures" variant="default">
         <Tabs.List>
           <Tabs.Tab value="fixtures" leftSection={<IconCalendar size={14} />}>
             Fixtures ({fixtures.length})
@@ -196,17 +230,65 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
           ) : (
             <Stack gap="xs">
               {fixtures.map((f) => (
-                <Paper key={f.id} p="sm" withBorder radius="md">
-                  <Group justify="space-between" wrap="wrap" gap="xs" mb={4}>
-                    <Badge variant="light" size="xs">{f.division}</Badge>
-                    <Text size="xs" c="dimmed">{formatDate(f.date)} · {f.time}</Text>
-                  </Group>
-                  <Text fw={700} size="sm" ta="center">
-                    {effectiveTeam ? `${f.team} vs ${f.opponent}` : `${f.home_team} vs ${f.away_team}`}
-                  </Text>
-                  <Text size="xs" c="dimmed" ta="center">
-                    {effectiveTeam ? `${f.home_away === 'home' ? 'Home' : 'Away'} · ${f.venue}` : f.venue}
-                  </Text>
+                <Paper
+                  key={f.id}
+                  p="md"
+                  withBorder
+                  radius="md"
+                  style={{ transition: 'box-shadow 0.15s' }}
+                >
+                  <Box
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto 1fr',
+                      gap: 16,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Box>
+                      <Text fw={700} ff={clubDesign.font.heading} fz="sm" c={clubDesign.color.n9}>
+                        {effectiveTeam ? f.team : f.home_team}
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={2}>
+                        {effectiveTeam
+                          ? f.home_away === 'home' ? 'Home' : 'Away'
+                          : 'Home'}
+                      </Text>
+                    </Box>
+                    <Stack gap={6} align="center">
+                      <Box
+                        px="sm"
+                        py={6}
+                        style={{
+                          background: clubDesign.color.n1,
+                          border: `1px solid ${clubDesign.color.n3}`,
+                          borderRadius: 8,
+                        }}
+                      >
+                        <Text
+                          ff={clubDesign.font.heading}
+                          fw={800}
+                          fz="xs"
+                          c={clubDesign.color.n5}
+                          style={{ letterSpacing: 2 }}
+                        >
+                          VS
+                        </Text>
+                      </Box>
+                      <Text size="xs" c="dimmed">{formatDate(f.date)} · {f.time}</Text>
+                      <Badge variant="light" radius="xl" size="xs">{f.division}</Badge>
+                    </Stack>
+                    <Box style={{ textAlign: 'right' }}>
+                      <Text fw={700} ff={clubDesign.font.heading} fz="sm" c={clubDesign.color.n9}>
+                        {effectiveTeam ? f.opponent : f.away_team}
+                      </Text>
+                      <Text size="xs" c="dimmed" mt={2}>
+                        {effectiveTeam
+                          ? (f.home_away === 'home' ? f.venue : 'Away')
+                          : f.venue}
+                      </Text>
+                    </Box>
+                  </Box>
                 </Paper>
               ))}
             </Stack>
@@ -218,45 +300,47 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
             <Text c="dimmed" size="sm">No results yet.</Text>
           ) : (
             <Stack gap="sm">
-            {effectiveTeam && <ResultsStats results={results} />}
-            <Table striped highlightOnHover withTableBorder>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Date</Table.Th>
-                  <Table.Th>Home</Table.Th>
-                  <Table.Th ta="center">Score</Table.Th>
-                  <Table.Th>Away</Table.Th>
-                  <Table.Th visibleFrom="sm">Division</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {results.map((r) => (
-                  <Table.Tr key={r.id}>
-                    <Table.Td>
-                      <Text size="xs">{formatDate(r.date)}</Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" fw={r.home_away === 'home' ? 700 : 400}>
-                        {r.home_team}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td ta="center">
-                      <Text size="sm" fw={700}>
-                        {r.home_score ?? 'X'} - {r.away_score ?? 'X'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" fw={r.home_away === 'away' ? 700 : 400}>
-                        {r.away_team}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td visibleFrom="sm">
-                      <Text size="xs" c="dimmed">{r.division}</Text>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
+              {effectiveTeam && <ResultsStats results={results} />}
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                <Table striped highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Date</Table.Th>
+                      <Table.Th>Home</Table.Th>
+                      <Table.Th ta="center">Score</Table.Th>
+                      <Table.Th>Away</Table.Th>
+                      <Table.Th visibleFrom="sm">Division</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {results.map((r) => (
+                      <Table.Tr key={r.id}>
+                        <Table.Td>
+                          <Text size="xs" c="dimmed">{formatDate(r.date)}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={r.home_away === 'home' ? 700 : 500}>
+                            {r.home_team}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td ta="center">
+                          <Text ff={clubDesign.font.heading} fw={800} fz="sm">
+                            {r.home_score ?? 'X'} – {r.away_score ?? 'X'}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm" fw={r.home_away === 'away' ? 700 : 500}>
+                            {r.away_team}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td visibleFrom="sm">
+                          <Text size="xs" c="dimmed">{r.division}</Text>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Paper>
             </Stack>
           )}
         </Tabs.Panel>

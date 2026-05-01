@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  Title, Text, Stack, Paper, Badge, Group, Tabs, Table,
-  Alert, Loader, Center, Button, Tooltip, CopyButton, Anchor,
+  Title, Text, Stack, Paper, Badge, Group, Tabs, Table, Box,
+  Alert, Loader, Center, Button, Tooltip, CopyButton,
 } from '@mantine/core';
-import { IconCalendar, IconTrophy, IconAlertCircle, IconCopy, IconCheck, IconArrowLeft } from '@tabler/icons-react';
+import { IconCalendar, IconTrophy, IconAlertCircle, IconCopy, IconCheck, IconArrowLeft, IconUser } from '@tabler/icons-react';
 import type { LiveTeam, TeamFeed, TeamContact } from '../types';
 import { loadTeamFeed, teamCalendarUrl } from '../data';
 import { useAuth } from '../context/AuthContext';
+import { clubDesign } from '../theme';
 
 const FORM_GAMES = 5;
 
@@ -39,7 +40,7 @@ function TeamResultsStats({ results, teamName }: { results: TeamFeed['results'];
   const form = outcomes.slice(0, FORM_GAMES);
 
   return (
-    <Paper p="sm" withBorder radius="md">
+    <Paper p="md" withBorder radius="md">
       <Group gap="lg" wrap="wrap">
         <Group gap="xs">
           <Text size="xs" c="dimmed" fw={500}>P</Text>
@@ -51,11 +52,17 @@ function TeamResultsStats({ results, teamName }: { results: TeamFeed['results'];
           <Text size="xs" c="red" fw={500} ml={4}>L</Text>
           <Text size="sm" fw={700} c="red">{l}</Text>
         </Group>
-        <Group gap={4} align="center">
-          <Text size="xs" c="dimmed">Form</Text>
-          {form.map((o, i) => (
-            <Badge key={i} color={outcomeColor[o]} variant="filled" size="xs" radius="sm">{o}</Badge>
-          ))}
+        <Group gap="xs" align="center">
+          <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.05em' }}>
+            Form
+          </Text>
+          <Group gap={4} wrap="nowrap">
+            {form.map((o, i) => (
+              <Badge key={i} color={outcomeColor[o]} variant="filled" size="sm" radius="sm" fw={800}>
+                {o}
+              </Badge>
+            ))}
+          </Group>
         </Group>
       </Group>
     </Paper>
@@ -124,7 +131,7 @@ export function TeamPage({ liveTeams }: Props) {
   if (!teamMeta) {
     return (
       <Stack gap="md">
-        <Button component={Link} to="/teams" variant="subtle" leftSection={<IconArrowLeft size={14} />} w="fit-content">
+        <Button component={Link} to="/teams" variant="subtle" leftSection={<IconArrowLeft size={14} />} w="fit-content" radius="xl">
           All Teams
         </Button>
         <Alert icon={<IconAlertCircle size={16} />}>Team not found.</Alert>
@@ -135,56 +142,87 @@ export function TeamPage({ liveTeams }: Props) {
   const calendarUrl = teamCalendarUrl(teamMeta.league, teamMeta.slug);
 
   return (
-    <Stack gap="md">
-      <Button component={Link} to="/teams" variant="subtle" leftSection={<IconArrowLeft size={14} />} w="fit-content">
-        All Teams
-      </Button>
-
-      <Group justify="space-between" align="flex-start" wrap="wrap">
-        <Title order={2}>{teamMeta.name}</Title>
-        <Group gap="xs">
-          {user && !myRole && (
-            <Button size="sm" variant="light" loading={subscribing} onClick={handleSubscribe}>
-              Follow team
-            </Button>
-          )}
-          {user && myRole?.role === 'subscriber' && (
-            <Button size="sm" variant="subtle" color="gray" loading={subscribing} onClick={handleSubscribe}>
-              Unfollow
-            </Button>
-          )}
-          <CopyButton value={calendarUrl} timeout={2000}>
-            {({ copied, copy }) => (
-              <Tooltip label={copied ? 'Copied!' : 'Copy calendar link'} withArrow>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  color={copied ? 'teal' : undefined}
-                  leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-                  onClick={copy}
-                >
-                  {copied ? 'Link copied!' : 'Copy calendar link'}
-                </Button>
-              </Tooltip>
+    <Stack gap="lg">
+      {/* Header card with back button + title + actions */}
+      <Paper radius="md" withBorder p="md">
+        <Group gap="sm" wrap="wrap" align="center">
+          <Button
+            component={Link}
+            to="/teams"
+            variant="subtle"
+            color="gray"
+            size="compact-sm"
+            leftSection={<IconArrowLeft size={14} />}
+            radius="xl"
+          >
+            Back
+          </Button>
+          <Box style={{ width: 1, height: 18, background: clubDesign.color.n3 }} />
+          <Title order={2} ff={clubDesign.font.heading} fw={800} fz={{ base: 20, sm: 24 }} style={{ flex: 1, minWidth: 0 }}>
+            {teamMeta.name}
+          </Title>
+          <Group gap="xs" wrap="wrap">
+            {user && !myRole && (
+              <Button size="xs" variant="light" loading={subscribing} onClick={handleSubscribe} radius="xl">
+                Follow team
+              </Button>
             )}
-          </CopyButton>
+            {user && myRole?.role === 'subscriber' && (
+              <Button size="xs" variant="subtle" color="gray" loading={subscribing} onClick={handleSubscribe} radius="xl">
+                Unfollow
+              </Button>
+            )}
+            <CopyButton value={calendarUrl} timeout={2000}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied!' : 'Copy calendar link'} withArrow>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    color={copied ? 'teal' : undefined}
+                    leftSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                    onClick={copy}
+                    radius="xl"
+                  >
+                    {copied ? 'Link copied!' : 'Copy calendar link'}
+                  </Button>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
         </Group>
-      </Group>
-
-      <Text size="xs" c="dimmed">
-        Paste the copied link into Google Calendar, Apple Calendar, or Outlook to subscribe.
-      </Text>
+        <Text size="xs" c="dimmed" mt="xs">
+          Paste the copied link into Google Calendar, Apple Calendar, or Outlook to subscribe.
+        </Text>
+      </Paper>
 
       {contacts.length > 0 && (
-        <Paper p="sm" withBorder radius="md">
-          <Text size="sm" fw={600} mb="xs">Team Contacts</Text>
-          <Stack gap={6}>
+        <Paper p="md" withBorder radius="md">
+          <Text fw={700} ff={clubDesign.font.heading} mb="sm">Team Contacts</Text>
+          <Stack gap="xs">
             {contacts.map(c => (
-              <Group key={c.id} gap="xs" wrap="wrap">
-                <Badge size="xs" variant="light" color={c.role === 'manager' ? 'blue' : 'teal'}>
+              <Group key={c.id} gap="sm" wrap="nowrap">
+                <Box
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 999,
+                    background: 'var(--mantine-primary-color-light)',
+                    color: 'var(--mantine-primary-color-filled)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <IconUser size={16} />
+                </Box>
+                <Box style={{ flex: 1 }}>
+                  <Text size="sm" fw={600}>{c.name}</Text>
+                  <Text size="xs" c="dimmed" tt="capitalize">{c.role}</Text>
+                </Box>
+                <Badge size="xs" variant="light" color={c.role === 'manager' ? 'blue' : 'teal'} radius="xl">
                   {c.role}
                 </Badge>
-                <Text size="sm">{c.name}</Text>
               </Group>
             ))}
           </Stack>
@@ -216,15 +254,45 @@ export function TeamPage({ liveTeams }: Props) {
                 {[...feed.fixtures]
                   .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
                   .map((f) => (
-                    <Paper key={f.id} p="sm" withBorder radius="md">
-                      <Group justify="space-between" wrap="wrap" gap="xs" mb={4}>
-                        <Badge variant="light" size="xs">{f.division}</Badge>
-                        <Text size="xs" c="dimmed">{formatDate(f.date)} · {f.time}</Text>
-                      </Group>
-                      <Text fw={700} size="sm" ta="center">
-                        {f.home_team} vs {f.away_team}
-                      </Text>
-                      <Text size="xs" c="dimmed" ta="center">{f.venue}</Text>
+                    <Paper key={f.id} p="md" withBorder radius="md">
+                      <Box
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr auto 1fr',
+                          gap: 16,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Box>
+                          <Text fw={700} ff={clubDesign.font.heading} fz="sm" c={clubDesign.color.n9}>
+                            {f.home_team}
+                          </Text>
+                          <Text size="xs" c="dimmed" mt={2}>Home</Text>
+                        </Box>
+                        <Stack gap={6} align="center">
+                          <Box
+                            px="sm"
+                            py={6}
+                            style={{
+                              background: clubDesign.color.n1,
+                              border: `1px solid ${clubDesign.color.n3}`,
+                              borderRadius: 8,
+                            }}
+                          >
+                            <Text ff={clubDesign.font.heading} fw={800} fz="xs" c={clubDesign.color.n5} style={{ letterSpacing: 2 }}>
+                              VS
+                            </Text>
+                          </Box>
+                          <Text size="xs" c="dimmed">{formatDate(f.date)} · {f.time}</Text>
+                          <Badge variant="light" radius="xl" size="xs">{f.division}</Badge>
+                        </Stack>
+                        <Box style={{ textAlign: 'right' }}>
+                          <Text fw={700} ff={clubDesign.font.heading} fz="sm" c={clubDesign.color.n9}>
+                            {f.away_team}
+                          </Text>
+                          <Text size="xs" c="dimmed" mt={2}>{f.venue}</Text>
+                        </Box>
+                      </Box>
                     </Paper>
                   ))}
               </Stack>
@@ -236,40 +304,42 @@ export function TeamPage({ liveTeams }: Props) {
               <Text c="dimmed" size="sm">No results yet.</Text>
             ) : (
               <Stack gap="sm">
-              <TeamResultsStats
-                results={[...feed.results].sort((a, b) => b.date.localeCompare(a.date))}
-                teamName={feed.team}
-              />
-              <Table striped highlightOnHover withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Date</Table.Th>
-                    <Table.Th>Home</Table.Th>
-                    <Table.Th ta="center">Score</Table.Th>
-                    <Table.Th>Away</Table.Th>
-                    <Table.Th visibleFrom="sm">Division</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {[...feed.results]
-                    .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
-                    .map((r) => (
-                      <Table.Tr key={r.id}>
-                        <Table.Td><Text size="xs">{formatDate(r.date)}</Text></Table.Td>
-                        <Table.Td><Text size="sm">{r.home_team}</Text></Table.Td>
-                        <Table.Td ta="center">
-                          <Text size="sm" fw={700}>
-                            {r.home_score ?? 'X'} - {r.away_score ?? 'X'}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td><Text size="sm">{r.away_team}</Text></Table.Td>
-                        <Table.Td visibleFrom="sm">
-                          <Text size="xs" c="dimmed">{r.division}</Text>
-                        </Table.Td>
+                <TeamResultsStats
+                  results={[...feed.results].sort((a, b) => b.date.localeCompare(a.date))}
+                  teamName={feed.team}
+                />
+                <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                  <Table striped highlightOnHover>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Date</Table.Th>
+                        <Table.Th>Home</Table.Th>
+                        <Table.Th ta="center">Score</Table.Th>
+                        <Table.Th>Away</Table.Th>
+                        <Table.Th visibleFrom="sm">Division</Table.Th>
                       </Table.Tr>
-                    ))}
-                </Table.Tbody>
-              </Table>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {[...feed.results]
+                        .sort((a, b) => b.date.localeCompare(a.date) || b.time.localeCompare(a.time))
+                        .map((r) => (
+                          <Table.Tr key={r.id}>
+                            <Table.Td><Text size="xs" c="dimmed">{formatDate(r.date)}</Text></Table.Td>
+                            <Table.Td><Text size="sm">{r.home_team}</Text></Table.Td>
+                            <Table.Td ta="center">
+                              <Text ff={clubDesign.font.heading} fw={800} fz="sm">
+                                {r.home_score ?? 'X'} – {r.away_score ?? 'X'}
+                              </Text>
+                            </Table.Td>
+                            <Table.Td><Text size="sm">{r.away_team}</Text></Table.Td>
+                            <Table.Td visibleFrom="sm">
+                              <Text size="xs" c="dimmed">{r.division}</Text>
+                            </Table.Td>
+                          </Table.Tr>
+                        ))}
+                    </Table.Tbody>
+                  </Table>
+                </Paper>
               </Stack>
             )}
           </Tabs.Panel>
