@@ -2,7 +2,7 @@
 
 help:
 	@echo "Targets:"
-	@echo "  make dev              Run full stack (migrates DB + worker + UI)"
+	@echo "  make dev              Run full stack (migrates DB + Vite + Wrangler proxy at :$(WORKER_PORT))"
 	@echo "  make worker          Run wrangler API only"
 	@echo "  make worker-migrated Run worker after migrating local DB"
 	@echo "  make ui              Run Vite UI only"
@@ -47,13 +47,20 @@ ui:
 ui-remote:
 	@cd "$(UI_DIR)" && API_TARGET="$(API_TARGET)" npm run dev -- --port "$(UI_PORT)"
 
-# Runs both; access app at localhost:5173. Ctrl+C stops both.
+# Full stack: Vite in background, Wrangler proxies to it.
+# Access app at http://localhost:$(WORKER_PORT). Ctrl+C stops both.
 dev:
-	@$(MAKE) worker-migrated &
-	@echo "Waiting for worker on port $(WORKER_PORT)..."; \
-	until nc -z localhost $(WORKER_PORT) 2>/dev/null; do sleep 0.5; done; \
-	echo "Worker ready — starting UI"; \
-	$(MAKE) ui
+	@$(MAKE) db-migrate-local
+	@cd "$(UI_DIR)" && npm run dev -- --port "$(UI_PORT)" & \
+	VITE_PID=$$!; \
+	trap "kill $$VITE_PID 2>/dev/null" EXIT INT TERM; \
+	echo "Waiting for Vite on port $(UI_PORT)..."; \
+	until curl -sf "http://localhost:$(UI_PORT)" > /dev/null 2>&1; do sleep 0.5; done; \
+	echo "Vite ready — starting Wrangler (access full stack at http://localhost:$(WORKER_PORT))"; \
+	npx wrangler pages dev \
+		--port "$(WORKER_PORT)" \
+		--proxy "$(UI_PORT)" \
+		--persist-to "$(PERSIST_DIR)"
 
 preview:
 	@npx wrangler pages dev "$(UI_DIR)/dist"
