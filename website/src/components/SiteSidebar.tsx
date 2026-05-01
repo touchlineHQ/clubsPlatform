@@ -58,14 +58,17 @@ interface Props {
   sections: TeamSection[];
   sidebarFeeds?: { feed: TeamFeed; label: string; sectionId: string }[];
   onNavClick: () => void;
+  visibility?: Record<string, boolean>;
 }
 
-export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick }: Props) {
+export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, visibility }: Props) {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, isManager } = useAuth();
 
-  const navItems = club.nav ?? DEFAULT_NAV;
+  const navItems = (club.nav ?? DEFAULT_NAV).filter(
+    ({ to }) => visibility === undefined || !(to in visibility) || visibility[to]
+  );
 
   const visibleFeeds = sidebarFeeds?.filter(
     f => activeSection === 'all' || f.sectionId === activeSection

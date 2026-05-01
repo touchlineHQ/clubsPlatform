@@ -145,6 +145,16 @@ export default function App() {
             sections={data.teams.sections}
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
+            visibility={{
+              '/about':     (data.club.about?.length ?? 0) > 0 || (data.club.history?.length ?? 0) > 0,
+              '/teams':     data.teams.sections.length > 0 || data.liveTeams.length > 0,
+              '/fixtures':  data.teams.sections.length > 0 || data.liveTeams.length > 0,
+              '/register':  data.registration.length > 0,
+              '/committee': (data.committee.committee?.length ?? 0) > 0,
+              '/news':      data.news.length > 0,
+              '/gallery':   data.gallery.length > 0,
+              '/matchday':  data.matchday.length > 0,
+            }}
           />
         </AppShell.Navbar>
 
