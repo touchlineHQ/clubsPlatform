@@ -139,7 +139,7 @@ export function CustomizePage({
             teams={localData.teams}
             onChange={teams => set(d => ({ ...d, teams }))}
             feedTeams={feedTeams}
-            teamSlugPrefix={localData.club.teamSlugPrefix ?? (localData.club.clubFeedSlug ? `${localData.club.clubFeedSlug}-` : undefined)}
+            teamSlugPrefix={localData.club.teamSlugPrefix || (localData.club.clubFeedSlug ? `${localData.club.clubFeedSlug}-` : undefined)}
           />
         </Tabs.Panel>
 

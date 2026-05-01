@@ -92,7 +92,7 @@ export async function loadFeeds(
   teams: TeamsData,
 ): Promise<Pick<AppData, 'clubFeed' | 'liveTeams' | 'sidebarFeeds'>> {
   const feedSlug = club.clubFeedSlug ?? '';
-  const teamSlugPrefix = club.teamSlugPrefix ?? `${feedSlug}-`;
+  const teamSlugPrefix = club.teamSlugPrefix || `${feedSlug}-`;
 
   const [clubFeed, liveTeams] = await Promise.all([
     loadClubFeed(feedSlug),
