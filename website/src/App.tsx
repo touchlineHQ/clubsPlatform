@@ -65,9 +65,9 @@ export default function App() {
 
   // Step 2: once we have a club slug, load all club data
   useEffect(() => {
-    if (!clubSlug) return;
-    loadAllData(clubSlug).then(setFetchedData);
-  }, [clubSlug]);
+    if (!clubSlug || !registry) return;
+    loadAllData(clubSlug, registry.multiClub).then(setFetchedData);
+  }, [clubSlug, registry]);
 
   const data = previewData ?? fetchedData;
 
