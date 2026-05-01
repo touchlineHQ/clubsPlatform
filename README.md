@@ -1,120 +1,159 @@
-# Clubs Platform
+# clubsPlatform
 
-A white labelled website for grassroots football clubs, built with React and TypeScript, deployed to Cloudflare Pages.
+A white-label website platform for grassroots football clubs, built with React and TypeScript, deployed to Cloudflare Pages with a D1 (SQLite) backend.
 
-## Use This for Your Own Club
-
-This site is **whitelabel** — any grassroots football club can fork it and make it their own, with zero coding required. All content is driven by JSON files you can edit in a browser.
-
-**Quick start:**
-
-1. **Fork** this repository
-2. Visit `/#/customise` on the live site to use the built-in editor
-3. Fill in your club details, pick your colour, set up teams
-4. Click **Export ZIP** and replace the files in `website/public/data/`
-5. Add your images to `website/public/images/`
-6. Enable **GitHub Pages** (Settings > Pages > Source: GitHub Actions)
-7. Push to `main` — your site deploys automatically
-
-alternatively this can be deployed on CloudFlare Pages with workers for a serverless authentication solution.
-
-See [WHITELABEL.md](WHITELABEL.md) for the full guide, including the branch-per-club model, live fixture feeds, and manual JSON editing.
+Supports two modes:
+- **Single-club** — fork the repo for one club, edit JSON files, deploy
+- **Multi-club** — one deployment hosts many clubs with a shared landing page, DB-backed content, and self-service sign-up
 
 ## Tech Stack
 
-- **React 18** with TypeScript
-- **Vite** for bundling
-- **Mantine 7** component library (theme colour configurable per club)
-- **React Router 6** (HashRouter for GitHub Pages compatibility)
-- **pnpm** as package manager
+- **React 19** + TypeScript
+- **Vite 6** for bundling
+- **Mantine v9** component library (theme colour configurable per club)
+- **React Router v7** (HashRouter)
+- **Cloudflare Pages Functions** for the API
+- **Cloudflare D1** (SQLite) for club data, auth, and bookings
+- **better-auth v1** for authentication
 
 ## Getting Started
 
-### Frontend Only
 ```bash
-cd website/
-npm install
-npm run dev
+npm install        # install root + UI deps
+make dev           # migrate DB, start Wrangler API + Vite (http://localhost:5173)
 ```
 
-### Full Stack (Frontend + Serverless API)
-This runs the Vite dev server with the Cloudflare Workers API proxy:
+### Other targets
+
 ```bash
-make dev
-```
-Access at http://localhost:5173 — API calls proxied to wrangler on port 8788.
-
-### Other Targets
-```bash
-make worker    # Run wrangler API only (port 8788)
-make ui        # Run Vite UI only (port 5173)
-make preview   # Preview production build
+make worker          # Wrangler API only (port 8788)
+make ui              # Vite UI only (port 5173)
+make ui-remote       # Vite UI pointing at production API
+make preview         # Preview built Pages output locally
+make db-migrate-local   # Apply migrations to local D1
+make db-migrate-prod    # Apply migrations to production D1
 ```
 
-### Database Migrations
-```bash
-make db-migrate-local  # Apply migrations to local D1
-make db-migrate-prod   # Apply migrations to production D1
-```
+## Environment Variables
 
-### Environment Variables
-The wrangler config (`wrangler.toml`) includes:
-- `BETTER_AUTH_SECRET` — Auth secret
-- D1 database binding `DB`
+Set in `wrangler.toml` under `[vars]`:
 
-For local development, create a `.dev.vars` file:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BETTER_AUTH_SECRET` | Auth signing secret | required |
+| `BETTER_AUTH_URL` | Override auth base URL | auto-detected |
+| `MULTI_CLUB` | Enable multi-club platform mode | disabled |
+| `PITCH_BOOKINGS` | Enable pitch scheduling & booking features | disabled |
+
+For local-only overrides without editing `wrangler.toml`, create a `.dev.vars` file (gitignored by Wrangler):
+
 ```
-BETTER_AUTH_SECRET=your-secret-here
 BETTER_AUTH_URL=http://localhost:8788
 ```
+
+## Multi-Club Mode
+
+Set `MULTI_CLUB = "true"` in `wrangler.toml` to activate:
+
+- Root URL shows the **landing page** (club directory + self-service sign-up)
+- Each club is served at `/{slug}/`
+- Club data is stored in D1 and seeded from static JSON on first access
+- Any authenticated user can create their own club and become its admin
+
+### Seeding
+
+On first access to a club, the API seeds the database from static JSON files at:
+
+```
+website/public/data/clubs/{slug}/
+├── club.json
+├── teams.json
+├── committee.json
+├── news.json
+├── registration.json
+├── gallery.json
+└── matchday.json
+```
+
+Once seeded (or saved via the admin panel), the DB is the source of truth. To re-seed from JSON, reset `seeded = 0` in `club_config` for that slug.
+
+## Admin Panel
+
+Admins can edit all club content at `/#/customise`:
+
+- **Club Info** — name, tagline, colours, address, socials, shop URL, about items, history
+- **Teams** — sections and team list
+- **Committee** — roles and members
+- **News** — news items
+- **Registration** — registration links
+- **Gallery** — photo captions and paths
+- **Matchday** — directions, parking, facilities
+
+Changes save to D1 via the API and take effect immediately.
+
+## Feature Flags
+
+| Flag | What it shows |
+|------|---------------|
+| `PITCH_BOOKINGS = "true"` | Pitch Schedule, Request a Pitch, Booking Requests in the sidebar |
 
 ## Project Structure
 
 ```
-website/
-├── public/
-│   ├── data/           # Site content as JSON files (edit these to update content)
-│   │   ├── club.json       — Club name, address, socials, about, history
-│   │   ├── teams.json      — Teams with manager/coach/contact details
-│   │   ├── committee.json  — Committee members and roles
-│   │   ├── registration.json — Registration links per section
-│   │   ├── news.json       — News articles
-│   │   ├── gallery.json    — Gallery photo captions and paths
-│   │   └── matchday.json   — Matchday info (directions, parking, facilities)
-│   └── images/         # Static images
-└── src/
-    ├── pages/          # One component per route
-    ├── components/     # SiteHeader, SiteSidebar
-    ├── utils/          # Icon mappings
-    ├── App.tsx         # Routes
-    ├── data.ts         # Data loading
-    ├── types.ts        # TypeScript interfaces
-    └── theme.ts        # Mantine theme (colour from club.json)
+├── functions/               # Cloudflare Pages Functions (API)
+│   ├── api/                 # Route handlers
+│   └── lib/                 # Shared helpers (auth, DB, seeding)
+├── migrations/              # D1 SQL migrations
+├── website/
+│   ├── public/
+│   │   ├── data/
+│   │   │   ├── clubs/       # Per-club JSON seed files
+│   │   │   │   └── {slug}/  # club.json, teams.json, etc.
+│   │   │   └── index.json   # Club registry (single-club fallback)
+│   │   └── images/          # Static images
+│   └── src/
+│       ├── pages/           # One component per route
+│       ├── components/      # SiteHeader, SiteSidebar, admin forms
+│       ├── context/         # Auth, Club, Section contexts
+│       ├── App.tsx          # Registry loading + routing
+│       ├── data.ts          # Data loading (API + static fallback)
+│       ├── types.ts         # TypeScript interfaces
+│       └── theme.ts         # Mantine theme (colour from club data)
+└── wrangler.toml            # Cloudflare config + feature flags
 ```
 
-## Updating Content
+## Routes
 
-All site content is driven by JSON files in `public/data/` — no code changes needed for most updates. Edit the relevant JSON file and push to `main` to redeploy.
-
-Bantams youth team fixtures and results are loaded automatically from the [fulltimeFeeds](https://github.com/touchlineHQ/fulltimeFeeds) feed.
-
-## Pages
-
-| Route | Page |
-|-------|------|
-| `/` | Home |
-| `/about` | Club history |
-| `/teams` | All teams |
-| `/teams/:teamSlug` | Individual team with fixtures/results |
-| `/fixtures` | Bantams fixtures and results feed |
-| `/register` | Registration links |
-| `/committee` | Committee members |
-| `/news` | News articles |
-| `/gallery` | Photo gallery |
-| `/matchday` | Matchday info (directions, parking, facilities) |
-| `/contact` | Contact form |
-| `/customise` | Whitelabel config editor |
+| Route | Page | Notes |
+|-------|------|-------|
+| `/` | Home | |
+| `/about` | Club story & about | Hidden if no content set |
+| `/teams` | All teams | Hidden if no teams |
+| `/teams/:league/:teamSlug` | Team fixtures/results | |
+| `/fixtures` | Club-wide fixtures feed | Hidden if no teams |
+| `/register` | Registration links | Hidden if no items |
+| `/committee` | Committee members | Hidden if no members |
+| `/news` | News articles | Hidden if no items |
+| `/gallery` | Photo gallery | Hidden if no items |
+| `/matchday` | Matchday info | Hidden if no items |
+| `/contact` | Contact | Hidden if no email/address |
+| `/schedule` | Pitch schedule | Requires `PITCH_BOOKINGS` |
+| `/bookings` | Request a pitch | Requires `PITCH_BOOKINGS` + manager/admin |
+| `/admin/bookings` | Booking requests | Requires `PITCH_BOOKINGS` + admin |
+| `/customise` | Admin panel | Admin only |
+| `/admin/users` | User management | Admin only |
 
 ## Deployment
 
-Pushing to `main` triggers a GitHub Actions workflow that builds the site and deploys `website/dist/` to GitHub Pages automatically.
+Deploy to Cloudflare Pages. Set the build command and output directory in the Pages dashboard:
+
+```
+Build command:   cd website && npm install && npm run build
+Build output:    website/dist
+```
+
+Apply production migrations after deploying:
+
+```bash
+make db-migrate-prod
+```
