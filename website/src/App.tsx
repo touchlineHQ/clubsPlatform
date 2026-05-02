@@ -39,7 +39,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
   return null;
 }
 
-export default function App() {
+export const App = () => {
   const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
@@ -146,33 +146,30 @@ export default function App() {
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
             pitchBookings={registry.pitchBookings}
-            visibility={{
-              '/about':     (data.club.about?.length ?? 0) > 0 || (data.club.history?.length ?? 0) > 0,
-              '/teams':     data.teams.sections.length > 0 || data.liveTeams.length > 0,
-              '/fixtures':  data.teams.sections.length > 0 || data.liveTeams.length > 0,
-              '/register':  data.registration.length > 0,
-              '/committee': (data.committee.committee?.length ?? 0) > 0,
-              '/news':      data.news.length > 0,
-              '/gallery':   data.gallery.length > 0,
-              '/matchday':  data.matchday.length > 0,
-            }}
+            visibility={data.visibility}
           />
         </AppShell.Navbar>
 
         <AppShell.Main>
           <Routes>
-            <Route path="/" element={<HomePage club={data.club} />} />
-            <Route path="/about" element={<AboutPage club={data.club} />} />
-            <Route path="/teams" element={<TeamsPage teams={data.teams} liveTeams={data.liveTeams} />} />
-            <Route path="/teams/:league/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
-            <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
-            <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />
-            <Route path="/register" element={<RegisterPage items={data.registration} />} />
-            <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />
-            <Route path="/news" element={<NewsPage items={data.news} />} />
-            <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />
-            <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />
-            <Route path="/contact" element={<ContactPage club={data.club} />} />
+            <Route path="/" element={<HomePage club={data.club} visibility={data.visibility} />} />
+
+            {data.visibility['/about'] && <Route path="/about" element={<AboutPage club={data.club} />} />}
+            {data.visibility['/teams'] && (
+              <>
+                <Route path="/teams" element={<TeamsPage teams={data.teams} liveTeams={data.liveTeams} />} />
+                <Route path="/teams/:league/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
+                <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
+              </>
+            )}
+            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />})
+            {data.visibility['/register'] && <Route path="/register" element={<RegisterPage items={data.registration} />} />}
+            {data.visibility['/committee'] && <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />}
+            {data.visibility['/news'] && <Route path="/news" element={<NewsPage items={data.news} />} />}
+            {data.visibility['/gallery'] && <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />}
+            {data.visibility['/matchday'] && <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />}
+            {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
+
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
             <Route path="/admin/users" element={
@@ -215,3 +212,5 @@ export default function App() {
     </ClubContext.Provider>
   );
 }
+
+export default App;

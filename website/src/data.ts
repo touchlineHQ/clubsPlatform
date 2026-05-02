@@ -1,4 +1,4 @@
-import type { AppData, Club, ClubEntry, ClubFeed, CommitteeData, GalleryItem, LiveTeam, MatchdayItem, NewsItem, RegistrationItem, TeamFeed, TeamsData } from './types';
+import type { AppData, Club, ClubEntry, ClubFeed, CommitteeData, GalleryItem, LiveTeam, MatchdayItem, NewsItem, RegistrationItem, VisibleItems, TeamFeed, TeamsData } from './types';
 
 const CLUBS_BASE = '/data/clubs/';
 const FEEDS_BASE = 'https://raw.githubusercontent.com/touchlineHQ/fulltimeFeeds/main/feeds/';
@@ -243,7 +243,7 @@ export async function loadClubRegistry(): Promise<{ multiClub: boolean; pitchBoo
   return { multiClub: false, pitchBookings: false, clubs: [] };
 }
 
-export async function loadAllData(clubSlug: string, multiClub = false): Promise<AppData> {
+export const loadAllData = async (clubSlug: string, multiClub = false): Promise<AppData> => {
   let club: Club;
   let registration: RegistrationItem[];
   let gallery: GalleryItem[];
@@ -251,6 +251,7 @@ export async function loadAllData(clubSlug: string, multiClub = false): Promise<
   let teams: TeamsData;
   let committee: CommitteeData;
   let news: NewsItem[];
+  let visibility: VisibleItems;
 
   if (multiClub) {
     // API-only in multi-club mode. GET /api/club triggers seeding so it must be awaited
@@ -295,5 +296,17 @@ export async function loadAllData(clubSlug: string, multiClub = false): Promise<
 
   const feeds = await loadFeeds(club, teams);
 
-  return { club, teams, committee, registration, news, gallery, matchday, ...feeds } as AppData;
+  visibility = {
+    '/about': (club.about?.length ?? 0) > 0 || (club.history?.length ?? 0) > 0,
+    '/contact': !!club.email || Object.values(club.address).some(value => !!value),
+    '/teams': teams.sections.length > 0 || feeds.liveTeams.length > 0,
+    '/fixtures': teams.sections.length > 0 || feeds.liveTeams.length > 0,
+    '/register': registration.length > 0,
+    '/committee': (committee.committee?.length ?? 0) > 0,
+    '/news': news.length > 0,
+    '/gallery': gallery.length > 0,
+    '/matchday': matchday.length > 0,
+  }
+
+  return { club, teams, committee, registration, news, gallery, matchday, visibility, ...feeds } as AppData;
 }

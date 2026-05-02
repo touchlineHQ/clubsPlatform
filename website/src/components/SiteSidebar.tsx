@@ -62,7 +62,7 @@ interface Props {
   visibility?: Record<string, boolean>;
 }
 
-export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) {
+export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) => {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, isManager } = useAuth();

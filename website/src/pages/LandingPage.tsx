@@ -749,7 +749,7 @@ function ContactSection() {
           >
             hello@touchlinehq.co.uk
           </Button>
-          <Text size="sm" style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', maxWidth: 400 }}>
+          <Text size="sm" style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', maxWidth: 450 }}>
             We typically reply within one working day. Tell us your club name, how many teams you have, and what you're looking for.
           </Text>
         </div>
