@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Table, Select, Title, Stack, Alert, Loader, Center, Badge, Text,
-  Tabs, Paper, Group, Button,
+  Table, Select, Stack, Alert, Loader, Center, Badge, Text,
+  Tabs, Paper, Group, Button, Box,
 } from '@mantine/core';
+import { IconUsers, IconUserCog } from '@tabler/icons-react';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
+import { PageHeader } from '../components/club/PageHeader';
+import { clubDesign } from '../theme';
 
 interface UserRow {
   id: string;
@@ -236,49 +239,59 @@ export function AdminUsersPage({ liveTeams }: Props) {
   }
 
   return (
-    <Stack maw={900} mx="auto">
-      <Title order={2}>Manage Users</Title>
+    <Stack maw={1000} mx="auto" gap="lg">
+      <PageHeader
+        title="Manage Users"
+        subtitle={`${users.length} registered user${users.length !== 1 ? 's' : ''} · ${assignments.length} team assignment${assignments.length !== 1 ? 's' : ''}`}
+      />
+
       <Tabs defaultValue="users">
         <Tabs.List>
-          <Tabs.Tab value="users">Users</Tabs.Tab>
-          <Tabs.Tab value="team-roles">Team Assignments</Tabs.Tab>
+          <Tabs.Tab value="users" leftSection={<IconUsers size={14} />}>Users</Tabs.Tab>
+          <Tabs.Tab value="team-roles" leftSection={<IconUserCog size={14} />}>Team Assignments</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="users" pt="md">
           <Stack>
-            <Text size="sm" c="dimmed">{users.length} registered user{users.length !== 1 ? 's' : ''}</Text>
             {error && <Alert color="red" variant="light">{error}</Alert>}
-            <Table striped highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Email</Table.Th>
-                  <Table.Th>Role</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {users.map(user => (
-                  <Table.Tr key={user.id}>
-                    <Table.Td>{user.name}</Table.Td>
-                    <Table.Td>{user.email}</Table.Td>
-                    <Table.Td>
-                      <Select
-                        value={user.role}
-                        onChange={(val) => val && handleRoleChange(user.id, val)}
-                        data={[
-                          { value: 'admin', label: 'Admin' },
-                          { value: 'manager', label: 'Manager' },
-                          { value: 'member', label: 'Member' },
-                        ]}
-                        size="xs"
-                        w={120}
-                        disabled={updating === user.id}
-                      />
-                    </Table.Td>
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+              <Table striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Name</Table.Th>
+                    <Table.Th>Email</Table.Th>
+                    <Table.Th>Role</Table.Th>
                   </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
+                </Table.Thead>
+                <Table.Tbody>
+                  {users.map(user => (
+                    <Table.Tr key={user.id}>
+                      <Table.Td>
+                        <Text fw={600} ff={clubDesign.font.heading} fz="sm">{user.name}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="sm" c="dimmed">{user.email}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Select
+                          value={user.role}
+                          onChange={(val) => val && handleRoleChange(user.id, val)}
+                          data={[
+                            { value: 'admin', label: 'Admin' },
+                            { value: 'manager', label: 'Manager' },
+                            { value: 'member', label: 'Member' },
+                          ]}
+                          size="xs"
+                          w={120}
+                          radius="md"
+                          disabled={updating === user.id}
+                        />
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </Paper>
           </Stack>
         </Tabs.Panel>
 
@@ -286,8 +299,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
           <Stack>
             {assignError && <Alert color="red" variant="light" onClose={() => setAssignError('')} withCloseButton>{assignError}</Alert>}
 
-            <Paper p="md" withBorder>
-              <Title order={4} mb="sm">Add Assignment</Title>
+            <Paper p="lg" withBorder radius="md">
+              <Text fw={800} ff={clubDesign.font.heading} fz="md" mb="sm">Add Assignment</Text>
               <Stack gap="sm">
                 <Group align="flex-end" wrap="wrap" gap="sm">
                   <Select
@@ -297,6 +310,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
                     onChange={setNewUserId}
                     data={userOptions}
                     searchable
+                    radius="md"
                     w={260}
                   />
                   <Select
@@ -306,6 +320,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
                     onChange={setNewTeamSlug}
                     data={teamOptions}
                     searchable
+                    radius="md"
                     w={220}
                   />
                   <Select
@@ -314,9 +329,10 @@ export function AdminUsersPage({ liveTeams }: Props) {
                     value={newRole}
                     onChange={setNewRole}
                     data={roleOptions}
+                    radius="md"
                     w={140}
                   />
-                  <Button onClick={handleAddAssignment} loading={adding} mt={24}>
+                  <Button onClick={handleAddAssignment} loading={adding} radius="xl" mt={24}>
                     Add
                   </Button>
                 </Group>
@@ -329,45 +345,58 @@ export function AdminUsersPage({ liveTeams }: Props) {
             {assignmentsLoading ? (
               <Center h={100}><Loader size="sm" /></Center>
             ) : assignments.length === 0 ? (
-              <Text size="sm" c="dimmed">No team assignments yet.</Text>
+              <Box
+                p="xl"
+                style={{
+                  background: clubDesign.color.n1,
+                  border: `1px dashed ${clubDesign.color.n3}`,
+                  borderRadius: clubDesign.radius.card,
+                  textAlign: 'center',
+                }}
+              >
+                <Text size="sm" c="dimmed">No team assignments yet.</Text>
+              </Box>
             ) : (
-              <Table striped highlightOnHover>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>User</Table.Th>
-                    <Table.Th>Team</Table.Th>
-                    <Table.Th>Role</Table.Th>
-                    <Table.Th></Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {assignments.map(a => (
-                    <Table.Tr key={a.id}>
-                      <Table.Td>
-                        <Text size="sm">{a.userName}</Text>
-                        <Text size="xs" c="dimmed">{a.userEmail}</Text>
-                      </Table.Td>
-                      <Table.Td><Text size="sm">{a.teamName}</Text></Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color={roleColor(a.role)} variant="light">
-                          {a.role}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          color="red"
-                          loading={removing === a.id}
-                          onClick={() => handleRemoveAssignment(a.id)}
-                        >
-                          Remove
-                        </Button>
-                      </Table.Td>
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                <Table striped highlightOnHover>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>User</Table.Th>
+                      <Table.Th>Team</Table.Th>
+                      <Table.Th>Role</Table.Th>
+                      <Table.Th></Table.Th>
                     </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {assignments.map(a => (
+                      <Table.Tr key={a.id}>
+                        <Table.Td>
+                          <Text size="sm" fw={600}>{a.userName}</Text>
+                          <Text size="xs" c="dimmed">{a.userEmail}</Text>
+                        </Table.Td>
+                        <Table.Td><Text size="sm">{a.teamName}</Text></Table.Td>
+                        <Table.Td>
+                          <Badge size="sm" color={roleColor(a.role)} variant="light" radius="xl" tt="capitalize">
+                            {a.role}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="red"
+                            radius="xl"
+                            loading={removing === a.id}
+                            onClick={() => handleRemoveAssignment(a.id)}
+                          >
+                            Remove
+                          </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Paper>
             )}
           </Stack>
         </Tabs.Panel>

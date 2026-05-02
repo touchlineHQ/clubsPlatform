@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Stack, Title, Text, Table, Badge, Divider, Group, Loader, Center, Alert, Tabs, Box } from '@mantine/core';
+import { Stack, Text, Table, Badge, Divider, Group, Loader, Center, Alert, Tabs, Box, Paper } from '@mantine/core';
+import { IconCalendarMonth, IconList } from '@tabler/icons-react';
 import { DatePicker } from '@mantine/dates';
 import { useAuth } from '../context/AuthContext';
+import { PageHeader } from '../components/club/PageHeader';
+import { clubDesign } from '../theme';
 
 interface BookingRequest {
   id: string;
@@ -118,19 +121,22 @@ export function PitchSchedulePage() {
   const bookedDates = new Set(bookings.map(b => b.date));
 
   return (
-    <Stack maw={1100} mx="auto">
-      <Title order={2}>Pitch Schedule</Title>
-      <Text size="sm" c="dimmed">All confirmed pitch bookings at the club.</Text>
+    <Stack maw={1100} mx="auto" gap="lg">
+      <PageHeader
+        title="Pitch Schedule"
+        subtitle={`${upcoming.length} upcoming · ${past.length} past · all confirmed bookings`}
+      />
 
-      {error && <Alert color="red" variant="light">{error}</Alert>}
+      {error && <Alert color="red" variant="light" radius="md">{error}</Alert>}
 
       <Tabs defaultValue="calendar">
         <Tabs.List>
-          <Tabs.Tab value="calendar">Calendar View</Tabs.Tab>
-          <Tabs.Tab value="list">List View</Tabs.Tab>
+          <Tabs.Tab value="calendar" leftSection={<IconCalendarMonth size={14} />}>Calendar</Tabs.Tab>
+          <Tabs.Tab value="list" leftSection={<IconList size={14} />}>List</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="calendar" pt="md">
+          <Paper p="lg" withBorder radius="md">
           <Group align="flex-start" gap="xl" wrap="wrap">
             <DatePicker
               value={selectedDate}
@@ -254,6 +260,7 @@ export function PitchSchedulePage() {
               )}
             </Stack>
           </Group>
+          </Paper>
         </Tabs.Panel>
 
         <Tabs.Panel value="list" pt="md">

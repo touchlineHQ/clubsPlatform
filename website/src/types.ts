@@ -115,6 +115,10 @@ export interface NewsItem {
   sections?: string[]; // if absent or empty, shown for all section filters
 }
 
+export interface VisibleItems {
+  [key: string]: boolean
+}
+
 export interface GalleryItem {
   src?: string;
   caption: string;
@@ -171,6 +175,7 @@ export interface AppData {
   clubFeed: ClubFeed | null;
   liveTeams: LiveTeam[];
   sidebarFeeds: { feed: TeamFeed; label: string; sectionId: string }[];
+  visibility: VisibleItems;
 }
 
 export interface UserTeamRole {

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
-  Stack, Title, Text, Tabs, Table, Badge, Button,
-  Select, Textarea, Alert, Group, Paper,
+  Stack, Text, Tabs, Table, Badge, Button,
+  Select, Textarea, Alert, Group, Paper, Box,
 } from '@mantine/core';
+import { IconCalendarPlus, IconListDetails } from '@tabler/icons-react';
 import { useAuth } from '../context/AuthContext';
 import type { LiveTeam } from '../types';
+import { PageHeader } from '../components/club/PageHeader';
+import { clubDesign } from '../theme';
 
 interface Pitch {
   id: string;
@@ -235,18 +238,24 @@ export function PitchBookingPage({ liveTeams }: Props) {
   };
 
   return (
-    <Stack maw={900} mx="auto">
-      <Title order={2}>Pitch Bookings</Title>
-      <Text size="sm" c="dimmed">Request a pitch booking or view your existing requests.</Text>
+    <Stack maw={900} mx="auto" gap="lg">
+      <PageHeader
+        title="Pitch Bookings"
+        subtitle="Request a pitch booking or view your existing requests."
+      />
 
       <Tabs value={activeTab} onChange={setActiveTab}>
         <Tabs.List>
-          <Tabs.Tab value="request">Request a Pitch</Tabs.Tab>
-          <Tabs.Tab value="my-requests">My Requests</Tabs.Tab>
+          <Tabs.Tab value="request" leftSection={<IconCalendarPlus size={14} />}>
+            Request a Pitch
+          </Tabs.Tab>
+          <Tabs.Tab value="my-requests" leftSection={<IconListDetails size={14} />}>
+            My Requests
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="request" pt="md">
-              <Paper p="md" withBorder>
+          <Paper p="lg" withBorder radius="md">
             <Stack>
               {error && <Alert color="red" variant="light" onClose={() => setError('')} withCloseButton>{error}</Alert>}
               {success && <Alert color="green" variant="light" onClose={() => setSuccess('')} withCloseButton>{success}</Alert>}
@@ -292,7 +301,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
                   type="date"
                   value={date}
                   onChange={(e) => setDate(e.currentTarget.value)}
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px' }}
+                  style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${clubDesign.color.n3}`, fontSize: '14px', fontFamily: 'inherit' }}
                 />
               </Stack>
 
@@ -303,7 +312,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
                     type="time"
                     value={timeStart}
                     onChange={(e) => setTimeStart(e.currentTarget.value)}
-                    style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px' }}
+                    style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${clubDesign.color.n3}`, fontSize: '14px', fontFamily: 'inherit' }}
                   />
                 </Stack>
                 <Stack gap={4}>
@@ -312,7 +321,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
                     type="time"
                     value={timeEnd}
                     onChange={(e) => setTimeEnd(e.currentTarget.value)}
-                    style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px' }}
+                    style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${clubDesign.color.n3}`, fontSize: '14px', fontFamily: 'inherit' }}
                   />
                 </Stack>
               </Group>
@@ -338,7 +347,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
                 rows={3}
               />
 
-              <Button onClick={handleSubmit} loading={submitting}>
+              <Button onClick={handleSubmit} loading={submitting} radius="xl" size="md">
                 Submit Request
               </Button>
             </Stack>
@@ -347,8 +356,19 @@ export function PitchBookingPage({ liveTeams }: Props) {
 
         <Tabs.Panel value="my-requests" pt="md">
           {requests.length === 0 ? (
-            <Text c="dimmed">You have no booking requests yet.</Text>
+            <Box
+              p="xl"
+              style={{
+                background: clubDesign.color.n1,
+                border: `1px dashed ${clubDesign.color.n3}`,
+                borderRadius: clubDesign.radius.card,
+                textAlign: 'center',
+              }}
+            >
+              <Text c="dimmed">You have no booking requests yet.</Text>
+            </Box>
           ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -363,12 +383,14 @@ export function PitchBookingPage({ liveTeams }: Props) {
               <Table.Tbody>
                 {requests.map((req) => (
                   <Table.Tr key={req.id}>
-                    <Table.Td>{req.date}</Table.Td>
-                    <Table.Td>{req.timeStart}–{req.timeEnd}</Table.Td>
-                    <Table.Td>{req.teamName}</Table.Td>
-                    <Table.Td>{req.format}</Table.Td>
+                    <Table.Td><Text size="sm">{req.date}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{req.timeStart}–{req.timeEnd}</Text></Table.Td>
+                    <Table.Td><Text size="sm" fw={600}>{req.teamName}</Text></Table.Td>
                     <Table.Td>
-                      <Badge color={statusColor(req.status)} variant="light">
+                      <Badge variant="light" radius="xl" size="sm">{req.format}</Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge color={statusColor(req.status)} variant="light" radius="xl" size="sm" tt="capitalize">
                         {req.status}
                       </Badge>
                     </Table.Td>
@@ -376,13 +398,14 @@ export function PitchBookingPage({ liveTeams }: Props) {
                       {req.status === 'declined' && req.declineReason
                         ? <Text size="xs" c="red">{req.declineReason}</Text>
                         : req.notes
-                          ? <Text size="xs">{req.notes}</Text>
+                          ? <Text size="xs" c="dimmed" lineClamp={2}>{req.notes}</Text>
                           : null}
                     </Table.Td>
                   </Table.Tr>
                 ))}
               </Table.Tbody>
             </Table>
+            </Paper>
           )}
         </Tabs.Panel>
       </Tabs>
