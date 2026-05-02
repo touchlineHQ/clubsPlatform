@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useDisclosure } from '@mantine/hooks';
 import {
-  Stack, Title, Tabs, Table, Badge, Button, Modal,
-  Select, Textarea, Group, Alert, Text, Paper,
+  Stack, Tabs, Table, Badge, Button, Modal,
+  Select, Textarea, Group, Alert, Text, Paper, Box,
 } from '@mantine/core';
+import { IconClock, IconCalendarEvent, IconRefresh } from '@tabler/icons-react';
+import { PageHeader } from '../components/club/PageHeader';
+import { clubDesign } from '../theme';
 
 interface Pitch {
   id: string;
@@ -237,39 +240,55 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
     : [];
 
   return (
-    <Stack maw={1100} mx="auto">
-      <Group justify="space-between" align="center">
-        <Title order={2}>Booking Administration</Title>
-        {clubFeedSlug && (
+    <Stack maw={1100} mx="auto" gap="lg">
+      <PageHeader
+        title="Booking Administration"
+        subtitle={`${requests.length} pending request${requests.length === 1 ? '' : 's'} · ${bookings.length} confirmed booking${bookings.length === 1 ? '' : 's'}`}
+        actions={clubFeedSlug ? (
           <Button
             size="sm"
             variant="light"
+            radius="xl"
             loading={importing}
             onClick={handleImportFixtures}
+            leftSection={<IconRefresh size={14} />}
           >
             Import Fixtures
           </Button>
-        )}
-      </Group>
+        ) : null}
+      />
 
       {successMsg && (
-        <Alert color="green" variant="light" onClose={() => setSuccessMsg('')} withCloseButton>
+        <Alert color="green" variant="light" radius="md" onClose={() => setSuccessMsg('')} withCloseButton>
           {successMsg}
         </Alert>
       )}
 
       <Tabs defaultValue="pending">
         <Tabs.List>
-          <Tabs.Tab value="pending">
+          <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
             Pending Requests {requests.length > 0 && `(${requests.length})`}
           </Tabs.Tab>
-          <Tabs.Tab value="bookings">All Bookings</Tabs.Tab>
+          <Tabs.Tab value="bookings" leftSection={<IconCalendarEvent size={14} />}>
+            All Bookings
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="pending" pt="md">
           {requests.length === 0 ? (
-            <Text c="dimmed">No pending requests.</Text>
+            <Box
+              p="xl"
+              style={{
+                background: clubDesign.color.n1,
+                border: `1px dashed ${clubDesign.color.n3}`,
+                borderRadius: clubDesign.radius.card,
+                textAlign: 'center',
+              }}
+            >
+              <Text c="dimmed">No pending requests.</Text>
+            </Box>
           ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -286,19 +305,29 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
               <Table.Tbody>
                 {requests.map((req) => (
                   <Table.Tr key={req.id}>
-                    <Table.Td>{req.userName}</Table.Td>
-                    <Table.Td>{req.userEmail}</Table.Td>
-                    <Table.Td>{req.teamName}</Table.Td>
-                    <Table.Td>{req.date}</Table.Td>
-                    <Table.Td>{req.timeStart}–{req.timeEnd}</Table.Td>
-                    <Table.Td>{req.format}</Table.Td>
-                    <Table.Td>{req.notes ?? ''}</Table.Td>
+                    <Table.Td>
+                      <Text size="sm" fw={600}>{req.userName}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed">{req.userEmail}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="sm">{req.teamName}</Text>
+                    </Table.Td>
+                    <Table.Td><Text size="sm">{req.date}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{req.timeStart}–{req.timeEnd}</Text></Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" radius="xl" size="sm">{req.format}</Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" lineClamp={1}>{req.notes ?? ''}</Text>
+                    </Table.Td>
                     <Table.Td>
                       <Group gap="xs">
-                        <Button size="xs" color="green" onClick={() => handleOpenApprove(req)}>
+                        <Button size="xs" color="green" radius="xl" onClick={() => handleOpenApprove(req)}>
                           Approve
                         </Button>
-                        <Button size="xs" color="red" variant="light" onClick={() => handleOpenDecline(req)}>
+                        <Button size="xs" color="red" radius="xl" variant="light" onClick={() => handleOpenDecline(req)}>
                           Decline
                         </Button>
                       </Group>
@@ -307,13 +336,25 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
                 ))}
               </Table.Tbody>
             </Table>
+            </Paper>
           )}
         </Tabs.Panel>
 
         <Tabs.Panel value="bookings" pt="md">
           {bookings.length === 0 ? (
-            <Text c="dimmed">No bookings yet.</Text>
+            <Box
+              p="xl"
+              style={{
+                background: clubDesign.color.n1,
+                border: `1px dashed ${clubDesign.color.n3}`,
+                borderRadius: clubDesign.radius.card,
+                textAlign: 'center',
+              }}
+            >
+              <Text c="dimmed">No bookings yet.</Text>
+            </Box>
           ) : (
+            <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
             <Table striped highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -329,19 +370,24 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
               <Table.Tbody>
                 {bookings.map((bkg) => (
                   <Table.Tr key={bkg.id}>
-                    <Table.Td>{bkg.date}</Table.Td>
-                    <Table.Td>{bkg.timeStart}–{bkg.timeEnd}</Table.Td>
-                    <Table.Td>{bkg.pitchName}</Table.Td>
-                    <Table.Td>{bkg.teamName}</Table.Td>
+                    <Table.Td><Text size="sm">{bkg.date}</Text></Table.Td>
+                    <Table.Td><Text size="sm">{bkg.timeStart}–{bkg.timeEnd}</Text></Table.Td>
                     <Table.Td>
-                      <Badge variant="light">{bkg.format}</Badge>
+                      <Text size="sm" fw={600}>{bkg.pitchName}</Text>
                     </Table.Td>
-                    <Table.Td>{bkg.notes ?? ''}</Table.Td>
+                    <Table.Td><Text size="sm">{bkg.teamName}</Text></Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" radius="xl" size="sm">{bkg.format}</Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs" c="dimmed" lineClamp={1}>{bkg.notes ?? ''}</Text>
+                    </Table.Td>
                     <Table.Td>
                       <Button
                         size="xs"
                         color="red"
                         variant="light"
+                        radius="xl"
                         onClick={() => handleDeleteBooking(bkg.id)}
                       >
                         Delete
@@ -351,6 +397,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
                 ))}
               </Table.Tbody>
             </Table>
+            </Paper>
           )}
         </Tabs.Panel>
       </Tabs>
@@ -366,14 +413,18 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
           <Stack>
             {error && <Alert color="red" variant="light">{error}</Alert>}
 
-            <Paper p="sm" withBorder>
-              <Text size="sm" fw={500}>Request Details</Text>
-              <Text size="sm">Manager: {selectedRequest.userName} ({selectedRequest.userEmail})</Text>
-              <Text size="sm">Team: {selectedRequest.teamName}</Text>
-              <Text size="sm">Date: {selectedRequest.date}</Text>
-              <Text size="sm">Requested time: {selectedRequest.timeStart}–{selectedRequest.timeEnd}</Text>
-              <Text size="sm">Format: {selectedRequest.format}</Text>
-              {selectedRequest.notes && <Text size="sm">Notes: {selectedRequest.notes}</Text>}
+            <Paper p="md" withBorder radius="md" bg={clubDesign.color.n1}>
+              <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb="xs" style={{ letterSpacing: '0.05em' }}>
+                Request Details
+              </Text>
+              <Stack gap={4}>
+                <Text size="sm"><Text component="span" fw={600}>Manager:</Text> {selectedRequest.userName} ({selectedRequest.userEmail})</Text>
+                <Text size="sm"><Text component="span" fw={600}>Team:</Text> {selectedRequest.teamName}</Text>
+                <Text size="sm"><Text component="span" fw={600}>Date:</Text> {selectedRequest.date}</Text>
+                <Text size="sm"><Text component="span" fw={600}>Requested time:</Text> {selectedRequest.timeStart}–{selectedRequest.timeEnd}</Text>
+                <Text size="sm"><Text component="span" fw={600}>Format:</Text> {selectedRequest.format}</Text>
+                {selectedRequest.notes && <Text size="sm"><Text component="span" fw={600}>Notes:</Text> {selectedRequest.notes}</Text>}
+              </Stack>
             </Paper>
 
             <Select
@@ -396,7 +447,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
                     const duration = selectedRequest ? getDurationByFormat(selectedRequest.format) : 2;
                     setApproveForm((f) => ({ ...f, timeStart: newStart, timeEnd: addHours(newStart, duration) }));
                   }}
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px' }}
+                  style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${clubDesign.color.n3}`, fontSize: '14px', fontFamily: 'inherit' }}
                 />
               </Stack>
               <Stack gap={4}>
@@ -405,7 +456,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
                   type="time"
                   value={approveForm.timeEnd}
                   onChange={(e) => setApproveForm((f) => ({ ...f, timeEnd: e.currentTarget?.value ?? f.timeEnd }))}
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ced4da', fontSize: '14px' }}
+                  style={{ padding: '9px 12px', borderRadius: 8, border: `1px solid ${clubDesign.color.n3}`, fontSize: '14px', fontFamily: 'inherit' }}
                 />
               </Stack>
             </Group>
@@ -419,10 +470,10 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
             />
 
             <Group justify="flex-end">
-              <Button variant="default" onClick={closeApprove} disabled={processing}>
+              <Button variant="default" radius="xl" onClick={closeApprove} disabled={processing}>
                 Cancel
               </Button>
-              <Button color="green" onClick={handleApprove} loading={processing}>
+              <Button color="green" radius="xl" onClick={handleApprove} loading={processing}>
                 Confirm Approval
               </Button>
             </Group>
@@ -455,10 +506,10 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
             />
 
             <Group justify="flex-end">
-              <Button variant="default" onClick={closeDecline} disabled={processing}>
+              <Button variant="default" radius="xl" onClick={closeDecline} disabled={processing}>
                 Cancel
               </Button>
-              <Button color="red" onClick={handleDecline} loading={processing}>
+              <Button color="red" radius="xl" onClick={handleDecline} loading={processing}>
                 Confirm Decline
               </Button>
             </Group>

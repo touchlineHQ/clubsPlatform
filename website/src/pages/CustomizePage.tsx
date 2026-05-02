@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Tabs, Stack, Title, Text, Group, Button, Paper, Alert } from '@mantine/core';
+import { Tabs, Stack, Text, Group, Button, Paper, Badge } from '@mantine/core';
 import {
   IconUsers, IconId, IconNews, IconRefresh, IconBuildingStore,
-  IconPhoto, IconCalendarEvent, IconInfoCircle,
+  IconPhoto, IconCalendarEvent, IconInfoCircle, IconEye,
 } from '@tabler/icons-react';
 import type { AppData } from '../types';
 import { loadFeeds, loadAllFeedTeams, loadClubSlugs } from '../data';
@@ -16,6 +16,7 @@ import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
 import { useClub } from '../context/ClubContext';
+import { PageHeader } from '../components/club/PageHeader';
 
 interface Props {
   originalData: AppData;
@@ -81,16 +82,27 @@ export function CustomizePage({
 
   return (
     <Stack gap="lg">
-      <div>
-        <Title order={2} mb="xs">Site Admin</Title>
-        <Text c="dimmed" size="sm">
-          Edit your club's content below. Preview changes live, then save to publish.
-        </Text>
-      </div>
+      <PageHeader
+        title="Site Admin"
+        subtitle="Edit your club's content below. Preview changes live, then save to publish."
+        actions={
+          previewActive ? (
+            <Badge
+              variant="light"
+              color="green"
+              radius="xl"
+              size="lg"
+              leftSection={<IconEye size={12} />}
+            >
+              Preview active
+            </Badge>
+          ) : null
+        }
+      />
 
-      <Paper p="md" withBorder>
+      <Paper p="md" radius="md" withBorder>
         <Group justify="space-between" wrap="wrap">
-          <Group gap="sm">
+          <Group gap="xs">
             <SaveButton
               data={localData}
               onSaved={(savedClub) => {
@@ -99,17 +111,25 @@ export function CustomizePage({
                 }
               }}
             />
-            <Button variant="light" onClick={applyPreview} loading={loadingFeeds}>
+            <Button variant="light" radius="xl" onClick={applyPreview} loading={loadingFeeds} leftSection={<IconEye size={14} />}>
               Apply Preview
             </Button>
             {previewActive && (
-              <Button variant="subtle" color="red" leftSection={<IconRefresh size={14} />} onClick={onResetPreview}>
+              <Button
+                variant="subtle"
+                color="red"
+                radius="xl"
+                leftSection={<IconRefresh size={14} />}
+                onClick={onResetPreview}
+              >
                 Reset
               </Button>
             )}
           </Group>
           {previewActive && (
-            <Text size="xs" c="green" fw={600}>Preview active — navigate to other pages to see your changes</Text>
+            <Text size="xs" c="green" fw={600}>
+              Preview active — navigate to other pages to see your changes
+            </Text>
           )}
         </Group>
       </Paper>
