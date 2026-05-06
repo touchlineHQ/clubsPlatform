@@ -60,9 +60,6 @@ const COLUMN_MIGRATIONS = [
   `ALTER TABLE "club_config" ADD COLUMN "data" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0`,
-  `DROP INDEX IF EXISTS "uq_player_registration_club_player_team"`,
-  `ALTER TABLE "player_registration" DROP COLUMN "teamSlug"`,
-  `CREATE UNIQUE INDEX IF NOT EXISTS "uq_player_registration_club_player_teamname" ON "player_registration" ("clubSlug", "playerId", "teamName")`,
 ];
 
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
