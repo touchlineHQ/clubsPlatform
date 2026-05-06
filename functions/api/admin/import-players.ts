@@ -177,26 +177,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
       // Upsert player_registration
       const teamName = String(row.teamName ?? "").trim();
-      const teamSlug = slugify(teamName);
       const ageGroup = String(row.ageGroup ?? "").trim() || null;
       const expiry = String(row.registrationExpiry ?? "").trim() || null;
       const status = String(row.registrationStatus ?? "").trim() || null;
 
       const existingReg = await context.env.DB
-        .prepare(`SELECT id FROM "player_registration" WHERE clubSlug = ? AND playerId = ? AND teamSlug = ? LIMIT 1`)
-        .bind(clubSlug, playerId, teamSlug)
+        .prepare(`SELECT id FROM "player_registration" WHERE clubSlug = ? AND playerId = ? AND teamName = ? LIMIT 1`)
+        .bind(clubSlug, playerId, teamName)
         .first<{ id: string }>();
 
       if (existingReg) {
         await context.env.DB
-          .prepare(`UPDATE "player_registration" SET teamName = ?, ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
-          .bind(teamName, ageGroup, expiry, status, nowMs(), existingReg.id)
+          .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
+          .bind(ageGroup, expiry, status, nowMs(), existingReg.id)
           .run();
         importResult.players.updated++;
       } else {
         await context.env.DB
-          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamSlug, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(randomId("preg"), clubSlug, playerId, teamSlug, teamName, ageGroup, expiry, status, nowMs(), nowMs())
+          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(randomId("preg"), clubSlug, playerId, teamName, ageGroup, expiry, status, nowMs(), nowMs())
           .run();
       }
     } catch (err) {
