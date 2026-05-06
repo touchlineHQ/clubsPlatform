@@ -11,14 +11,13 @@ CREATE TABLE IF NOT EXISTS "player_registration" (
   "id" TEXT PRIMARY KEY NOT NULL,
   "clubSlug" TEXT NOT NULL,
   "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE,
-  "teamSlug" TEXT NOT NULL,
   "teamName" TEXT NOT NULL,
   "ageGroup" TEXT,
   "registrationExpiry" TEXT,
   "registrationStatus" TEXT,
   "createdAt" INTEGER NOT NULL,
   "updatedAt" INTEGER NOT NULL,
-  UNIQUE("clubSlug", "playerId", "teamSlug")
+  UNIQUE("clubSlug", "playerId", "teamName")
 );
 CREATE INDEX IF NOT EXISTS "idx_player_registration_clubSlug" ON "player_registration" ("clubSlug");
 CREATE INDEX IF NOT EXISTS "idx_player_registration_playerId" ON "player_registration" ("playerId");
