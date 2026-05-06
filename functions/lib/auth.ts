@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 
 const enc = new TextEncoder();
 
-async function hashPwd(password: string): Promise<string> {
+export async function hashPwd(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey(
     "raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]
