@@ -22,7 +22,7 @@ interface ImportResult {
   ok: boolean;
   players: { created: number; updated: number };
   users: { created: number; skipped: number };
-  teams: { stubsCreated: number };
+
   errors: { fanId: string; reason: string }[];
 }
 
@@ -320,9 +320,6 @@ export function AdminImportPage() {
               <Stack gap={4}>
                 <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
                 <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
-                {result.teams.stubsCreated > 0 && (
-                  <Text size="sm">Teams: <b>{result.teams.stubsCreated}</b> stub team(s) created for consolidation</Text>
-                )}
               </Stack>
             </Alert>
 

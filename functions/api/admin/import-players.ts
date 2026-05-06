@@ -16,12 +16,7 @@ interface ImportResult {
   ok: boolean;
   players: { created: number; updated: number };
   users: { created: number; skipped: number };
-  teams: { stubsCreated: number };
   errors: { fanId: string; reason: string }[];
-}
-
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -48,7 +43,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0, updated: 0 },
     users: { created: 0, skipped: 0 },
-    teams: { stubsCreated: 0 },
     errors: [],
   };
 
@@ -92,56 +86,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 3. Resolve / create teams ─────────────────────────────────────────────
-  const uniqueTeamNames = [...new Set(rows.map(r => String(r.teamName ?? "").trim()).filter(Boolean))];
-  const teamSlugToId = new Map<string, string>();
-
-  for (const teamName of uniqueTeamNames) {
-    const teamSlug = slugify(teamName);
-
-    // Check existing team by slug under any section of this club
-    const existing = await context.env.DB
-      .prepare(`
-        SELECT t.id FROM "team" t
-        JOIN "team_section" ts ON ts.id = t.sectionId
-        WHERE t.slug = ? AND (ts.clubSlug = ? OR (? IS NULL AND ts.clubSlug IS NULL))
-        LIMIT 1
-      `)
-      .bind(teamSlug, clubSlug, clubSlug)
-      .first<{ id: string }>();
-
-    if (existing) {
-      teamSlugToId.set(teamSlug, existing.id);
-      continue;
-    }
-
-    // Find-or-create the 'imported' team_section
-    let section = await context.env.DB
-      .prepare(`SELECT id FROM "team_section" WHERE sectionKey = 'imported' AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL)) LIMIT 1`)
-      .bind(clubSlug, clubSlug)
-      .first<{ id: string }>();
-
-    if (!section) {
-      const sectionId = randomId("ts");
-      await context.env.DB
-        .prepare(`INSERT INTO "team_section" (id, clubSlug, sectionKey, name, subtitle, icon, sortOrder, createdAt, updatedAt) VALUES (?, ?, 'imported', 'Imported Teams', '', 'fa-upload', 999, ?, ?)`)
-        .bind(sectionId, clubSlug, nowMs(), nowMs())
-        .run();
-      section = { id: sectionId };
-    }
-
-    // Create stub team with forConsolidation = 1
-    const teamId = randomId("team");
-    await context.env.DB
-      .prepare(`INSERT INTO "team" (id, sectionId, name, description, manager, coach, contact, slug, forConsolidation, sortOrder, createdAt, updatedAt) VALUES (?, ?, ?, '', '', '', '', ?, 1, 0, ?, ?)`)
-      .bind(teamId, section.id, teamName, teamSlug, nowMs(), nowMs())
-      .run();
-
-    teamSlugToId.set(teamSlug, teamId);
-    importResult.teams.stubsCreated++;
-  }
-
-  // ── 4. Upsert players + registrations ────────────────────────────────────
+  // ── 3. Upsert players + registrations ────────────────────────────────────
   const fanIdToPlayerId = new Map<string, string>();
 
   for (const row of rows) {
@@ -203,7 +148,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 5. Upsert users + user_player links ──────────────────────────────────
+  // ── 4. Upsert users + user_player links ──────────────────────────────────
   for (const [email, fanMap] of emailRelMap) {
     try {
       // Find or create user
