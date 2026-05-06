@@ -43,6 +43,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT id, clubSlug, sectionKey, name, subtitle, icon, logo, sortOrder, createdAt, updatedAt
        FROM team_section ts
        WHERE (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))
+         AND sectionKey != 'imported'
        ORDER BY sortOrder ASC, name ASC`
     )
     .bind(clubSlug, clubSlug)
@@ -64,11 +65,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(...sectionIds)
     .all<TeamRow>();
 
-  // Drop sections that have no visible teams (e.g. sections containing only stub/import teams)
-  const teamSectionIds = new Set(teams.results.map(t => t.sectionId));
-  const visibleSections = sections.results.filter(s => teamSectionIds.has(s.id));
-
-  return json({ sections: visibleSections, teams: teams.results });
+  return json({ sections: sections.results, teams: teams.results });
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
