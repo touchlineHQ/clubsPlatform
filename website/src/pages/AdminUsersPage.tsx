@@ -3,7 +3,7 @@ import {
   Table, Select, Stack, Alert, Loader, Center, Badge, Text,
   Tabs, Paper, Group, Button, Box,
 } from '@mantine/core';
-import { IconUsers, IconUserCog } from '@tabler/icons-react';
+import { IconUsers, IconUserCog, IconShirt } from '@tabler/icons-react';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
@@ -15,6 +15,16 @@ interface UserRow {
   email: string;
   role: string;
   createdAt: string;
+}
+
+interface PlayerRegistrationRow {
+  fanId: string;
+  registrationId: string;
+  teamName: string;
+  ageGroup: string;
+  registrationExpiry: string;
+  registrationStatus: string;
+  linkedAccounts: string | null;
 }
 
 interface DefinedTeam {
@@ -41,6 +51,11 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
+
+  // Players tab state
+  const [registrations, setRegistrations] = useState<PlayerRegistrationRow[]>([]);
+  const [regsLoading, setRegsLoading] = useState(true);
+  const [regsError, setRegsError] = useState('');
 
   // Team assignments tab state
   const [assignments, setAssignments] = useState<TeamRoleAssignment[]>([]);
@@ -80,6 +95,19 @@ export function AdminUsersPage({ liveTeams }: Props) {
     }
   };
 
+  const fetchRegistrations = async () => {
+    try {
+      const res = await fetch('/api/admin/player-registrations', { headers: clubHeaders });
+      if (!res.ok) throw new Error('Failed to load registrations');
+      const data = await res.json() as { registrations: PlayerRegistrationRow[] };
+      setRegistrations(data.registrations);
+    } catch {
+      setRegsError('Failed to load player registrations');
+    } finally {
+      setRegsLoading(false);
+    }
+  };
+
   const fetchDefinedTeams = async () => {
     try {
       const res = await fetch('/api/teams', { headers: clubHeaders });
@@ -99,6 +127,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
     fetchUsers();
     fetchAssignments();
     fetchDefinedTeams();
+    fetchRegistrations();
   }, []);
 
   const handleRoleChange = async (userId: string, newRole: string) => {
@@ -249,6 +278,12 @@ export function AdminUsersPage({ liveTeams }: Props) {
         <Tabs.List>
           <Tabs.Tab value="users" leftSection={<IconUsers size={14} />}>Users</Tabs.Tab>
           <Tabs.Tab value="team-roles" leftSection={<IconUserCog size={14} />}>Team Assignments</Tabs.Tab>
+          <Tabs.Tab value="players" leftSection={<IconShirt size={14} />}>
+            Players
+            {registrations.length > 0 && (
+              <Badge size="xs" ml={6} variant="light" color="blue" radius="xl">{registrations.length}</Badge>
+            )}
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="users" pt="md">
@@ -391,6 +426,88 @@ export function AdminUsersPage({ liveTeams }: Props) {
                           >
                             Remove
                           </Button>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Paper>
+            )}
+          </Stack>
+        </Tabs.Panel>
+        <Tabs.Panel value="players" pt="md">
+          <Stack>
+            {regsError && <Alert color="red" variant="light">{regsError}</Alert>}
+
+            {regsLoading ? (
+              <Center h={100}><Loader size="sm" /></Center>
+            ) : registrations.length === 0 ? (
+              <Box
+                p="xl"
+                style={{
+                  background: clubDesign.color.n1,
+                  border: `1px dashed ${clubDesign.color.n3}`,
+                  borderRadius: clubDesign.radius.card,
+                  textAlign: 'center',
+                }}
+              >
+                <Text size="sm" c="dimmed">No player registrations yet. Use Import Players to get started.</Text>
+              </Box>
+            ) : (
+              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                <Table striped highlightOnHover fz="sm">
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>FAN ID</Table.Th>
+                      <Table.Th>Team</Table.Th>
+                      <Table.Th>Age</Table.Th>
+                      <Table.Th>Expiry</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th>Linked accounts</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {registrations.map(r => (
+                      <Table.Tr key={r.registrationId}>
+                        <Table.Td>
+                          <Text size="sm" ff="monospace">{r.fanId}</Text>
+                        </Table.Td>
+                        <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
+                        <Table.Td><Text size="sm">{r.ageGroup || '—'}</Text></Table.Td>
+                        <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
+                        <Table.Td>
+                          {r.registrationStatus ? (
+                            <Badge
+                              size="sm"
+                              variant="light"
+                              color={r.registrationStatus.toLowerCase().includes('registered') ? 'green' : 'orange'}
+                              radius="xl"
+                            >
+                              {r.registrationStatus}
+                            </Badge>
+                          ) : '—'}
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap={4} wrap="wrap">
+                            {r.linkedAccounts
+                              ? r.linkedAccounts.split(',').map((pair, i) => {
+                                  const [email, rel] = pair.split('|');
+                                  return (
+                                    <Badge
+                                      key={i}
+                                      size="xs"
+                                      variant="light"
+                                      color={rel === 'self' ? 'blue' : 'grape'}
+                                      radius="xl"
+                                      title={rel}
+                                    >
+                                      {email}
+                                    </Badge>
+                                  );
+                                })
+                              : <Text size="xs" c="dimmed">—</Text>
+                            }
+                          </Group>
                         </Table.Td>
                       </Table.Tr>
                     ))}

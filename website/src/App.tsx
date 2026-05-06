@@ -27,6 +27,7 @@ import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminImportPage } from './pages/AdminImportPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
@@ -198,6 +199,11 @@ export const App = () => {
             <Route path="/admin/bookings" element={
               <ProtectedRoute requireAdmin>
                 <BookingAdminPage clubFeedSlug={data.club.clubFeedSlug} />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/import" element={
+              <ProtectedRoute requireAdmin>
+                <AdminImportPage />
               </ProtectedRoute>
             } />
             <Route path="/schedule" element={<PitchSchedulePage />} />
