@@ -34,6 +34,3 @@ CREATE TABLE IF NOT EXISTS "user_player" (
 );
 CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId");
 CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId");
-
--- Mark auto-imported teams as needing consolidation with fixture-linked teams
-ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0;
