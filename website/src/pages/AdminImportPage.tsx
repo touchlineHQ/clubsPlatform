@@ -46,7 +46,23 @@ interface ColIndex {
   parentEmail: number;
 }
 
-function parseSheet(rows: string[][]): { parsed: ParsedPlayerRow[]; errors: string[] } {
+// SheetJS returns date cells as JS Date objects when cellDates:true is set.
+// Fall back to serial-number parsing if a number slips through (CSV mode doesn't use cellDates).
+function formatCellDate(value: unknown): string {
+  if (!value && value !== 0) return '';
+  if (value instanceof Date) {
+    const dd = String(value.getDate()).padStart(2, '0');
+    const mm = String(value.getMonth() + 1).padStart(2, '0');
+    return `${dd}/${mm}/${value.getFullYear()}`;
+  }
+  if (typeof value === 'number') {
+    const d = XLSX.SSF.parse_date_code(value);
+    if (d) return `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}`;
+  }
+  return String(value).trim();
+}
+
+function parseSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]; errors: string[] } {
   const errors: string[] = [];
 
   // Find the header row by scanning for a cell matching 'FAN ID'
@@ -88,7 +104,7 @@ function parseSheet(rows: string[][]): { parsed: ParsedPlayerRow[]; errors: stri
       fanId,
       ageGroup:             String(row[colIndex.ageGroup ?? -1] ?? '').trim(),
       teamName:             String(row[colIndex.teamName] ?? '').trim(),
-      registrationExpiry:   String(row[colIndex.registrationExpiry ?? -1] ?? '').trim(),
+      registrationExpiry:   formatCellDate(row[colIndex.registrationExpiry ?? -1]),
       registrationStatus:   String(row[colIndex.registrationStatus ?? -1] ?? '').trim(),
       playerEmail:          String(row[colIndex.playerEmail ?? -1] ?? '').trim().toLowerCase(),
       parentEmails,
@@ -131,10 +147,10 @@ export function AdminImportPage() {
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        const wb = XLSX.read(data, { type: 'array' });
+        const wb = XLSX.read(data, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: '' });
-        const { parsed, errors } = parseSheet(raw as string[][]);
+        const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
+        const { parsed, errors } = parseSheet(raw);
         if (errors.length) {
           setParseErrors(errors);
         } else {
