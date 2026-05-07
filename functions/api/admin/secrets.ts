@@ -1,7 +1,12 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { encryptSecret } from "../../lib/secrets";
 
-const KEY_RE = /^[A-Z][A-Z0-9_]{0,99}$/;
+const ALLOWED_KEYS = ["GC_ACCESS_TOKEN"] as const;
+type AllowedKey = typeof ALLOWED_KEYS[number];
+
+function isAllowedKey(key: string): key is AllowedKey {
+  return (ALLOWED_KEYS as readonly string[]).includes(key);
+}
 
 interface SecretRow {
   id: string;
@@ -38,11 +43,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body = await context.request.json() as { key?: string; value?: string };
   const { key, value } = body;
 
-  if (!key || !KEY_RE.test(key)) {
-    return json(
-      { error: "key must be uppercase letters, digits, and underscores (e.g. GOCARDLESS_API_KEY)" },
-      { status: 400 },
-    );
+  if (!key || !isAllowedKey(key)) {
+    return json({ error: `key must be one of: ${ALLOWED_KEYS.join(", ")}` }, { status: 400 });
   }
   if (!value || value.trim() === "") {
     return json({ error: "value is required" }, { status: 400 });
@@ -72,8 +74,8 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   if ("error" in result) return result.error;
 
   const key = new URL(context.request.url).searchParams.get("key");
-  if (!key || !KEY_RE.test(key)) {
-    return json({ error: "valid key query parameter is required" }, { status: 400 });
+  if (!key || !isAllowedKey(key)) {
+    return json({ error: `key must be one of: ${ALLOWED_KEYS.join(", ")}` }, { status: 400 });
   }
 
   const clubSlug = getClubSlug(context.request);

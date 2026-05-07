@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Stack, Alert, Loader, Center, Text, Paper, Group, Button,
-  Table, TextInput, ActionIcon, Box, PasswordInput,
+  Table, Select, ActionIcon, Box, PasswordInput,
 } from '@mantine/core';
 import { IconAlertCircle, IconTrash, IconDeviceFloppy } from '@tabler/icons-react';
 import { useClub } from '../context/ClubContext';
@@ -22,7 +22,9 @@ export function AdminSecretsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const [newKey, setNewKey] = useState('');
+  const ALLOWED_KEYS = ['GC_ACCESS_TOKEN'];
+
+  const [newKey, setNewKey] = useState<string | null>(null);
   const [newValue, setNewValue] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -46,9 +48,9 @@ export function AdminSecretsPage() {
 
   const handleSave = async () => {
     setSaveError('');
-    const key = newKey.trim().toUpperCase();
-    if (!key) { setSaveError('Key name is required'); return; }
+    if (!newKey) { setSaveError('Please select a key'); return; }
     if (!newValue.trim()) { setSaveError('Value is required'); return; }
+    const key = newKey;
 
     setSaving(true);
     try {
@@ -59,7 +61,7 @@ export function AdminSecretsPage() {
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) { setSaveError(data.error ?? 'Failed to save secret'); return; }
-      setNewKey('');
+      setNewKey(null);
       setNewValue('');
       await fetchSecrets();
     } catch {
@@ -104,12 +106,12 @@ export function AdminSecretsPage() {
         <Text fw={800} ff={clubDesign.font.heading} fz="md" mb="sm">Add or Update Secret</Text>
         <Stack gap="sm">
           <Group align="flex-end" wrap="wrap" gap="sm">
-            <TextInput
-              label="Key name"
-              placeholder="GOCARDLESS_API_KEY"
+            <Select
+              label="Key"
+              placeholder="Select a key"
               value={newKey}
-              onChange={e => setNewKey(e.currentTarget.value.toUpperCase())}
-              description="Uppercase letters, digits, and underscores"
+              onChange={setNewKey}
+              data={ALLOWED_KEYS}
               radius="md"
               w={260}
               styles={{ input: { fontFamily: 'monospace' } }}
