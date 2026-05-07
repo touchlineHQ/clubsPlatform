@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert } from '@mantine/core';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { signUp } from '../auth-client';
 import { useAuth } from '../context/AuthContext';
 
@@ -11,7 +11,13 @@ export function SignUpPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { refresh } = useAuth();
+
+  const rawRedirect = searchParams.get('redirectTo');
+  const redirectTo = rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+    ? rawRedirect
+    : '/';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,7 +30,7 @@ export function SignUpPage() {
         setError(result.error.message ?? 'Registration failed');
       } else {
         await refresh();
-        navigate('/');
+        navigate(redirectTo, { replace: true });
       }
     } catch {
       setError('Registration failed — please try again');
@@ -66,7 +72,7 @@ export function SignUpPage() {
         </form>
       </Paper>
       <Text size="sm" ta="center">
-        Already have an account? <Anchor component={Link} to="/login">Log in</Anchor>
+        Already have an account? <Anchor component={Link} to={`/login${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}>Log in</Anchor>
       </Text>
     </Stack>
   );
