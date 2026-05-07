@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { signIn } from '../auth-client';
+import { signIn, signOut } from '../auth-client';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -12,6 +13,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { refresh } = useAuth();
+  const { clubSlug: currentClubSlug, isMultiClub } = useClub();
 
   const rawRedirect = searchParams.get('redirectTo');
   // Only honour same-app paths to prevent open-redirect.
@@ -29,7 +31,17 @@ export function LoginPage() {
       if (result.error) {
         setError(result.error.message ?? 'Login failed');
       } else {
-        await refresh();
+        const loggedInUser = await refresh();
+
+        // In multi-club mode, reject users who belong to a different club.
+        // Platform admins (clubSlug === null) are allowed everywhere.
+        if (isMultiClub && loggedInUser && loggedInUser.clubSlug !== null && loggedInUser.clubSlug !== currentClubSlug) {
+          await signOut();
+          await refresh();
+          setError('This account is not registered with this club. Please log in on the correct club page.');
+          return;
+        }
+
         navigate(redirectTo, { replace: true });
       }
     } catch {

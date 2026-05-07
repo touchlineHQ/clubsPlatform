@@ -4,6 +4,7 @@ import { IconCalendar, IconClipboardList, IconFileUpload, IconKey, IconSettings,
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 import { tablerIcon } from '../utils/icons';
 
 const DEFAULT_NAV: NavItem[] = [
@@ -65,7 +66,13 @@ interface Props {
 export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) => {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
-  const { user, isAdmin, isManager } = useAuth();
+  const { user, isAdmin, isManager, isPlatformAdmin } = useAuth();
+  const { clubSlug, isMultiClub } = useClub();
+
+  // In multi-club mode, only show elevated links to users who belong to this club.
+  const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
+  const canAdmin = isAdmin && belongsToClub;
+  const canManage = isManager && belongsToClub;
 
   const navItems = (club.nav ?? DEFAULT_NAV).filter(
     ({ to }) => visibility === undefined || !(to in visibility) || visibility[to]
@@ -169,18 +176,18 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </>
       )}
 
-      {user && (
+      {user && belongsToClub && (
         <NavLink
           component={Link}
           to="/my-registrations"
-          label={isAdmin ? 'Club Registrations' : 'My Registrations'}
+          label={canAdmin ? 'Club Registrations' : 'My Registrations'}
           leftSection={<IconShirt size={16} />}
           active={pathname === '/my-registrations'}
           onClick={onNavClick}
         />
       )}
 
-      {pitchBookings && user && (isManager || isAdmin) && (
+      {pitchBookings && canManage && (
         <div style={{ marginTop: 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
@@ -194,7 +201,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </div>
       )}
 
-      {isAdmin && (
+      {canAdmin && (
         <div style={{ marginTop: user ? undefined : 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
