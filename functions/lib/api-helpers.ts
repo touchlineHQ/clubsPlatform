@@ -8,6 +8,8 @@ export interface Env {
   MULTI_CLUB?: string;
   PITCH_BOOKINGS?: string;
   SECRETS_ENCRYPTION_KEY: string;
+  SECRETS_TRANSPORT_PRIVATE_KEY: string; // base64 PKCS8 DER — Cloudflare secret
+  SECRETS_TRANSPORT_PUBLIC_KEY: string;  // base64 SPKI DER — plain env var
 }
 
 export function json(res: unknown, init?: ResponseInit): Response {

@@ -14,6 +14,11 @@ migrations_dir = "migrations"
 BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 # SECRETS_ENCRYPTION_KEY must be set via Cloudflare dashboard secrets (NOT here) — 64 hex chars (32 bytes)
 # For local dev, add to .dev.vars: SECRETS_ENCRYPTION_KEY=<output of: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
+#
+# RSA-2048 transport key pair for browser-to-worker encryption. Generate with:
+#   node -e "const c=require('crypto');const {privateKey,publicKey}=c.generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'},privateKeyEncoding:{type:'pkcs8',format:'der'}});console.log('SECRETS_TRANSPORT_PRIVATE_KEY='+privateKey.toString('base64'));console.log('SECRETS_TRANSPORT_PUBLIC_KEY='+publicKey.toString('base64'));"
+# SECRETS_TRANSPORT_PRIVATE_KEY → Cloudflare dashboard secrets (never commit); for local dev add to .dev.vars
+# SECRETS_TRANSPORT_PUBLIC_KEY  → not sensitive; add to .dev.vars and set below (or in dashboard)
 # Uncomment to enable multi-club platform mode (clubs managed via DB / data/clubs/index.json)
 MULTI_CLUB = "true"
 # Uncomment to enable pitch booking features (pitch schedule, booking requests)

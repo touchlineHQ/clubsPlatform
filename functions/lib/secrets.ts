@@ -25,6 +25,13 @@ function base64urlToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 async function importKey(env: Env): Promise<CryptoKey> {
   const raw = hexToBytes(env.SECRETS_ENCRYPTION_KEY);
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
@@ -56,6 +63,22 @@ export async function decryptSecret(
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: base64urlToBytes(iv) },
     key,
+    base64urlToBytes(encryptedValue),
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
+export async function decryptTransport(env: Env, encryptedValue: string): Promise<string> {
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    base64ToBytes(env.SECRETS_TRANSPORT_PRIVATE_KEY),
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["decrypt"],
+  );
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "RSA-OAEP" },
+    privateKey,
     base64urlToBytes(encryptedValue),
   );
   return new TextDecoder().decode(plaintext);

@@ -14,11 +14,27 @@ interface SecretRow {
   updatedAt: number;
 }
 
+async function encryptForTransport(spkiBase64: string, plaintext: string): Promise<string> {
+  const keyBytes = Uint8Array.from(atob(spkiBase64), c => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey(
+    'spki', keyBytes,
+    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    false, ['encrypt'],
+  );
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'RSA-OAEP' }, key,
+    new TextEncoder().encode(plaintext),
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(ciphertext)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
 export function AdminSecretsPage() {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug } as HeadersInit;
 
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  const [publicKey, setPublicKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -35,8 +51,9 @@ export function AdminSecretsPage() {
     try {
       const res = await fetch('/api/admin/secrets', { headers: clubHeaders });
       if (!res.ok) throw new Error('Failed to load secrets');
-      const data = await res.json() as { secrets: SecretRow[] };
+      const data = await res.json() as { secrets: SecretRow[]; publicKey: string | null };
       setSecrets(data.secrets);
+      setPublicKey(data.publicKey);
     } catch {
       setError('Failed to load secrets');
     } finally {
@@ -52,12 +69,15 @@ export function AdminSecretsPage() {
     if (!newValue.trim()) { setSaveError('Value is required'); return; }
     const key = newKey;
 
+    if (!publicKey) { setSaveError('Transport key not configured on server'); return; }
+
     setSaving(true);
     try {
+      const encryptedValue = await encryptForTransport(publicKey, newValue);
       const res = await fetch('/api/admin/secrets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
-        body: JSON.stringify({ key, value: newValue }),
+        body: JSON.stringify({ key, encryptedValue }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) { setSaveError(data.error ?? 'Failed to save secret'); return; }
@@ -101,6 +121,14 @@ export function AdminSecretsPage() {
         from the dashboard — only overwritten or deleted. Values are encrypted at rest using
         AES-256-GCM and never sent to your browser.
       </Alert>
+
+      {!publicKey && !loading && (
+        <Alert icon={<IconAlertCircle size={16} />} color="orange" variant="light" radius="md">
+          <strong>Transport key not configured.</strong> Set <code>SECRETS_TRANSPORT_PRIVATE_KEY</code>{' '}
+          and <code>SECRETS_TRANSPORT_PUBLIC_KEY</code> on the server before saving secrets.
+          See the README for generation instructions.
+        </Alert>
+      )}
 
       <Paper p="lg" withBorder radius="md">
         <Text fw={800} ff={clubDesign.font.heading} fz="md" mb="sm">Add or Update Secret</Text>

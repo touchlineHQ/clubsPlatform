@@ -1,5 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
-import { encryptSecret } from "../../lib/secrets";
+import { encryptSecret, decryptTransport } from "../../lib/secrets";
 
 const ALLOWED_KEYS = ["GC_ACCESS_TOKEN"] as const;
 type AllowedKey = typeof ALLOWED_KEYS[number];
@@ -29,7 +29,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .all<SecretRow>();
 
-  return json({ secrets: rows.results });
+  return json({ secrets: rows.results, publicKey: context.env.SECRETS_TRANSPORT_PUBLIC_KEY ?? null });
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -40,18 +40,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "SECRETS_ENCRYPTION_KEY is not configured" }, { status: 500 });
   }
 
-  const body = await context.request.json() as { key?: string; value?: string };
-  const { key, value } = body;
+  const body = await context.request.json() as { key?: string; encryptedValue?: string };
+  const { key, encryptedValue: transportCiphertext } = body;
 
   if (!key || !isAllowedKey(key)) {
     return json({ error: `key must be one of: ${ALLOWED_KEYS.join(", ")}` }, { status: 400 });
   }
-  if (!value || value.trim() === "") {
-    return json({ error: "value is required" }, { status: 400 });
+  if (!transportCiphertext) {
+    return json({ error: "encryptedValue is required" }, { status: 400 });
+  }
+  if (!context.env.SECRETS_TRANSPORT_PRIVATE_KEY) {
+    return json({ error: "Transport key not configured" }, { status: 500 });
   }
 
   const clubSlug = getClubSlug(context.request);
-  const { encryptedValue, iv } = await encryptSecret(context.env, value);
+  const plaintext = await decryptTransport(context.env, transportCiphertext);
+  const { encryptedValue, iv } = await encryptSecret(context.env, plaintext);
   const now = nowMs();
 
   await context.env.DB
