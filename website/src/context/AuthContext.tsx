@@ -27,7 +27,7 @@ const AuthContext = createContext<AuthContextValue>({
   isManager: false,
   isPlatformAdmin: false,
   teamRoles: [],
-  refresh: async () => {},
+  refresh: async () => null,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {

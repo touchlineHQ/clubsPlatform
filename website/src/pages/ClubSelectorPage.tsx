@@ -211,7 +211,7 @@ function ClubCard({ club, isDemo }: { club: ClubEntry; isDemo?: boolean }) {
 interface LoginModalProps {
   opened: boolean;
   onClose: () => void;
-  onSuccess: () => Promise<void>;
+  onSuccess: () => Promise<unknown>;
 }
 
 function LoginModal({ opened, onClose, onSuccess }: LoginModalProps) {
