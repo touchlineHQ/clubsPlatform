@@ -1,6 +1,6 @@
 import { NavLink, Stack, Text, Divider, Badge, Group, Paper, Button } from '@mantine/core';
 import { useLocation, Link } from 'react-router-dom';
-import { IconCalendar, IconClipboardList, IconFileUpload, IconSettings, IconShirt, IconShoppingBag, IconUsers } from '@tabler/icons-react';
+import { IconCalendar, IconClipboardList, IconFileUpload, IconKey, IconSettings, IconShirt, IconShoppingBag, IconUsers } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
@@ -219,6 +219,14 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             label="Import Players"
             leftSection={<IconFileUpload size={16} />}
             active={pathname === '/admin/import'}
+            onClick={onNavClick}
+          />
+          <NavLink
+            component={Link}
+            to="/admin/secrets"
+            label="API Secrets"
+            leftSection={<IconKey size={16} />}
+            active={pathname === '/admin/secrets'}
             onClick={onNavClick}
           />
           {pitchBookings && (

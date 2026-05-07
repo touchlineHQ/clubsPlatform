@@ -7,6 +7,7 @@ export interface Env {
   BETTER_AUTH_URL?: string;
   MULTI_CLUB?: string;
   PITCH_BOOKINGS?: string;
+  SECRETS_ENCRYPTION_KEY: string;
 }
 
 export function json(res: unknown, init?: ResponseInit): Response {
