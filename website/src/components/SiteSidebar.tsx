@@ -1,6 +1,6 @@
 import { NavLink, Stack, Text, Divider, Badge, Group, Paper, Button } from '@mantine/core';
 import { useLocation, Link } from 'react-router-dom';
-import { IconCalendar, IconClipboardList, IconFileUpload, IconSettings, IconShoppingBag, IconUsers } from '@tabler/icons-react';
+import { IconCalendar, IconClipboardList, IconFileUpload, IconSettings, IconShirt, IconShoppingBag, IconUsers } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
@@ -167,6 +167,17 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             )}
           </Stack>
         </>
+      )}
+
+      {user && (
+        <NavLink
+          component={Link}
+          to="/my-registrations"
+          label={isAdmin ? 'Club Registrations' : 'My Registrations'}
+          leftSection={<IconShirt size={16} />}
+          active={pathname === '/my-registrations'}
+          onClick={onNavClick}
+        />
       )}
 
       {pitchBookings && user && (isManager || isAdmin) && (

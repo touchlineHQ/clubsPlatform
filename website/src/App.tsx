@@ -27,6 +27,7 @@ import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { MyRegistrationsPage } from './pages/MyRegistrationsPage';
 import { AdminImportPage } from './pages/AdminImportPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
@@ -173,6 +174,11 @@ export const App = () => {
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
+            <Route path="/my-registrations" element={
+              <ProtectedRoute>
+                <MyRegistrationsPage />
+              </ProtectedRoute>
+            } />
             <Route path="/admin/users" element={
               <ProtectedRoute requireAdmin>
                 <AdminUsersPage liveTeams={data.liveTeams} />
