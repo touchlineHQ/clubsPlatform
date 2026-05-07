@@ -28,38 +28,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const isAdmin = role === "admin";
 
-  // Admins scoped to a different club may not view this club's registrations.
   if (isAdmin && isMultiClubMode(context.env) && userClubSlug !== null && userClubSlug !== clubSlug) {
     return json({ error: "Access denied: club mismatch" }, { status: 403 });
   }
 
-  if (isAdmin) {
-    const rows = await context.env.DB
-      .prepare(
-        `SELECT
-           pr.id            AS registrationId,
-           p.fanId,
-           pr.teamName,
-           pr.ageGroup,
-           pr.registrationExpiry,
-           pr.registrationStatus,
-           NULL             AS relationship,
-           GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts
-         FROM player_registration pr
-         JOIN player p ON p.id = pr.playerId
-         LEFT JOIN user_player up ON up.playerId = p.id
-         LEFT JOIN "user" u ON u.id = up.userId
-         WHERE pr.clubSlug = ?
-         GROUP BY pr.id
-         ORDER BY pr.teamName ASC, p.fanId ASC`
-      )
-      .bind(clubSlug)
-      .all<RegistrationRow>();
-
-    return json({ registrations: rows.results, scope: "admin" });
-  }
-
-  const rows = await context.env.DB
+  const personalRows = await context.env.DB
     .prepare(
       `SELECT
          pr.id            AS registrationId,
@@ -79,5 +52,39 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(userId, clubSlug)
     .all<RegistrationRow>();
 
-  return json({ registrations: rows.results, scope: "user" });
+  if (!isAdmin) {
+    return json({
+      personal: personalRows.results,
+      club: null,
+      scope: "user",
+    });
+  }
+
+  const clubRows = await context.env.DB
+    .prepare(
+      `SELECT
+         pr.id            AS registrationId,
+         p.fanId,
+         pr.teamName,
+         pr.ageGroup,
+         pr.registrationExpiry,
+         pr.registrationStatus,
+         NULL             AS relationship,
+         GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts
+       FROM player_registration pr
+       JOIN player p ON p.id = pr.playerId
+       LEFT JOIN user_player up ON up.playerId = p.id
+       LEFT JOIN "user" u ON u.id = up.userId
+       WHERE pr.clubSlug = ?
+       GROUP BY pr.id
+       ORDER BY pr.teamName ASC, p.fanId ASC`
+    )
+    .bind(clubSlug)
+    .all<RegistrationRow>();
+
+  return json({
+    personal: personalRows.results,
+    club: clubRows.results,
+    scope: "admin",
+  });
 };
