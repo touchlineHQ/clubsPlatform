@@ -32,6 +32,7 @@ import { AdminImportPage } from './pages/AdminImportPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
+import { AdminSecretsPage } from './pages/AdminSecretsPage';
 
 /** Extract the first path segment as a potential club slug, e.g. "/east-leake/" → "east-leake" */
 function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
@@ -213,6 +214,11 @@ export const App = () => {
               </ProtectedRoute>
             } />
             <Route path="/schedule" element={<PitchSchedulePage />} />
+            <Route path="/admin/secrets" element={
+              <ProtectedRoute requireAdmin>
+                <AdminSecretsPage />
+              </ProtectedRoute>
+            } />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppShell.Main>

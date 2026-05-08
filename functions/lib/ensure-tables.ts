@@ -40,6 +40,8 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
+  `CREATE TABLE IF NOT EXISTS "club_secret" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "key" TEXT NOT NULL, "encryptedValue" TEXT NOT NULL, "iv" TEXT NOT NULL, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "uq_club_secret_slug_key" ON "club_secret" (COALESCE("clubSlug",''), "key")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [
