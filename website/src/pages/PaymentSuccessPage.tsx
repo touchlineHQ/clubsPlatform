@@ -1,120 +1,108 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
-  Alert, Badge, Button, Center, Code, Group, Paper, Stack, Text, Title,
+  Alert, Badge, Button, Container, Divider, Group,
+  Paper, Stack, Text, ThemeIcon, Title,
 } from '@mantine/core';
-import { IconCheck, IconAlertCircle, IconArrowLeft } from '@tabler/icons-react';
+import { IconCheck, IconAlertTriangle, IconReceipt } from '@tabler/icons-react';
+
+function formatAmount(amountStr: string | null, intervalUnit: string | null): string {
+  const pence = parseInt(amountStr ?? '', 10);
+  if (isNaN(pence)) return '';
+  const pounds = (pence / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+  const freq = intervalUnit === 'weekly' ? 'week' : intervalUnit === 'yearly' ? 'year' : 'month';
+  return `${pounds} / ${freq}`;
+}
 
 export function PaymentSuccessPage() {
+  const [params] = useSearchParams();
   const navigate = useNavigate();
-  const [params, setParams] = useState<URLSearchParams | null>(null);
 
-  useEffect(() => {
-    setParams(new URLSearchParams(window.location.hash.split('?')[1] ?? ''));
-  }, []);
-
-  if (!params) return <Center h={200} />;
-
-  const mandate = params.get('mandate');
-  const subscription = params.get('subscription');
-  const ref = params.get('ref');
-  const amountStr = params.get('amount');
-  const intervalUnit = params.get('interval_unit') ?? 'monthly';
-  const isExisting = params.get('existing') === '1';
-  const hasWarning = params.get('warning') === 'subscription_failed';
-
-  const amount = amountStr ? parseInt(amountStr, 10) : null;
-  const pounds = amount
-    ? (amount / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' })
-    : null;
+  const mandateId = params.get('mandate');
+  const subscriptionId = params.get('subscription');
+  const reference = params.get('ref');
+  const warning = params.get('warning');
+  const existing = params.get('existing') === '1';
+  const amountDisplay = formatAmount(params.get('amount'), params.get('interval_unit'));
 
   return (
-    <Center mih="60vh">
-      <Paper p="xl" radius="lg" withBorder maw={520} w="100%">
-        <Stack gap="lg" align="center">
-          <Center
-            w={64}
-            h={64}
-            style={{ borderRadius: '50%', background: 'var(--mantine-color-green-1)' }}
-          >
-            <IconCheck size={32} color="var(--mantine-color-green-6)" />
-          </Center>
+    <Container size="sm" py="xl">
+      <Stack gap="xl" align="center">
+        <ThemeIcon size={80} radius="xl" color="green.5" variant="light">
+          <IconCheck size={48} />
+        </ThemeIcon>
 
-          <Stack gap="xs" align="center">
-            <Title order={2} ta="center">
-              {isExisting ? 'Payment already set up' : 'Direct Debit set up successfully'}
-            </Title>
-            <Text c="dimmed" ta="center" size="sm">
-              {isExisting
-                ? 'This payment reference is already active — no duplicate subscription was created.'
-                : 'The Direct Debit mandate and subscription have been created with GoCardless.'}
+        <div>
+          <Title order={1} ta="center" c="green.8">Payment Setup Complete</Title>
+          <Text size="lg" c="dimmed" ta="center" mt="sm">
+            Your Direct Debit mandate has been authorised.
+          </Text>
+        </div>
+
+        {warning === 'subscription_failed' && (
+          <Alert icon={<IconAlertTriangle size={16} />} color="yellow" variant="light" radius="md" w="100%">
+            <Text size="sm">
+              Your mandate was authorised successfully, but there was an issue setting up the
+              recurring subscription automatically. Your treasurer has been notified and will
+              activate it shortly. Your reference is <strong>{reference}</strong>.
             </Text>
+          </Alert>
+        )}
+
+        {!warning && subscriptionId && !existing && (
+          <Alert icon={<IconReceipt size={16} />} color="green" variant="light" radius="md" w="100%">
+            <Text size="sm">
+              Your recurring subscription has been created. Payments will be collected automatically
+              and will appear on your bank statement with the reference below.
+            </Text>
+          </Alert>
+        )}
+
+        {existing && subscriptionId && (
+          <Alert icon={<IconReceipt size={16} />} color="blue" variant="light" radius="md" w="100%">
+            <Text size="sm">
+              This subscription is already active — no further action needed.
+            </Text>
+          </Alert>
+        )}
+
+        <Paper p="xl" radius="lg" withBorder style={{ width: '100%' }}>
+          <Stack gap="md">
+            {reference && (
+              <Group justify="space-between">
+                <Text size="sm" c="dimmed">Payment Reference</Text>
+                <Badge size="lg" variant="light" color="green">{reference}</Badge>
+              </Group>
+            )}
+            {amountDisplay && (
+              <Group justify="space-between">
+                <Text size="sm" c="dimmed">Amount</Text>
+                <Text size="sm" fw={600}>{amountDisplay}</Text>
+              </Group>
+            )}
+            {(mandateId || subscriptionId) && <Divider />}
+            {mandateId && (
+              <Group justify="space-between" wrap="nowrap" gap="xl">
+                <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Mandate ID</Text>
+                <Text size="sm" fw={500} ff="monospace" style={{ wordBreak: 'break-all', textAlign: 'right' }}>
+                  {mandateId}
+                </Text>
+              </Group>
+            )}
+            {subscriptionId && (
+              <Group justify="space-between" wrap="nowrap" gap="xl">
+                <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Subscription ID</Text>
+                <Text size="sm" fw={500} ff="monospace" style={{ wordBreak: 'break-all', textAlign: 'right' }}>
+                  {subscriptionId}
+                </Text>
+              </Group>
+            )}
           </Stack>
+        </Paper>
 
-          {hasWarning && (
-            <Alert
-              icon={<IconAlertCircle size={16} />}
-              color="orange"
-              variant="light"
-              radius="md"
-              w="100%"
-            >
-              <Text size="sm">
-                The mandate was created but the subscription could not be set up automatically.
-                Please contact your club treasurer to complete the setup.
-              </Text>
-            </Alert>
-          )}
-
-          <Paper
-            p="md"
-            radius="md"
-            w="100%"
-            style={{ background: 'var(--mantine-color-gray-0)', border: '1px solid var(--mantine-color-gray-2)' }}
-          >
-            <Stack gap="xs">
-              {ref && (
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">Reference</Text>
-                  <Code fw={700}>{ref}</Code>
-                </Group>
-              )}
-              {pounds && !hasWarning && (
-                <Group justify="space-between">
-                  <Text size="sm" c="dimmed">Amount</Text>
-                  <Text size="sm" fw={600}>{pounds} / {intervalUnit === 'weekly' ? 'week' : intervalUnit === 'yearly' ? 'year' : 'month'}</Text>
-                </Group>
-              )}
-              {mandate && (
-                <Group justify="space-between" wrap="nowrap">
-                  <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Mandate ID</Text>
-                  <Code style={{ wordBreak: 'break-all' }}>{mandate}</Code>
-                </Group>
-              )}
-              {subscription && !hasWarning && (
-                <Group justify="space-between" wrap="nowrap">
-                  <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>Subscription ID</Text>
-                  <Code style={{ wordBreak: 'break-all' }}>{subscription}</Code>
-                </Group>
-              )}
-              {isExisting && (
-                <Group justify="center" mt="xs">
-                  <Badge color="blue" variant="light">Subscription already active</Badge>
-                </Group>
-              )}
-            </Stack>
-          </Paper>
-
-          <Button
-            variant="subtle"
-            leftSection={<IconArrowLeft size={16} />}
-            onClick={() => navigate('/')}
-            radius="xl"
-          >
-            Back to home
-          </Button>
-        </Stack>
-      </Paper>
-    </Center>
+        <Button color="green.6" size="lg" radius="xl" onClick={() => navigate('/')}>
+          Return to Home
+        </Button>
+      </Stack>
+    </Container>
   );
 }
