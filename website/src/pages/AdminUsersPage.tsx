@@ -3,11 +3,12 @@ import {
   Table, Select, Stack, Alert, Loader, Center, Badge, Text,
   Tabs, Paper, Group, Button, Box,
 } from '@mantine/core';
-import { IconUsers, IconUserCog, IconShirt } from '@tabler/icons-react';
+import { IconUsers, IconUserCog, IconShirt, IconFileUpload } from '@tabler/icons-react';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 
 interface UserRow {
   id: string;
@@ -284,6 +285,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
               <Badge size="xs" ml={6} variant="light" color="blue" radius="xl">{registrations.length}</Badge>
             )}
           </Tabs.Tab>
+          <Tabs.Tab value="import" leftSection={<IconFileUpload size={14} />}>Import Players</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="users" pt="md">
@@ -516,6 +518,10 @@ export function AdminUsersPage({ liveTeams }: Props) {
               </Paper>
             )}
           </Stack>
+        </Tabs.Panel>
+
+        <Tabs.Panel value="import" pt="md">
+          <ImportPlayersPanel onImported={fetchRegistrations} />
         </Tabs.Panel>
       </Tabs>
     </Stack>

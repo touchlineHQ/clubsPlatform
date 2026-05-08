@@ -5,8 +5,7 @@ import {
 } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconFileUpload, IconUsers } from '@tabler/icons-react';
 import * as XLSX from 'xlsx';
-import { useClub } from '../context/ClubContext';
-import { PageHeader } from '../components/club/PageHeader';
+import { useClub } from '../../context/ClubContext';
 
 interface ParsedPlayerRow {
   fanId: string;
@@ -46,8 +45,6 @@ interface ColIndex {
   parentEmail: number;
 }
 
-// SheetJS returns date cells as JS Date objects when cellDates:true is set.
-// Fall back to serial-number parsing if a number slips through (CSV mode doesn't use cellDates).
 function formatCellDate(value: unknown): string {
   if (!value && value !== 0) return '';
   if (value instanceof Date) {
@@ -65,7 +62,6 @@ function formatCellDate(value: unknown): string {
 function parseSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]; errors: string[] } {
   const errors: string[] = [];
 
-  // Find the header row by scanning for a cell matching 'FAN ID'
   const headerRowIdx = rows.findIndex(r =>
     r.some(cell => String(cell ?? '').trim().toLowerCase() === 'fan id')
   );
@@ -93,7 +89,7 @@ function parseSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]; errors: str
 
   for (const row of dataRows) {
     const fanId = String(row[colIndex.fanId] ?? '').trim();
-    if (!fanId) continue; // skip blank rows
+    if (!fanId) continue;
 
     const parentEmailRaw = String(row[colIndex.parentEmail ?? -1] ?? '').trim();
     const parentEmails = parentEmailRaw
@@ -124,7 +120,11 @@ function summarise(rows: ParsedPlayerRow[]) {
   return { uniqueFans: uniqueFans.size, uniqueTeams: uniqueTeams.size, allEmails: allEmails.size, guardianOnlyEmails: guardianOnlyEmails.size };
 }
 
-export function AdminImportPage() {
+interface ImportPlayersPanelProps {
+  onImported?: () => void;
+}
+
+export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug };
   const inputRef = useRef<HTMLInputElement>(null);
@@ -186,6 +186,7 @@ export function AdminImportPage() {
       const data = await res.json() as ImportResult;
       setResult(data);
       setRows(null);
+      onImported?.();
     } catch (err) {
       setApiError(String(err));
     } finally {
@@ -196,163 +197,151 @@ export function AdminImportPage() {
   const summary = rows ? summarise(rows) : null;
 
   return (
-    <Stack gap={0}>
-      <PageHeader
-        title="Import Players"
-        subtitle="Upload an FA Club Player Report (CSV or XLSX) to batch-create user accounts"
-      />
+    <Stack gap="md">
+      {!rows && !result && (
+        <Paper
+          withBorder
+          p="xl"
+          style={{ borderStyle: 'dashed', cursor: 'pointer', textAlign: 'center' }}
+          onDrop={handleDrop}
+          onDragOver={e => e.preventDefault()}
+          onClick={() => inputRef.current?.click()}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+          />
+          <Center>
+            <Stack align="center" gap="xs">
+              <IconFileUpload size={40} color="gray" />
+              <Text fw={500}>Drop a file here or click to browse</Text>
+              <Text size="sm" c="dimmed">Accepts .csv, .xlsx, .xls (FA Club Player Report)</Text>
+            </Stack>
+          </Center>
+        </Paper>
+      )}
 
-      <Stack p="md" gap="md">
-        {/* Drop zone */}
-        {!rows && !result && (
-          <Paper
-            withBorder
-            p="xl"
-            style={{ borderStyle: 'dashed', cursor: 'pointer', textAlign: 'center' }}
-            onDrop={handleDrop}
-            onDragOver={e => e.preventDefault()}
-            onClick={() => inputRef.current?.click()}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-            />
-            <Center>
-              <Stack align="center" gap="xs">
-                <IconFileUpload size={40} color="gray" />
-                <Text fw={500}>Drop a file here or click to browse</Text>
-                <Text size="sm" c="dimmed">Accepts .csv, .xlsx, .xls (FA Club Player Report)</Text>
-              </Stack>
-            </Center>
-          </Paper>
-        )}
+      {parseErrors.length > 0 && (
+        <Alert icon={<IconAlertCircle size={16} />} color="red" title="Could not parse file">
+          {parseErrors.map((e, i) => <Text key={i} size="sm">{e}</Text>)}
+          <Button mt="sm" size="xs" variant="outline" onClick={() => { setParseErrors([]); setFileName(''); }}>
+            Try another file
+          </Button>
+        </Alert>
+      )}
 
-        {/* Parse errors */}
-        {parseErrors.length > 0 && (
-          <Alert icon={<IconAlertCircle size={16} />} color="red" title="Could not parse file">
-            {parseErrors.map((e, i) => <Text key={i} size="sm">{e}</Text>)}
-            <Button mt="sm" size="xs" variant="outline" onClick={() => { setParseErrors([]); setFileName(''); }}>
-              Try another file
+      {rows && summary && (
+        <Stack gap="md">
+          <Group justify="space-between">
+            <div>
+              <Title order={5}>{fileName}</Title>
+              <Text size="sm" c="dimmed">Preview — review before importing</Text>
+            </div>
+            <Button variant="subtle" size="xs" onClick={() => { setRows(null); setFileName(''); }}>
+              Change file
             </Button>
+          </Group>
+
+          <Group gap="xs">
+            <Badge color="blue">{summary.uniqueFans} players</Badge>
+            <Badge color="teal">{summary.allEmails} email accounts</Badge>
+            <Badge color="grape">{summary.guardianOnlyEmails} guardians</Badge>
+            <Badge color="orange">{summary.uniqueTeams} teams</Badge>
+          </Group>
+
+          <ScrollArea>
+            <Table striped highlightOnHover withTableBorder fz="xs">
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>FAN ID</Table.Th>
+                  <Table.Th>Age</Table.Th>
+                  <Table.Th>Team</Table.Th>
+                  <Table.Th>Expiry</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Player email</Table.Th>
+                  <Table.Th>Parent email(s)</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {rows.map((r, i) => (
+                  <Table.Tr key={i}>
+                    <Table.Td>{r.fanId}</Table.Td>
+                    <Table.Td>{r.ageGroup}</Table.Td>
+                    <Table.Td>{r.teamName}</Table.Td>
+                    <Table.Td>{r.registrationExpiry}</Table.Td>
+                    <Table.Td>{r.registrationStatus}</Table.Td>
+                    <Table.Td>{r.playerEmail || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+                    <Table.Td>{r.parentEmails.join(', ') || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+
+          <Box>
+            <Button
+              leftSection={importing ? <Loader size={14} color="white" /> : <IconUsers size={16} />}
+              onClick={handleConfirm}
+              loading={importing}
+              disabled={importing}
+            >
+              Import {rows.length} player{rows.length !== 1 ? 's' : ''}
+            </Button>
+          </Box>
+        </Stack>
+      )}
+
+      {apiError && (
+        <Alert icon={<IconAlertCircle size={16} />} color="red" title="Import failed">
+          {apiError}
+        </Alert>
+      )}
+
+      {result && (
+        <Stack gap="md">
+          <Alert
+            icon={<IconCheck size={16} />}
+            color={result.errors.length ? 'yellow' : 'green'}
+            title={result.errors.length ? 'Import completed with warnings' : 'Import successful'}
+          >
+            <Stack gap={4}>
+              <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
+              <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
+            </Stack>
           </Alert>
-        )}
 
-        {/* Preview */}
-        {rows && summary && (
-          <Stack gap="md">
-            <Group justify="space-between">
-              <div>
-                <Title order={5}>{fileName}</Title>
-                <Text size="sm" c="dimmed">Preview — review before importing</Text>
-              </div>
-              <Button variant="subtle" size="xs" onClick={() => { setRows(null); setFileName(''); }}>
-                Change file
-              </Button>
-            </Group>
-
-            <Group gap="xs">
-              <Badge color="blue">{summary.uniqueFans} players</Badge>
-              <Badge color="teal">{summary.allEmails} email accounts</Badge>
-              <Badge color="grape">{summary.guardianOnlyEmails} guardians</Badge>
-              <Badge color="orange">{summary.uniqueTeams} teams</Badge>
-            </Group>
-
-            <ScrollArea>
-              <Table striped highlightOnHover withTableBorder fz="xs">
+          {result.errors.length > 0 && (
+            <Paper withBorder p="md">
+              <Title order={6} mb="xs">Row errors</Title>
+              <Table fz="xs">
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>FAN ID</Table.Th>
-                    <Table.Th>Age</Table.Th>
-                    <Table.Th>Team</Table.Th>
-                    <Table.Th>Expiry</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Player email</Table.Th>
-                    <Table.Th>Parent email(s)</Table.Th>
+                    <Table.Th>FAN / Email</Table.Th>
+                    <Table.Th>Reason</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {rows.map((r, i) => (
+                  {result.errors.map((e, i) => (
                     <Table.Tr key={i}>
-                      <Table.Td>{r.fanId}</Table.Td>
-                      <Table.Td>{r.ageGroup}</Table.Td>
-                      <Table.Td>{r.teamName}</Table.Td>
-                      <Table.Td>{r.registrationExpiry}</Table.Td>
-                      <Table.Td>{r.registrationStatus}</Table.Td>
-                      <Table.Td>{r.playerEmail || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
-                      <Table.Td>{r.parentEmails.join(', ') || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+                      <Table.Td>{e.fanId}</Table.Td>
+                      <Table.Td>{e.reason}</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>
               </Table>
-            </ScrollArea>
+            </Paper>
+          )}
 
-            <Box>
-              <Button
-                leftSection={importing ? <Loader size={14} color="white" /> : <IconUsers size={16} />}
-                onClick={handleConfirm}
-                loading={importing}
-                disabled={importing}
-              >
-                Import {rows.length} player{rows.length !== 1 ? 's' : ''}
-              </Button>
-            </Box>
-          </Stack>
-        )}
-
-        {/* API error */}
-        {apiError && (
-          <Alert icon={<IconAlertCircle size={16} />} color="red" title="Import failed">
-            {apiError}
-          </Alert>
-        )}
-
-        {/* Results */}
-        {result && (
-          <Stack gap="md">
-            <Alert
-              icon={<IconCheck size={16} />}
-              color={result.errors.length ? 'yellow' : 'green'}
-              title={result.errors.length ? 'Import completed with warnings' : 'Import successful'}
-            >
-              <Stack gap={4}>
-                <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
-                <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
-              </Stack>
-            </Alert>
-
-            {result.errors.length > 0 && (
-              <Paper withBorder p="md">
-                <Title order={6} mb="xs">Row errors</Title>
-                <Table fz="xs">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>FAN / Email</Table.Th>
-                      <Table.Th>Reason</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {result.errors.map((e, i) => (
-                      <Table.Tr key={i}>
-                        <Table.Td>{e.fanId}</Table.Td>
-                        <Table.Td>{e.reason}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Paper>
-            )}
-
-            <Box>
-              <Button variant="subtle" size="xs" onClick={() => { setResult(null); setFileName(''); }}>
-                Import another file
-              </Button>
-            </Box>
-          </Stack>
-        )}
-      </Stack>
+          <Box>
+            <Button variant="subtle" size="xs" onClick={() => { setResult(null); setFileName(''); }}>
+              Import another file
+            </Button>
+          </Box>
+        </Stack>
+      )}
     </Stack>
   );
 }
