@@ -7,8 +7,7 @@ async function upsertPaymentRecord(
   db: D1Database,
   {
     clubSlug,
-    fanId,
-    teamName,
+    registrationId,
     reference,
     mandateId,
     subscriptionId,
@@ -17,8 +16,7 @@ async function upsertPaymentRecord(
     status,
   }: {
     clubSlug: string | null;
-    fanId: string;
-    teamName: string;
+    registrationId: string;
     reference: string;
     mandateId: string;
     subscriptionId: string | null;
@@ -27,14 +25,14 @@ async function upsertPaymentRecord(
     status: 'active' | 'mandate_only';
   }
 ): Promise<void> {
-  if (!clubSlug) return;
+  if (!clubSlug || !registrationId) return;
   const now = nowMs();
   await db
     .prepare(
       `INSERT INTO "player_payment"
-         (id, clubSlug, fanId, teamName, reference, mandateId, subscriptionId,
+         (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
           amountInPence, intervalUnit, status, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(clubSlug, reference) DO UPDATE SET
          mandateId      = excluded.mandateId,
          subscriptionId = COALESCE(excluded.subscriptionId, subscriptionId),
@@ -44,8 +42,7 @@ async function upsertPaymentRecord(
     .bind(
       randomId('pay'),
       clubSlug,
-      fanId,
-      teamName,
+      registrationId,
       reference,
       mandateId,
       subscriptionId,
@@ -72,8 +69,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const intervalUnit = url.searchParams.get('interval_unit') as 'monthly' | 'weekly' | 'yearly' | null;
   const description = url.searchParams.get('description');
   const clubSlug = url.searchParams.get('club_slug');
-  const fanId = url.searchParams.get('fan') ?? '';
-  const teamName = url.searchParams.get('team') ?? '';
+  const registrationId = url.searchParams.get('registration_id') ?? '';
 
   if (!billingRequestId || !reference || !amountStr) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=missing_params`, 302);
@@ -158,7 +154,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     if (match) {
       try {
         await upsertPaymentRecord(env.DB, {
-          clubSlug, fanId, teamName, reference, mandateId,
+          clubSlug, registrationId, reference, mandateId,
           subscriptionId: match.id,
           amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
         });
@@ -193,7 +189,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     // Mandate exists — record it even without a subscription
     try {
       await upsertPaymentRecord(env.DB, {
-        clubSlug, fanId, teamName, reference, mandateId,
+        clubSlug, registrationId, reference, mandateId,
         subscriptionId: null,
         amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'mandate_only',
       });

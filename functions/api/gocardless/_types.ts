@@ -41,10 +41,9 @@ export interface GCSubscription {
 }
 
 export interface CreateLinkBody {
-  team: string;
-  fan: string;
+  registrationId: string;
   paymentType: string;
   amountInPence: number;
   intervalUnit: 'monthly' | 'weekly' | 'yearly';
-  description: string;
+  description?: string;
 }

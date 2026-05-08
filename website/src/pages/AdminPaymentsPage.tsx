@@ -23,6 +23,7 @@ interface PlayerRegistrationRow {
 
 interface PlayerPaymentRow {
   id: string;
+  registrationId: string;
   fanId: string;
   teamName: string;
   reference: string;
@@ -67,8 +68,8 @@ export function AdminPaymentsPage() {
   const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
   const [loadingPayments, setLoadingPayments] = useState(true);
 
-  const [selectedFan, setSelectedFan] = useState<string | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState('');
+  // Selection keyed by registrationId so players on multiple teams get separate options
+  const [selectedRegId, setSelectedRegId] = useState<string | null>(null);
   const [paymentType, setPaymentType] = useState('SUBS');
   const [amountGbp, setAmountGbp] = useState('');
   const [intervalUnit, setIntervalUnit] = useState<'monthly' | 'weekly' | 'yearly'>('monthly');
@@ -93,27 +94,24 @@ export function AdminPaymentsPage() {
       .finally(() => setLoadingPayments(false));
   }, []);
 
+  // Each registration is its own option — a player on two teams gets two rows
   const playerOptions = registrations.map(r => ({
-    value: r.fanId,
+    value: r.registrationId,
     label: `FAN ${r.fanId} — ${r.teamName}${r.ageGroup ? ` (${r.ageGroup})` : ''}`,
   }));
 
-  const handlePlayerSelect = (fanId: string | null) => {
-    setSelectedFan(fanId);
+  const selectedReg = registrations.find(r => r.registrationId === selectedRegId) ?? null;
+
+  const handleSelect = (regId: string | null) => {
+    setSelectedRegId(regId);
     setGeneratedLink('');
     setGeneratedRef('');
     setGenError('');
-    if (fanId) {
-      const reg = registrations.find(r => r.fanId === fanId);
-      setSelectedTeam(reg?.teamName ?? '');
-    } else {
-      setSelectedTeam('');
-    }
   };
 
-  // Find any existing payment records for the selected player + payment type
-  const existingForSelected = selectedFan
-    ? payments.filter(p => p.fanId === selectedFan && p.reference.endsWith(`-${paymentType}`))
+  // Existing payment records for this registration + payment type
+  const existingForSelected = selectedRegId
+    ? payments.filter(p => p.registrationId === selectedRegId && p.reference.endsWith(`-${paymentType}`))
     : [];
 
   const amountValid = () => {
@@ -121,27 +119,24 @@ export function AdminPaymentsPage() {
     return !isNaN(n) && n > 0;
   };
 
-  const canGenerate = selectedFan && selectedTeam && amountValid();
+  const canGenerate = !!selectedRegId && amountValid();
 
   const handleGenerate = async () => {
-    if (!canGenerate) return;
+    if (!canGenerate || !selectedReg) return;
     setGenerating(true);
     setGenError('');
     setGeneratedLink('');
     setGeneratedRef('');
 
     try {
-      const amount = parseFloat(amountGbp);
       const res = await fetch('/api/gocardless/create-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({
-          team: selectedTeam,
-          fan: selectedFan,
+          registrationId: selectedRegId,
           paymentType,
-          amountInPence: Math.round(amount * 100),
+          amountInPence: Math.round(parseFloat(amountGbp) * 100),
           intervalUnit,
-          description: `${selectedTeam.toUpperCase()} ${paymentType} - FAN ${selectedFan}`,
         }),
       });
 
@@ -187,22 +182,15 @@ export function AdminPaymentsPage() {
         </Alert>
       )}
 
-      {/* ── Step 1: Pick player ── */}
+      {/* ── Step 1: Pick registration ── */}
       <Paper p="lg" withBorder radius="md">
         <Stack gap="md">
-          <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registered player</Text>
+          <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registration</Text>
 
           {loadingPlayers ? (
             <Center h={60}><Loader size="sm" /></Center>
           ) : registrations.length === 0 ? (
-            <Box
-              p="md"
-              style={{
-                background: clubDesign.color.n1,
-                border: `1px dashed ${clubDesign.color.n3}`,
-                borderRadius: 8,
-              }}
-            >
+            <Box p="md" style={{ background: clubDesign.color.n1, border: `1px dashed ${clubDesign.color.n3}`, borderRadius: 8 }}>
               <Text size="sm" c="dimmed" ta="center">
                 No registered players found. Import players first via Admin → Import.
               </Text>
@@ -211,8 +199,8 @@ export function AdminPaymentsPage() {
             <Select
               placeholder="Search by FAN number or team…"
               data={playerOptions}
-              value={selectedFan}
-              onChange={handlePlayerSelect}
+              value={selectedRegId}
+              onChange={handleSelect}
               searchable
               clearable
               radius="md"
@@ -220,27 +208,21 @@ export function AdminPaymentsPage() {
             />
           )}
 
-          {selectedFan && (
+          {selectedReg && (
             <Paper p="sm" radius="sm" style={{ background: clubDesign.color.n1, border: `1px solid ${clubDesign.color.n3}` }}>
-              {(() => {
-                const reg = registrations.find(r => r.fanId === selectedFan);
-                if (!reg) return null;
-                return (
-                  <Group gap="sm" wrap="wrap">
-                    <Badge color="blue" variant="light">FAN {reg.fanId}</Badge>
-                    <Badge color="gray" variant="light">{reg.teamName}</Badge>
-                    {reg.ageGroup && <Badge color="gray" variant="outline">{reg.ageGroup}</Badge>}
-                    {reg.registrationStatus && (
-                      <Badge
-                        color={reg.registrationStatus.toLowerCase() === 'registered' ? 'green' : 'orange'}
-                        variant="light"
-                      >
-                        {reg.registrationStatus}
-                      </Badge>
-                    )}
-                  </Group>
-                );
-              })()}
+              <Group gap="sm" wrap="wrap">
+                <Badge color="blue" variant="light">FAN {selectedReg.fanId}</Badge>
+                <Badge color="gray" variant="light">{selectedReg.teamName}</Badge>
+                {selectedReg.ageGroup && <Badge color="gray" variant="outline">{selectedReg.ageGroup}</Badge>}
+                {selectedReg.registrationStatus && (
+                  <Badge
+                    color={selectedReg.registrationStatus.toLowerCase() === 'registered' ? 'green' : 'orange'}
+                    variant="light"
+                  >
+                    {selectedReg.registrationStatus}
+                  </Badge>
+                )}
+              </Group>
             </Paper>
           )}
         </Stack>
@@ -279,7 +261,7 @@ export function AdminPaymentsPage() {
           {existingForSelected.length > 0 && (
             <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light" radius="md">
               <Text size="sm" fw={600} mb={4}>
-                This player already has a {paymentType} payment record:
+                This registration already has a {paymentType} payment record:
               </Text>
               {existingForSelected.map(p => (
                 <Text key={p.id} size="sm">
@@ -289,8 +271,8 @@ export function AdminPaymentsPage() {
                 </Text>
               ))}
               <Text size="sm" mt={4} c="dimmed">
-                Generating a new link will attempt to create a duplicate via GoCardless.
-                GoCardless will reuse the existing subscription if the mandate matches.
+                Generating a new link may result in a duplicate. GoCardless will reuse the
+                existing subscription if the mandate matches.
               </Text>
             </Alert>
           )}
@@ -320,19 +302,13 @@ export function AdminPaymentsPage() {
             <Divider />
             <Text fw={700} ff={clubDesign.font.heading} fz="md">3. Share with player</Text>
 
-            <Paper
-              p="md"
-              radius="sm"
-              style={{ background: clubDesign.color.n1, border: `1px solid ${clubDesign.color.n3}` }}
-            >
+            <Paper p="md" radius="sm" style={{ background: clubDesign.color.n1, border: `1px solid ${clubDesign.color.n3}` }}>
               <Stack gap="xs">
                 <Group justify="space-between">
                   <Text size="sm" c="dimmed">Reference</Text>
                   <Code fw={700}>{generatedRef}</Code>
                 </Group>
-                <Text size="sm" c="dimmed" style={{ wordBreak: 'break-all' }}>
-                  {generatedLink}
-                </Text>
+                <Text size="sm" c="dimmed" style={{ wordBreak: 'break-all' }}>{generatedLink}</Text>
               </Stack>
             </Paper>
 
@@ -361,8 +337,8 @@ export function AdminPaymentsPage() {
             <Alert icon={<IconReceipt size={16} />} color="blue" variant="light" radius="md">
               <Text size="sm">
                 Send this link to the player or parent. When they complete Direct Debit setup their
-                mandate and {intervalUnit} subscription will be created automatically. Bank statements
-                will show <Code>{generatedRef}</Code> as the reference.
+                mandate and {intervalUnit} subscription will be created automatically. Bank
+                statements will show <Code>{generatedRef}</Code> as the reference.
               </Text>
             </Alert>
           </Stack>
@@ -380,16 +356,8 @@ export function AdminPaymentsPage() {
           {loadingPayments ? (
             <Center h={60}><Loader size="sm" /></Center>
           ) : payments.length === 0 ? (
-            <Box
-              p="xl"
-              style={{
-                background: clubDesign.color.n1,
-                border: `1px dashed ${clubDesign.color.n3}`,
-                borderRadius: 8,
-                textAlign: 'center',
-              }}
-            >
-              <Text size="sm" c="dimmed">No payment records yet. They will appear here once players complete setup.</Text>
+            <Box p="xl" style={{ background: clubDesign.color.n1, border: `1px dashed ${clubDesign.color.n3}`, borderRadius: 8, textAlign: 'center' }}>
+              <Text size="sm" c="dimmed">No payment records yet. They appear here once players complete setup.</Text>
             </Box>
           ) : (
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
@@ -442,11 +410,7 @@ export function AdminPaymentsPage() {
                         )}
                       </Table.Td>
                       <Table.Td>
-                        <Badge
-                          size="sm"
-                          color={p.status === 'active' ? 'green' : 'orange'}
-                          variant="light"
-                        >
+                        <Badge size="sm" color={p.status === 'active' ? 'green' : 'orange'} variant="light">
                           {p.status === 'active' ? 'Active' : 'Mandate only'}
                         </Badge>
                       </Table.Td>

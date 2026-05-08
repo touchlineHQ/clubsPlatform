@@ -25,15 +25,31 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { team, fan, paymentType, amountInPence, intervalUnit, description } = body;
+  const { registrationId, paymentType, amountInPence, intervalUnit } = body;
 
-  if (!team || !fan || !paymentType || !amountInPence || amountInPence <= 0) {
+  if (!registrationId || !paymentType || !amountInPence || amountInPence <= 0) {
     return json({ error: 'Missing or invalid required fields' }, { status: 400 });
   }
 
-  const reference = `${team.replace(/\s+/g, '').toUpperCase()}-${fan}-${paymentType}`;
+  // Look up the registration to get fanId and teamName — validates it exists and belongs to this club
+  const reg = await env.DB
+    .prepare(
+      `SELECT pr.id, pr.teamName, p.fanId
+       FROM player_registration pr
+       JOIN player p ON p.id = pr.playerId
+       WHERE pr.id = ? AND pr.clubSlug = ?`
+    )
+    .bind(registrationId, clubSlug)
+    .first<{ id: string; teamName: string; fanId: string }>();
 
-  const baseDescription = description || `${paymentType} payment - FAN ${fan}`;
+  if (!reg) {
+    return json({ error: 'Registration not found' }, { status: 404 });
+  }
+
+  const { fanId, teamName } = reg;
+  const reference = `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
+  const baseDescription = body.description || `${paymentType} payment - FAN ${fanId}`;
+
   const pounds = (amountInPence / 100).toLocaleString('en-GB', {
     style: 'currency',
     currency: 'GBP',
@@ -64,7 +80,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         },
         metadata: {
           reference,
-          tracking_info: `team:${team}|fan:${fan}|type:${paymentType}`,
+          tracking_info: `team:${teamName}|fan:${fanId}|type:${paymentType}`,
           billing_details: `${amountInPence}p-${intervalUnit || 'monthly'}`,
         },
       },
@@ -85,8 +101,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     amount: String(amountInPence),
     interval_unit: intervalUnit || 'monthly',
     description: baseDescription,
-    fan,
-    team,
+    registration_id: registrationId,
     ...(clubSlug ? { club_slug: clubSlug } : {}),
   });
   const redirectUri = `${origin}/api/gocardless/confirm?${confirmParams.toString()}`;
