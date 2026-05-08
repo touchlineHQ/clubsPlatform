@@ -40,7 +40,7 @@ interface SortState {
   dir: SortDir;
 }
 
-type SubStatus = 'paid' | 'setup' | 'outstanding' | 'cancelled' | 'none';
+type SubStatus = 'paid' | 'setup' | 'outstanding' | 'cancelled';
 
 interface SubStatusInfo {
   status: SubStatus;
@@ -49,9 +49,6 @@ interface SubStatusInfo {
 }
 
 function getSubscriptionStatus(row: RegistrationRow): SubStatusInfo {
-  if (!row.subscriptionLevelId) {
-    return { status: 'none', label: 'No level', color: 'gray' };
-  }
   switch (row.paymentStatus) {
     case 'active':
       return { status: 'paid', label: 'Paid', color: 'green' };
@@ -334,7 +331,6 @@ function ClubFilterBar({ rows, filters, onChange }: ClubFilterBarProps) {
     { value: 'setup', label: 'Mandate set up' },
     { value: 'outstanding', label: 'Outstanding' },
     { value: 'cancelled', label: 'Cancelled' },
-    { value: 'none', label: 'No level' },
   ];
 
   return (
