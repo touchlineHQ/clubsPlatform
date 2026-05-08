@@ -17,7 +17,7 @@ export async function hashPwd(password: string): Promise<string> {
   return "pbkdf2$" + btoa(String.fromCharCode(...out));
 }
 
-async function verifyPwd({ hash, password }: { hash: string; password: string }): Promise<boolean> {
+export async function verifyPwd({ hash, password }: { hash: string; password: string }): Promise<boolean> {
   if (!hash.startsWith("pbkdf2$")) return false;
   try {
     const bytes = Uint8Array.from(atob(hash.slice(7)), c => c.charCodeAt(0));
