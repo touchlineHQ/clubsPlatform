@@ -33,6 +33,9 @@ import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
 import { AdminSecretsPage } from './pages/AdminSecretsPage';
+import { AdminPaymentsPage } from './pages/AdminPaymentsPage';
+import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
+import { PaymentCancelledPage } from './pages/PaymentCancelledPage';
 
 /** Extract the first path segment as a potential club slug, e.g. "/east-leake/" → "east-leake" */
 function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
@@ -101,6 +104,22 @@ export const App = () => {
       <Center h="100vh">
         <Loader size="xl" />
       </Center>
+    );
+  }
+
+  // Payment result pages are club-agnostic — render them before any club-slug
+  // guard so GoCardless redirects (which carry no club slug in the path) work.
+  const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+  if (hashPath === '/payment-success' || hashPath === '/payment-cancelled') {
+    return (
+      <MantineProvider theme={createLandingTheme()}>
+        <HashRouter>
+          <Routes>
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
+          </Routes>
+        </HashRouter>
+      </MantineProvider>
     );
   }
 
@@ -219,6 +238,13 @@ export const App = () => {
                 <AdminSecretsPage />
               </ProtectedRoute>
             } />
+            <Route path="/admin/payments" element={
+              <ProtectedRoute requireAdmin>
+                <AdminPaymentsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppShell.Main>

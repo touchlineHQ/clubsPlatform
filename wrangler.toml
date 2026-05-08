@@ -23,3 +23,5 @@ BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a
 MULTI_CLUB = "true"
 # Uncomment to enable pitch booking features (pitch schedule, booking requests)
 # PITCH_BOOKINGS = "true"
+# GoCardless environment: "sandbox" for testing, "live" for production
+GC_ENVIRONMENT = "sandbox"
