@@ -113,6 +113,10 @@ function SortHeader({ label, sortKey, sort, onSort }: SortHeaderProps) {
   );
 }
 
+const BADGE_STYLES = {
+  label: { textBoxTrim: 'none', textBoxEdge: 'auto' },
+} as const;
+
 function StatusBadge({ value }: { value: string | null }) {
   if (!value) return <Text size="sm">—</Text>;
   return (
@@ -121,6 +125,7 @@ function StatusBadge({ value }: { value: string | null }) {
       variant="light"
       color={value.toLowerCase().includes('registered') ? 'green' : 'orange'}
       radius="xl"
+      styles={BADGE_STYLES}
     >
       {value}
     </Badge>
@@ -129,12 +134,9 @@ function StatusBadge({ value }: { value: string | null }) {
 
 function SubscriptionBadge({ row }: { row: RegistrationRow }) {
   const info = getSubscriptionStatus(row);
-  const label = row.subscriptionLevelName
-    ? `${info.label} · ${row.subscriptionLevelName}`
-    : info.label;
   return (
-    <Badge size="sm" variant="light" color={info.color} radius="xl">
-      {label}
+    <Badge size="sm" variant="light" color={info.color} radius="xl" styles={BADGE_STYLES}>
+      {info.label}
     </Badge>
   );
 }
@@ -153,6 +155,7 @@ function LinkedAccountsCell({ row }: { row: RegistrationRow }) {
             color={rel === 'self' ? 'blue' : 'grape'}
             radius="xl"
             title={rel}
+            styles={BADGE_STYLES}
           >
             {email}
           </Badge>
@@ -171,6 +174,7 @@ function RelationshipBadge({ value }: { value: string | null }) {
       color={value === 'self' ? 'blue' : 'grape'}
       radius="xl"
       tt="capitalize"
+      styles={BADGE_STYLES}
     >
       {value}
     </Badge>
@@ -517,8 +521,7 @@ export function MyRegistrationsPage() {
               : <RegistrationsTable
                   rows={personal}
                   sixthHeader="Relationship"
-                  canDelete={isAdmin}
-                  onDelete={setPendingDelete}
+                  canDelete={false}
                 />
             }
           </Stack>
