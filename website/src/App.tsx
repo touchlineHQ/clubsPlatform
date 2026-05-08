@@ -107,6 +107,22 @@ export const App = () => {
     );
   }
 
+  // Payment result pages are club-agnostic — render them before any club-slug
+  // guard so GoCardless redirects (which carry no club slug in the path) work.
+  const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+  if (hashPath === '/payment-success' || hashPath === '/payment-cancelled') {
+    return (
+      <MantineProvider theme={createLandingTheme()}>
+        <HashRouter>
+          <Routes>
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
+          </Routes>
+        </HashRouter>
+      </MantineProvider>
+    );
+  }
+
   // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
     return (

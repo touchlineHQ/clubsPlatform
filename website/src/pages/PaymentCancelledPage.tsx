@@ -1,4 +1,4 @@
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Button, Container, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 
@@ -13,7 +13,6 @@ const REASON_LABELS: Record<string, string> = {
 
 export function PaymentCancelledPage() {
   const [params] = useSearchParams();
-  const navigate = useNavigate();
 
   const reason = params.get('reason');
   const reasonLabel = reason ? (REASON_LABELS[reason] ?? `Error: ${reason.replace(/_/g, ' ')}`) : null;
@@ -48,7 +47,7 @@ export function PaymentCancelledPage() {
           If you'd like to set up your subscription, contact your club treasurer for a new payment link.
         </Text>
 
-        <Button color="green.6" size="lg" radius="xl" onClick={() => navigate('/')}>
+        <Button component="a" href="/" color="green.6" size="lg" radius="xl">
           Return to Home
         </Button>
       </Stack>

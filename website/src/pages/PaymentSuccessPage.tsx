@@ -1,4 +1,4 @@
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   Alert, Badge, Button, Container, Divider, Group,
   Paper, Stack, Text, ThemeIcon, Title,
@@ -15,7 +15,6 @@ function formatAmount(amountStr: string | null, intervalUnit: string | null): st
 
 export function PaymentSuccessPage() {
   const [params] = useSearchParams();
-  const navigate = useNavigate();
 
   const mandateId = params.get('mandate');
   const subscriptionId = params.get('subscription');
@@ -99,7 +98,7 @@ export function PaymentSuccessPage() {
           </Stack>
         </Paper>
 
-        <Button color="green.6" size="lg" radius="xl" onClick={() => navigate('/')}>
+        <Button component="a" href="/" color="green.6" size="lg" radius="xl">
           Return to Home
         </Button>
       </Stack>
