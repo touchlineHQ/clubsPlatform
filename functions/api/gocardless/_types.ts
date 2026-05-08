@@ -45,5 +45,7 @@ export interface CreateLinkBody {
   paymentType: string;
   amountInPence: number;
   intervalUnit: 'monthly' | 'weekly' | 'yearly';
+  /** Optional total number of payments (passed through to the GC subscription `count`). */
+  count?: number;
   description?: string;
 }
