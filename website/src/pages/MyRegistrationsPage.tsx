@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton, Title,
-  Select, ActionIcon, Modal, Tooltip,
+  Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton,
+  Select, ActionIcon, Modal, Tooltip, Tabs,
 } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import {
@@ -497,10 +497,38 @@ export function MyRegistrationsPage() {
     setDeleteError('');
   };
 
+  const personalContent = personal.length === 0
+    ? <EmptyState isAdmin={isAdmin} scope="personal" />
+    : <RegistrationsTable
+        rows={personal}
+        sixthHeader="Relationship"
+        canDelete={false}
+      />;
+
+  const clubContent = club && (
+    club.length === 0
+      ? <EmptyState isAdmin={isAdmin} scope="club" />
+      : (
+        <Stack gap="sm">
+          <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
+          {filteredClub && filteredClub.length === 0 ? (
+            <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
+          ) : (
+            <RegistrationsTable
+              rows={filteredClub ?? club}
+              sixthHeader="Linked accounts"
+              canDelete
+              onDelete={setPendingDelete}
+            />
+          )}
+        </Stack>
+      )
+  );
+
   return (
     <Stack maw={1000} mx="auto" gap="lg">
       <PageHeader
-        title={isAdmin ? 'Registrations' : 'My Registrations'}
+        title="Registrations"
         subtitle={isAdmin
           ? 'Your linked registrations, plus all registrations across the club.'
           : 'Player registrations linked to your account.'}
@@ -510,45 +538,17 @@ export function MyRegistrationsPage() {
 
       {loading ? (
         <Center h={160}><Loader /></Center>
+      ) : isAdmin ? (
+        <Tabs defaultValue="mine" keepMounted={false}>
+          <Tabs.List>
+            <Tabs.Tab value="mine">My Registrations</Tabs.Tab>
+            <Tabs.Tab value="club">Club Registrations</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="mine" pt="lg">{personalContent}</Tabs.Panel>
+          <Tabs.Panel value="club" pt="lg">{clubContent}</Tabs.Panel>
+        </Tabs>
       ) : (
-        <>
-          <Stack gap="sm">
-            {isAdmin && (
-              <Title order={4} ff={clubDesign.font.heading}>My Registrations</Title>
-            )}
-            {personal.length === 0
-              ? <EmptyState isAdmin={isAdmin} scope="personal" />
-              : <RegistrationsTable
-                  rows={personal}
-                  sixthHeader="Relationship"
-                  canDelete={false}
-                />
-            }
-          </Stack>
-
-          {isAdmin && club && (
-            <Stack gap="sm">
-              <Title order={4} ff={clubDesign.font.heading}>Club Registrations</Title>
-              {club.length === 0 ? (
-                <EmptyState isAdmin={isAdmin} scope="club" />
-              ) : (
-                <>
-                  <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
-                  {filteredClub && filteredClub.length === 0 ? (
-                    <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
-                  ) : (
-                    <RegistrationsTable
-                      rows={filteredClub ?? club}
-                      sixthHeader="Linked accounts"
-                      canDelete
-                      onDelete={setPendingDelete}
-                    />
-                  )}
-                </>
-              )}
-            </Stack>
-          )}
-        </>
+        personalContent
       )}
 
       <Modal

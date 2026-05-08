@@ -1,4 +1,4 @@
-import { createTheme } from '@mantine/core';
+import { createTheme, Tabs } from '@mantine/core';
 import type { MantineColorsTuple } from '@mantine/core';
 
 const ORANGE_SHADES: MantineColorsTuple = [
@@ -17,6 +17,21 @@ const ORANGE_SHADES: MantineColorsTuple = [
 const HEADING_FONT = '"Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif';
 const BODY_FONT = '"Inter", system-ui, -apple-system, sans-serif';
 
+const TABS_OVERRIDE = Tabs.extend({
+  styles: {
+    list: {
+      flexWrap: 'nowrap',
+      overflowX: 'auto',
+      overflowY: 'hidden',
+      scrollbarWidth: 'thin',
+    },
+    tab: {
+      flex: '0 0 auto',
+      whiteSpace: 'nowrap',
+    },
+  },
+});
+
 export function createClubTheme(primaryColor = 'blue') {
   return createTheme({
     primaryColor,
@@ -27,6 +42,9 @@ export function createClubTheme(primaryColor = 'blue') {
       fontWeight: '700',
     },
     defaultRadius: 'md',
+    components: {
+      Tabs: TABS_OVERRIDE,
+    },
   });
 }
 
@@ -40,6 +58,9 @@ export function createLandingTheme() {
       fontWeight: '700',
     },
     defaultRadius: 'md',
+    components: {
+      Tabs: TABS_OVERRIDE,
+    },
   });
 }
 

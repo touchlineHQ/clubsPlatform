@@ -36,7 +36,7 @@ export function AdminPaymentsPage() {
         variant="outline"
         keepMounted={false}
       >
-        <Tabs.List style={{ flexWrap: 'wrap' }}>
+        <Tabs.List>
           <Tabs.Tab value="levels" leftSection={<IconCash size={14} />}>
             Subscription Levels
           </Tabs.Tab>
