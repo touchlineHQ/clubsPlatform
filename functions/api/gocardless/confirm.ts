@@ -206,7 +206,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   try {
     await upsertPaymentRecord(env.DB, {
-      clubSlug, fanId, teamName, reference, mandateId,
+      clubSlug, registrationId, reference, mandateId,
       subscriptionId: sub.id,
       amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
     });

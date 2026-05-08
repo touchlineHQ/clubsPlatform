@@ -65,6 +65,7 @@ const COLUMN_MIGRATIONS = [
   `ALTER TABLE "club_config" ADD COLUMN "data" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE "player_payment" ADD COLUMN "registrationId" TEXT`,
 ];
 
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
