@@ -85,6 +85,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     amount: String(amountInPence),
     interval_unit: intervalUnit || 'monthly',
     description: baseDescription,
+    fan,
+    team,
     ...(clubSlug ? { club_slug: clubSlug } : {}),
   });
   const redirectUri = `${origin}/api/gocardless/confirm?${confirmParams.toString()}`;

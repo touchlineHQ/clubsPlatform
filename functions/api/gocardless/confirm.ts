@@ -1,6 +1,62 @@
 import { ensureTables } from '../../lib/ensure-tables';
+import { randomId, nowMs } from '../../lib/api-helpers';
 import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
+
+async function upsertPaymentRecord(
+  db: D1Database,
+  {
+    clubSlug,
+    fanId,
+    teamName,
+    reference,
+    mandateId,
+    subscriptionId,
+    amountInPence,
+    intervalUnit,
+    status,
+  }: {
+    clubSlug: string | null;
+    fanId: string;
+    teamName: string;
+    reference: string;
+    mandateId: string;
+    subscriptionId: string | null;
+    amountInPence: number;
+    intervalUnit: string;
+    status: 'active' | 'mandate_only';
+  }
+): Promise<void> {
+  if (!clubSlug) return;
+  const now = nowMs();
+  await db
+    .prepare(
+      `INSERT INTO "player_payment"
+         (id, clubSlug, fanId, teamName, reference, mandateId, subscriptionId,
+          amountInPence, intervalUnit, status, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(clubSlug, reference) DO UPDATE SET
+         mandateId      = excluded.mandateId,
+         subscriptionId = COALESCE(excluded.subscriptionId, subscriptionId),
+         status         = excluded.status,
+         updatedAt      = excluded.updatedAt`
+    )
+    .bind(
+      randomId('pay'),
+      clubSlug,
+      fanId,
+      teamName,
+      reference,
+      mandateId,
+      subscriptionId,
+      amountInPence,
+      intervalUnit,
+      status,
+      now,
+      now,
+    )
+    .run();
+}
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
@@ -13,13 +69,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const billingRequestId = url.searchParams.get('billing_request_id');
   const reference = url.searchParams.get('reference');
   const amountStr = url.searchParams.get('amount');
-  const intervalUnit = url.searchParams.get('interval_unit') as
-    | 'monthly'
-    | 'weekly'
-    | 'yearly'
-    | null;
+  const intervalUnit = url.searchParams.get('interval_unit') as 'monthly' | 'weekly' | 'yearly' | null;
   const description = url.searchParams.get('description');
   const clubSlug = url.searchParams.get('club_slug');
+  const fanId = url.searchParams.get('fan') ?? '';
+  const teamName = url.searchParams.get('team') ?? '';
 
   if (!billingRequestId || !reference || !amountStr) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=missing_params`, 302);
@@ -102,6 +156,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         s.status !== 'customer_approval_denied'
     );
     if (match) {
+      try {
+        await upsertPaymentRecord(env.DB, {
+          clubSlug, fanId, teamName, reference, mandateId,
+          subscriptionId: match.id,
+          amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
+        });
+      } catch (e) {
+        console.error('Failed to upsert payment record (existing sub):', e);
+      }
       return Response.redirect(
         `${origin}/#/payment-success?mandate=${mandateId}&subscription=${match.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit || 'monthly'}&existing=1`,
         302
@@ -127,6 +190,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   if (!subRes.ok) {
     console.error('Subscription creation failed:', await subRes.text());
+    // Mandate exists — record it even without a subscription
+    try {
+      await upsertPaymentRecord(env.DB, {
+        clubSlug, fanId, teamName, reference, mandateId,
+        subscriptionId: null,
+        amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'mandate_only',
+      });
+    } catch (e) {
+      console.error('Failed to upsert payment record (mandate_only):', e);
+    }
     return Response.redirect(
       `${origin}/#/payment-success?mandate=${mandateId}&warning=subscription_failed&ref=${encodeURIComponent(reference)}`,
       302
@@ -134,6 +207,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   }
 
   const { subscriptions: sub } = await subRes.json<{ subscriptions: GCSubscription }>();
+
+  try {
+    await upsertPaymentRecord(env.DB, {
+      clubSlug, fanId, teamName, reference, mandateId,
+      subscriptionId: sub.id,
+      amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
+    });
+  } catch (e) {
+    console.error('Failed to upsert payment record:', e);
+  }
 
   return Response.redirect(
     `${origin}/#/payment-success?mandate=${mandateId}&subscription=${sub.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit || 'monthly'}`,

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   Alert, Badge, Box, Button, Center, Code, Divider, Group,
-  Loader, Paper, Select, Stack, Table, Text, TextInput,
+  Loader, Paper, Select, Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core';
 import {
-  IconAlertCircle, IconCheck, IconCopy, IconExternalLink,
-  IconReceipt, IconShield,
+  IconAlertCircle, IconAlertTriangle, IconCheck, IconCopy,
+  IconExternalLink, IconReceipt, IconShield,
 } from '@tabler/icons-react';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
@@ -19,6 +19,20 @@ interface PlayerRegistrationRow {
   registrationExpiry: string | null;
   registrationStatus: string | null;
   linkedAccounts: string | null;
+}
+
+interface PlayerPaymentRow {
+  id: string;
+  fanId: string;
+  teamName: string;
+  reference: string;
+  mandateId: string;
+  subscriptionId: string | null;
+  amountInPence: number | null;
+  intervalUnit: string | null;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 const PAYMENT_TYPES = [
@@ -35,6 +49,13 @@ const INTERVAL_OPTIONS = [
   { value: 'yearly', label: 'Yearly' },
 ];
 
+function formatAmount(pence: number | null, interval: string | null): string {
+  if (!pence) return '—';
+  const pounds = (pence / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+  const freq = interval === 'weekly' ? 'wk' : interval === 'yearly' ? 'yr' : 'mo';
+  return `${pounds}/${freq}`;
+}
+
 export function AdminPaymentsPage() {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug } as HeadersInit;
@@ -42,6 +63,9 @@ export function AdminPaymentsPage() {
   const [registrations, setRegistrations] = useState<PlayerRegistrationRow[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(true);
   const [loadError, setLoadError] = useState('');
+
+  const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
+  const [loadingPayments, setLoadingPayments] = useState(true);
 
   const [selectedFan, setSelectedFan] = useState<string | null>(null);
   const [selectedTeam, setSelectedTeam] = useState('');
@@ -61,6 +85,12 @@ export function AdminPaymentsPage() {
       .then(d => setRegistrations(d.registrations))
       .catch(() => setLoadError('Failed to load player registrations.'))
       .finally(() => setLoadingPlayers(false));
+
+    fetch('/api/admin/player-payments', { headers: clubHeaders })
+      .then(r => r.ok ? r.json() as Promise<{ payments: PlayerPaymentRow[] }> : Promise.reject())
+      .then(d => setPayments(d.payments))
+      .catch(() => { /* non-fatal */ })
+      .finally(() => setLoadingPayments(false));
   }, []);
 
   const playerOptions = registrations.map(r => ({
@@ -80,6 +110,11 @@ export function AdminPaymentsPage() {
       setSelectedTeam('');
     }
   };
+
+  // Find any existing payment records for the selected player + payment type
+  const existingForSelected = selectedFan
+    ? payments.filter(p => p.fanId === selectedFan && p.reference.endsWith(`-${paymentType}`))
+    : [];
 
   const amountValid = () => {
     const n = parseFloat(amountGbp);
@@ -132,7 +167,7 @@ export function AdminPaymentsPage() {
   };
 
   return (
-    <Stack maw={860} mx="auto" gap="lg">
+    <Stack maw={900} mx="auto" gap="lg">
       <PageHeader
         title="Payment Links"
         subtitle="Generate a GoCardless Direct Debit link for a registered player"
@@ -140,8 +175,9 @@ export function AdminPaymentsPage() {
 
       <Alert icon={<IconShield size={16} />} color="green" variant="light" radius="md">
         <Text size="sm">
-          <strong>GDPR Compliant:</strong> No payment data is stored locally. References use only
-          FA Numbers. Links are single-use and expire once the player completes setup.
+          <strong>GDPR Compliant:</strong> No payment data is stored locally beyond mandate and
+          subscription IDs. References use only FA Numbers. Links are single-use and expire once
+          the player completes setup.
         </Text>
       </Alert>
 
@@ -151,6 +187,7 @@ export function AdminPaymentsPage() {
         </Alert>
       )}
 
+      {/* ── Step 1: Pick player ── */}
       <Paper p="lg" withBorder radius="md">
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registered player</Text>
@@ -209,6 +246,7 @@ export function AdminPaymentsPage() {
         </Stack>
       </Paper>
 
+      {/* ── Step 2: Configure payment ── */}
       <Paper p="lg" withBorder radius="md">
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">2. Configure payment</Text>
@@ -218,7 +256,7 @@ export function AdminPaymentsPage() {
               label="Payment type"
               data={PAYMENT_TYPES}
               value={paymentType}
-              onChange={v => setPaymentType(v ?? 'SUBS')}
+              onChange={v => { setPaymentType(v ?? 'SUBS'); setGeneratedLink(''); setGeneratedRef(''); }}
               radius="md"
             />
             <TextInput
@@ -238,6 +276,25 @@ export function AdminPaymentsPage() {
             />
           </Group>
 
+          {existingForSelected.length > 0 && (
+            <Alert icon={<IconAlertTriangle size={16} />} color="orange" variant="light" radius="md">
+              <Text size="sm" fw={600} mb={4}>
+                This player already has a {paymentType} payment record:
+              </Text>
+              {existingForSelected.map(p => (
+                <Text key={p.id} size="sm">
+                  Reference <Code>{p.reference}</Code>
+                  {' — '}{p.status === 'active' ? 'active subscription' : 'mandate only (no subscription)'}
+                  {p.subscriptionId && <> · Sub ID: <Code>{p.subscriptionId}</Code></>}
+                </Text>
+              ))}
+              <Text size="sm" mt={4} c="dimmed">
+                Generating a new link will attempt to create a duplicate via GoCardless.
+                GoCardless will reuse the existing subscription if the mandate matches.
+              </Text>
+            </Alert>
+          )}
+
           {genError && (
             <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" radius="md">
               {genError}
@@ -256,6 +313,7 @@ export function AdminPaymentsPage() {
         </Stack>
       </Paper>
 
+      {/* ── Step 3: Share link ── */}
       {generatedLink && (
         <Paper p="lg" withBorder radius="md">
           <Stack gap="md">
@@ -302,22 +360,37 @@ export function AdminPaymentsPage() {
 
             <Alert icon={<IconReceipt size={16} />} color="blue" variant="light" radius="md">
               <Text size="sm">
-                Send this link to the player or parent. When they complete Direct Debit setup
-                their mandate and {intervalUnit} subscription will be created automatically.
-                Bank statements will show <Code>{generatedRef}</Code> as the reference.
+                Send this link to the player or parent. When they complete Direct Debit setup their
+                mandate and {intervalUnit} subscription will be created automatically. Bank statements
+                will show <Code>{generatedRef}</Code> as the reference.
               </Text>
             </Alert>
           </Stack>
         </Paper>
       )}
 
+      {/* ── Existing payment records ── */}
       <Paper p="lg" withBorder radius="md">
         <Stack gap="md">
-          <Text fw={700} ff={clubDesign.font.heading} fz="md">All registered players</Text>
-          {loadingPlayers ? (
+          <Text fw={700} ff={clubDesign.font.heading} fz="md">Payment records</Text>
+          <Text size="sm" c="dimmed">
+            Mandates and subscriptions recorded after players complete the GoCardless payment flow.
+          </Text>
+
+          {loadingPayments ? (
             <Center h={60}><Loader size="sm" /></Center>
-          ) : registrations.length === 0 ? (
-            <Text size="sm" c="dimmed">No players found.</Text>
+          ) : payments.length === 0 ? (
+            <Box
+              p="xl"
+              style={{
+                background: clubDesign.color.n1,
+                border: `1px dashed ${clubDesign.color.n3}`,
+                borderRadius: 8,
+                textAlign: 'center',
+              }}
+            >
+              <Text size="sm" c="dimmed">No payment records yet. They will appear here once players complete setup.</Text>
+            </Box>
           ) : (
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
               <Table striped highlightOnHover>
@@ -325,47 +398,62 @@ export function AdminPaymentsPage() {
                   <Table.Tr>
                     <Table.Th>FAN</Table.Th>
                     <Table.Th>Team</Table.Th>
-                    <Table.Th>Age Group</Table.Th>
+                    <Table.Th>Reference</Table.Th>
+                    <Table.Th>Amount</Table.Th>
+                    <Table.Th>Mandate ID</Table.Th>
+                    <Table.Th>Subscription ID</Table.Th>
                     <Table.Th>Status</Table.Th>
-                    <Table.Th></Table.Th>
+                    <Table.Th>Date</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
-                  {registrations.map(reg => (
-                    <Table.Tr
-                      key={reg.registrationId}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => handlePlayerSelect(reg.fanId)}
-                    >
+                  {payments.map(p => (
+                    <Table.Tr key={p.id}>
                       <Table.Td>
-                        <Text size="sm" ff="monospace" fw={600}>{reg.fanId}</Text>
+                        <Text size="sm" ff="monospace" fw={600}>{p.fanId}</Text>
                       </Table.Td>
-                      <Table.Td><Text size="sm">{reg.teamName}</Text></Table.Td>
+                      <Table.Td><Text size="sm">{p.teamName}</Text></Table.Td>
                       <Table.Td>
-                        <Text size="sm" c="dimmed">{reg.ageGroup ?? '—'}</Text>
+                        <Tooltip label={p.reference} withArrow>
+                          <Text size="sm" ff="monospace" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {p.reference}
+                          </Text>
+                        </Tooltip>
                       </Table.Td>
                       <Table.Td>
-                        {reg.registrationStatus ? (
-                          <Badge
-                            size="sm"
-                            color={reg.registrationStatus.toLowerCase() === 'registered' ? 'green' : 'orange'}
-                            variant="light"
-                          >
-                            {reg.registrationStatus}
-                          </Badge>
+                        <Text size="sm">{formatAmount(p.amountInPence, p.intervalUnit)}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        <Tooltip label={p.mandateId} withArrow>
+                          <Text size="xs" ff="monospace" c="dimmed" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {p.mandateId}
+                          </Text>
+                        </Tooltip>
+                      </Table.Td>
+                      <Table.Td>
+                        {p.subscriptionId ? (
+                          <Tooltip label={p.subscriptionId} withArrow>
+                            <Text size="xs" ff="monospace" c="dimmed" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {p.subscriptionId}
+                            </Text>
+                          </Tooltip>
                         ) : (
-                          <Text size="sm" c="dimmed">—</Text>
+                          <Text size="xs" c="dimmed">—</Text>
                         )}
                       </Table.Td>
                       <Table.Td>
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          radius="xl"
-                          onClick={e => { e.stopPropagation(); handlePlayerSelect(reg.fanId); }}
+                        <Badge
+                          size="sm"
+                          color={p.status === 'active' ? 'green' : 'orange'}
+                          variant="light"
                         >
-                          Select
-                        </Button>
+                          {p.status === 'active' ? 'Active' : 'Mandate only'}
+                        </Badge>
+                      </Table.Td>
+                      <Table.Td>
+                        <Text size="xs" c="dimmed">
+                          {new Date(p.createdAt).toLocaleDateString('en-GB')}
+                        </Text>
                       </Table.Td>
                     </Table.Tr>
                   ))}
