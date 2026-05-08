@@ -61,6 +61,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const reference = url.searchParams.get('reference');
   const amountStr = url.searchParams.get('amount');
   const intervalUnit = url.searchParams.get('interval_unit') as 'monthly' | 'weekly' | 'yearly' | null;
+  const countStr = url.searchParams.get('count');
+  const totalCount = countStr ? parseInt(countStr, 10) : NaN;
+  const subscriptionCount = Number.isInteger(totalCount) && totalCount > 0 ? totalCount : null;
   const description = url.searchParams.get('description');
   const clubSlug = url.searchParams.get('club_slug');
   const registrationId = url.searchParams.get('registration_id') ?? '';
@@ -171,6 +174,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         currency: 'GBP',
         interval_unit: intervalUnit || 'monthly',
         interval: 1,
+        ...(subscriptionCount !== null ? { count: subscriptionCount } : {}),
         name: description || reference,
         metadata: { reference, customer_ref: reference },
         links: { mandate: mandateId },

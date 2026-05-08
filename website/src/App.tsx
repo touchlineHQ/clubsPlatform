@@ -34,6 +34,7 @@ import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
 import { AdminSecretsPage } from './pages/AdminSecretsPage';
 import { AdminPaymentsPage } from './pages/AdminPaymentsPage';
+import { AdminSubscriptionLevelsPage } from './pages/AdminSubscriptionLevelsPage';
 import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
 import { PaymentCancelledPage } from './pages/PaymentCancelledPage';
 
@@ -241,6 +242,11 @@ export const App = () => {
             <Route path="/admin/payments" element={
               <ProtectedRoute requireAdmin>
                 <AdminPaymentsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/subscription-levels" element={
+              <ProtectedRoute requireAdmin>
+                <AdminSubscriptionLevelsPage />
               </ProtectedRoute>
             } />
             <Route path="/payment-success" element={<PaymentSuccessPage />} />

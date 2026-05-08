@@ -19,6 +19,11 @@ interface PlayerRegistrationRow {
   registrationExpiry: string | null;
   registrationStatus: string | null;
   linkedAccounts: string | null;
+  subscriptionLevelId: string | null;
+  subscriptionLevelName: string | null;
+  yearlyPriceInPence: number | null;
+  intervalCount: number | null;
+  intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
 }
 
 interface PlayerPaymentRow {
@@ -65,6 +70,8 @@ export function AdminPaymentsPage() {
   const [paymentType, setPaymentType] = useState('SUBS');
   const [amountGbp, setAmountGbp] = useState('');
   const [intervalUnit, setIntervalUnit] = useState<'monthly' | 'weekly' | 'yearly'>('monthly');
+  const [paymentCount, setPaymentCount] = useState<string>('');
+  const [autofilled, setAutofilled] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState('');
@@ -99,6 +106,19 @@ export function AdminPaymentsPage() {
     setGeneratedLink('');
     setGeneratedRef('');
     setGenError('');
+
+    const reg = registrations.find(r => r.registrationId === regId);
+    if (reg && reg.yearlyPriceInPence != null && reg.intervalCount != null && reg.intervalUnit) {
+      const perPence = Math.round(reg.yearlyPriceInPence / Math.max(1, reg.intervalCount));
+      setAmountGbp((perPence / 100).toFixed(2));
+      setIntervalUnit(reg.intervalUnit);
+      setPaymentCount(String(reg.intervalCount));
+      setPaymentType('SUBS');
+      setAutofilled(true);
+    } else {
+      setPaymentCount('');
+      setAutofilled(false);
+    }
   };
 
   // Existing payment records for this registration + payment type
@@ -121,6 +141,7 @@ export function AdminPaymentsPage() {
     setGeneratedRef('');
 
     try {
+      const countNum = paymentCount ? parseInt(paymentCount, 10) : NaN;
       const res = await fetch('/api/gocardless/create-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
@@ -129,6 +150,7 @@ export function AdminPaymentsPage() {
           paymentType,
           amountInPence: Math.round(parseFloat(amountGbp) * 100),
           intervalUnit,
+          ...(Number.isInteger(countNum) && countNum > 0 ? { count: countNum } : {}),
         }),
       });
 
@@ -225,6 +247,15 @@ export function AdminPaymentsPage() {
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">2. Configure payment</Text>
 
+          {autofilled && selectedReg?.subscriptionLevelName && (
+            <Alert color="blue" variant="light" radius="md">
+              <Text size="sm">
+                Auto-filled from team subscription level <strong>{selectedReg.subscriptionLevelName}</strong>{' '}
+                ({selectedReg.intervalCount} × {selectedReg.intervalUnit} payments). Override below if needed.
+              </Text>
+            </Alert>
+          )}
+
           <Group grow align="flex-start" wrap="wrap">
             <Select
               label="Payment type"
@@ -237,7 +268,7 @@ export function AdminPaymentsPage() {
               label="Amount (£)"
               placeholder="e.g. 25.00"
               value={amountGbp}
-              onChange={e => setAmountGbp(e.target.value)}
+              onChange={e => { setAmountGbp(e.target.value); setAutofilled(false); }}
               radius="md"
               leftSection={<Text size="sm" c="dimmed">£</Text>}
             />
@@ -245,7 +276,15 @@ export function AdminPaymentsPage() {
               label="Interval"
               data={INTERVAL_OPTIONS}
               value={intervalUnit}
-              onChange={v => setIntervalUnit((v as 'monthly' | 'weekly' | 'yearly') ?? 'monthly')}
+              onChange={v => { setIntervalUnit((v as 'monthly' | 'weekly' | 'yearly') ?? 'monthly'); setAutofilled(false); }}
+              radius="md"
+            />
+            <TextInput
+              label="Number of payments"
+              description="Leave blank for unlimited"
+              placeholder="e.g. 10"
+              value={paymentCount}
+              onChange={e => { setPaymentCount(e.target.value.replace(/[^0-9]/g, '')); setAutofilled(false); }}
               radius="md"
             />
           </Group>

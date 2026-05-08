@@ -25,10 +25,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { registrationId, paymentType, amountInPence, intervalUnit } = body;
+  const { registrationId, paymentType, amountInPence, intervalUnit, count } = body;
 
   if (!registrationId || !paymentType || !amountInPence || amountInPence <= 0) {
     return json({ error: 'Missing or invalid required fields' }, { status: 400 });
+  }
+
+  let totalCount: number | null = null;
+  if (count !== undefined && count !== null) {
+    const n = Number(count);
+    if (!Number.isInteger(n) || n < 1 || n > 200) {
+      return json({ error: 'count must be an integer between 1 and 200' }, { status: 400 });
+    }
+    totalCount = n;
   }
 
   // Look up the registration to get fanId and teamName — validates it exists and belongs to this club
@@ -102,6 +111,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     interval_unit: intervalUnit || 'monthly',
     description: baseDescription,
     registration_id: registrationId,
+    ...(totalCount !== null ? { count: String(totalCount) } : {}),
     ...(clubSlug ? { club_slug: clubSlug } : {}),
   });
   const redirectUri = `${origin}/api/gocardless/confirm?${confirmParams.toString()}`;
