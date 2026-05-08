@@ -9,8 +9,6 @@ interface PlayerPaymentRow {
   reference: string;
   mandateId: string;
   subscriptionId: string | null;
-  amountInPence: number | null;
-  intervalUnit: string | null;
   status: string;
   createdAt: number;
   updatedAt: number;
@@ -29,8 +27,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT
          pp.id, pp.registrationId, p.fanId, pr.teamName,
          pp.reference, pp.mandateId, pp.subscriptionId,
-         pp.amountInPence, pp.intervalUnit, pp.status,
-         pp.createdAt, pp.updatedAt
+         pp.status, pp.createdAt, pp.updatedAt
        FROM "player_payment" pp
        JOIN "player_registration" pr ON pr.id = pp.registrationId
        JOIN "player" p ON p.id = pr.playerId

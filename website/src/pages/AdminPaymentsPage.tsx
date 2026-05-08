@@ -29,8 +29,6 @@ interface PlayerPaymentRow {
   reference: string;
   mandateId: string;
   subscriptionId: string | null;
-  amountInPence: number | null;
-  intervalUnit: string | null;
   status: string;
   createdAt: number;
   updatedAt: number;
@@ -50,12 +48,6 @@ const INTERVAL_OPTIONS = [
   { value: 'yearly', label: 'Yearly' },
 ];
 
-function formatAmount(pence: number | null, interval: string | null): string {
-  if (!pence) return '—';
-  const pounds = (pence / 100).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
-  const freq = interval === 'weekly' ? 'wk' : interval === 'yearly' ? 'yr' : 'mo';
-  return `${pounds}/${freq}`;
-}
 
 export function AdminPaymentsPage() {
   const { clubSlug } = useClub();
@@ -367,7 +359,6 @@ export function AdminPaymentsPage() {
                     <Table.Th>FAN</Table.Th>
                     <Table.Th>Team</Table.Th>
                     <Table.Th>Reference</Table.Th>
-                    <Table.Th>Amount</Table.Th>
                     <Table.Th>Mandate ID</Table.Th>
                     <Table.Th>Subscription ID</Table.Th>
                     <Table.Th>Status</Table.Th>
@@ -387,9 +378,6 @@ export function AdminPaymentsPage() {
                             {p.reference}
                           </Text>
                         </Tooltip>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="sm">{formatAmount(p.amountInPence, p.intervalUnit)}</Text>
                       </Table.Td>
                       <Table.Td>
                         <Tooltip label={p.mandateId} withArrow>

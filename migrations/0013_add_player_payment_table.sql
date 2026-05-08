@@ -5,8 +5,6 @@ CREATE TABLE IF NOT EXISTS "player_payment" (
   "reference" TEXT NOT NULL,
   "mandateId" TEXT NOT NULL,
   "subscriptionId" TEXT,
-  "amountInPence" INTEGER,
-  "intervalUnit" TEXT,
   "status" TEXT NOT NULL DEFAULT 'active',
   "createdAt" INTEGER NOT NULL,
   "updatedAt" INTEGER NOT NULL,

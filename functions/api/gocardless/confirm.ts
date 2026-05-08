@@ -11,8 +11,6 @@ async function upsertPaymentRecord(
     reference,
     mandateId,
     subscriptionId,
-    amountInPence,
-    intervalUnit,
     status,
   }: {
     clubSlug: string | null;
@@ -20,8 +18,6 @@ async function upsertPaymentRecord(
     reference: string;
     mandateId: string;
     subscriptionId: string | null;
-    amountInPence: number;
-    intervalUnit: string;
     status: 'active' | 'mandate_only';
   }
 ): Promise<void> {
@@ -31,8 +27,8 @@ async function upsertPaymentRecord(
     .prepare(
       `INSERT INTO "player_payment"
          (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
-          amountInPence, intervalUnit, status, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          status, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(clubSlug, reference) DO UPDATE SET
          mandateId      = excluded.mandateId,
          subscriptionId = COALESCE(excluded.subscriptionId, subscriptionId),
@@ -46,8 +42,6 @@ async function upsertPaymentRecord(
       reference,
       mandateId,
       subscriptionId,
-      amountInPence,
-      intervalUnit,
       status,
       now,
       now,
@@ -156,7 +150,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         await upsertPaymentRecord(env.DB, {
           clubSlug, registrationId, reference, mandateId,
           subscriptionId: match.id,
-          amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
+          status: 'active',
         });
       } catch (e) {
         console.error('Failed to upsert payment record (existing sub):', e);
@@ -191,7 +185,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       await upsertPaymentRecord(env.DB, {
         clubSlug, registrationId, reference, mandateId,
         subscriptionId: null,
-        amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'mandate_only',
+        status: 'mandate_only',
       });
     } catch (e) {
       console.error('Failed to upsert payment record (mandate_only):', e);
@@ -208,7 +202,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     await upsertPaymentRecord(env.DB, {
       clubSlug, registrationId, reference, mandateId,
       subscriptionId: sub.id,
-      amountInPence, intervalUnit: intervalUnit || 'monthly', status: 'active',
+      status: 'active',
     });
   } catch (e) {
     console.error('Failed to upsert payment record:', e);

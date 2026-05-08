@@ -42,7 +42,7 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
   `CREATE TABLE IF NOT EXISTS "club_secret" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "key" TEXT NOT NULL, "encryptedValue" TEXT NOT NULL, "iv" TEXT NOT NULL, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "uq_club_secret_slug_key" ON "club_secret" (COALESCE("clubSlug",''), "key")`,
-  `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "amountInPence" INTEGER, "intervalUnit" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,
+  `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_registrationId" ON "player_payment" ("registrationId")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_mandateId" ON "player_payment" ("mandateId")`,
 ];
@@ -66,6 +66,8 @@ const COLUMN_MIGRATIONS = [
   `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE "player_payment" ADD COLUMN "registrationId" TEXT`,
+  `UPDATE "player_payment" SET "amountInPence" = NULL WHERE "amountInPence" IS NOT NULL`,
+  `UPDATE "player_payment" SET "intervalUnit" = NULL WHERE "intervalUnit" IS NOT NULL`,
 ];
 
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
