@@ -20,7 +20,7 @@ interface AuthContextValue {
   refresh: () => Promise<AuthUser | null>;
 }
 
-const AuthContext = createContext<AuthContextValue>({
+export const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
   isAdmin: false,

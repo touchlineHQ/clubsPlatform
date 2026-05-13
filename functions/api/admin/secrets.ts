@@ -29,7 +29,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .all<SecretRow>();
 
-  return json({ secrets: rows.results, publicKey: context.env.SECRETS_TRANSPORT_PUBLIC_KEY ?? null });
+  return json({ secrets: rows.results, publicKey: context.env.SECRETS_TRANSPORT_PUBLIC_KEY || null });
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {

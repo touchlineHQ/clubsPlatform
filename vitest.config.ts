@@ -29,6 +29,13 @@ export default defineConfig({
       ['functions/**', 'node'],
     ],
     setupFiles: ['./vitest.setup.ts'],
+    server: {
+      deps: {
+        // Inline these so Vite's resolve.alias (react → root copy) applies to
+        // their internal React imports, preventing the dual-React hook conflict.
+        inline: [/@mantine\//, /@tabler\/icons-react/, /react-router/, /@floating-ui\//, /react-remove-scroll/, /react-style-singleton/, /use-callback-ref/, /use-sidecar/],
+      },
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
@@ -42,8 +49,7 @@ export default defineConfig({
         'website/src/api/schema.d.ts',
         'website/src/main.tsx',
       ],
-      // Threshold re-enabled once coverage reaches 80% across all source files.
-      // thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
+      thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
     },
   },
 });
