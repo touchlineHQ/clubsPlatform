@@ -10,7 +10,10 @@
     "build": "cd website && npm run build",
     "preview": "npx wrangler pages dev website/dist",
     "db:migrate:local": "npx wrangler d1 migrations apply clubsPlatform-auth --local",
-    "db:migrate:prod": "npx wrangler d1 migrations apply clubsPlatform-auth --remote"
+    "db:migrate:prod": "npx wrangler d1 migrations apply clubsPlatform-auth --remote",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "better-auth": "^1.5.6",
@@ -18,7 +21,13 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^25.5.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "jsdom": "^25.0.0",
+    "vitest": "^2.0.0",
     "wrangler": "^4.0.0"
   }
 }
