@@ -9,6 +9,7 @@ async function upsertPaymentRecord(
     clubSlug,
     registrationId,
     reference,
+    billingRequestId,
     mandateId,
     subscriptionId,
     status,
@@ -16,12 +17,17 @@ async function upsertPaymentRecord(
     clubSlug: string | null;
     registrationId: string;
     reference: string;
+    billingRequestId: string;
     mandateId: string;
     subscriptionId: string | null;
     status: 'active' | 'mandate_only';
   }
 ): Promise<void> {
   if (!clubSlug || !registrationId) return;
+  // Append the last 8 chars of the billing request ID so each distinct payment
+  // attempt creates its own row rather than overwriting the previous one.
+  // Same billing request replayed → same dbReference → idempotent UPDATE.
+  const dbReference = `${reference}-${billingRequestId.slice(-8)}`;
   const now = nowMs();
   await db
     .prepare(
@@ -39,7 +45,7 @@ async function upsertPaymentRecord(
       randomId('pay'),
       clubSlug,
       registrationId,
-      reference,
+      dbReference,
       mandateId,
       subscriptionId,
       status,
@@ -151,8 +157,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     if (match) {
       try {
         await upsertPaymentRecord(env.DB, {
-          clubSlug, registrationId, reference, mandateId,
-          subscriptionId: match.id,
+          clubSlug, registrationId, reference, billingRequestId,
+          mandateId, subscriptionId: match.id,
           status: 'active',
         });
       } catch (e) {
@@ -187,8 +193,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     // Mandate exists — record it even without a subscription
     try {
       await upsertPaymentRecord(env.DB, {
-        clubSlug, registrationId, reference, mandateId,
-        subscriptionId: null,
+        clubSlug, registrationId, reference, billingRequestId,
+        mandateId, subscriptionId: null,
         status: 'mandate_only',
       });
     } catch (e) {
@@ -204,8 +210,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   try {
     await upsertPaymentRecord(env.DB, {
-      clubSlug, registrationId, reference, mandateId,
-      subscriptionId: sub.id,
+      clubSlug, registrationId, reference, billingRequestId,
+      mandateId, subscriptionId: sub.id,
       status: 'active',
     });
   } catch (e) {
