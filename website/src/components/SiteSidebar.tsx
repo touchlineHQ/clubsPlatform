@@ -222,6 +222,14 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
           />
           <NavLink
             component={Link}
+            to="/admin/registrations"
+            label="Registrations"
+            leftSection={<IconShirt size={16} />}
+            active={pathname === '/admin/registrations'}
+            onClick={onNavClick}
+          />
+          <NavLink
+            component={Link}
             to="/admin/payments"
             label="Payments"
             leftSection={<IconReceipt size={16} />}
