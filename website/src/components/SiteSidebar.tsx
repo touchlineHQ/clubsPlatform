@@ -176,11 +176,11 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </>
       )}
 
-      {user && belongsToClub && (
+      {user && belongsToClub && !canAdmin && (
         <NavLink
           component={Link}
           to="/my-registrations"
-          label={canAdmin ? 'Registrations' : 'My Registrations'}
+          label="My Registrations"
           leftSection={<IconShirt size={16} />}
           active={pathname === '/my-registrations'}
           onClick={onNavClick}
