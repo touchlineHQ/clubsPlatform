@@ -4,7 +4,7 @@ import {
   Paper, Group, Button, Box, Modal,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconFileUpload, IconShirt } from '@tabler/icons-react';
+import { IconFileUpload } from '@tabler/icons-react';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
@@ -14,7 +14,6 @@ interface PlayerRegistrationRow {
   fanId: string;
   registrationId: string;
   teamName: string;
-  ageGroup: string;
   registrationExpiry: string;
   registrationStatus: string;
   linkedAccounts: string | null;
@@ -87,12 +86,12 @@ export function AdminRegistrationsPage() {
         </Box>
       ) : (
         <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+          <Table.ScrollContainer minWidth={500}>
           <Table striped highlightOnHover fz="sm">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>FAN ID</Table.Th>
                 <Table.Th>Team</Table.Th>
-                <Table.Th>Age</Table.Th>
                 <Table.Th>Expiry</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th>Linked accounts</Table.Th>
@@ -105,7 +104,6 @@ export function AdminRegistrationsPage() {
                     <Text size="sm" ff="monospace">{r.fanId}</Text>
                   </Table.Td>
                   <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
-                  <Table.Td><Text size="sm">{r.ageGroup || '—'}</Text></Table.Td>
                   <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
                   <Table.Td>
                     {r.registrationStatus ? (
@@ -145,6 +143,7 @@ export function AdminRegistrationsPage() {
               ))}
             </Table.Tbody>
           </Table>
+          </Table.ScrollContainer>
         </Paper>
       )}
 
