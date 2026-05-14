@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ActionIcon, Alert, Badge, Box, Button, Center, Group, Loader,
+  ActionIcon, Alert, Badge, Box, Button, Center, Divider, Group, Loader,
   NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core';
 import {
-  IconAlertCircle, IconDeviceFloppy, IconPencil,
+  IconAlertCircle, IconDeviceFloppy, IconPencil, IconPlus,
   IconTrash, IconUsersGroup, IconX,
 } from '@tabler/icons-react';
 import { clubDesign } from '../../theme';
 import {
   formatGBP, INTERVAL_OPTIONS, type IntervalUnit,
-  type SubscriptionLevel, type TeamRow,
+  type StatusRate, type SubscriptionLevel, type TeamRow, type TeamStatusRate,
 } from './types';
 
 interface Props {
@@ -22,6 +22,15 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [clubRates, setClubRates] = useState<StatusRate[]>([]);
+  const [teamRates, setTeamRates] = useState<TeamStatusRate[]>([]);
+
+  const [addTeamName, setAddTeamName] = useState<string | null>(null);
+  const [addStatus, setAddStatus] = useState<string | null>(null);
+  const [addLevelId, setAddLevelId] = useState<string | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -35,16 +44,22 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
     setLoading(true);
     setLoadError('');
     try {
-      const [lvlRes, teamsRes] = await Promise.all([
+      const [lvlRes, teamsRes, statusRes] = await Promise.all([
         fetch('/api/admin/subscription-levels', { headers: clubHeaders }),
         fetch('/api/admin/team-subscription-levels', { headers: clubHeaders }),
+        fetch('/api/admin/status-subscription-levels', { headers: clubHeaders }),
       ]);
       if (!lvlRes.ok) throw new Error('Failed to load subscription levels');
       if (!teamsRes.ok) throw new Error('Failed to load teams');
+      if (!statusRes.ok) throw new Error('Failed to load status rates');
       const lvlData = await lvlRes.json() as { levels: SubscriptionLevel[] };
       const teamsData = await teamsRes.json() as { teams: TeamRow[] };
+      const statusData = await statusRes.json() as { statuses: string[]; clubRates: StatusRate[]; teamRates: TeamStatusRate[] };
       setLevels(lvlData.levels);
       setTeams(teamsData.teams);
+      setStatuses(statusData.statuses);
+      setClubRates(statusData.clubRates);
+      setTeamRates(statusData.teamRates);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
@@ -125,6 +140,34 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
       body: JSON.stringify({ teamName, subscriptionLevelId: levelId }),
     });
     if (res.ok) await refresh();
+  };
+
+  const handleAssignClubStatus = async (registrationStatus: string, levelId: string | null) => {
+    const res = await fetch('/api/admin/status-subscription-levels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...clubHeaders },
+      body: JSON.stringify({ registrationStatus, subscriptionLevelId: levelId }),
+    });
+    if (res.ok) await refresh();
+  };
+
+  const handleAssignTeamStatus = async (teamName: string, registrationStatus: string, levelId: string | null) => {
+    const res = await fetch('/api/admin/status-subscription-levels', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...clubHeaders },
+      body: JSON.stringify({ teamName, registrationStatus, subscriptionLevelId: levelId }),
+    });
+    if (res.ok) await refresh();
+  };
+
+  const handleAddTeamStatusRule = async () => {
+    if (!addTeamName || !addStatus || !addLevelId) return;
+    setAddSaving(true);
+    await handleAssignTeamStatus(addTeamName, addStatus, addLevelId);
+    setAddTeamName(null);
+    setAddStatus(null);
+    setAddLevelId(null);
+    setAddSaving(false);
   };
 
   const levelOptions = useMemo(
@@ -374,6 +417,172 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
               </Table>
             </Table.ScrollContainer>
           )}
+        </Stack>
+      </Paper>
+      {/* Status-based rates */}
+      <Paper p={{ base: 'md', sm: 'lg' }} withBorder radius="md">
+        <Stack gap="md">
+          <div>
+            <Text fw={700} ff={clubDesign.font.heading} fz="md">Status-based rates</Text>
+            <Text size="sm" c="dimmed">
+              Override the subscription level by registration status. Priority: team + status override → club-wide status → team default.
+            </Text>
+          </div>
+
+          {/* Club-wide status rates */}
+          <Divider label="Club-wide status rates" labelPosition="left" />
+          <Text size="sm" c="dimmed">
+            Applied to every team unless a team-specific override exists below.
+          </Text>
+
+          {loading ? (
+            <Center h={40}><Loader size="sm" /></Center>
+          ) : statuses.length === 0 ? (
+            <Box p="md" style={{ background: clubDesign.color.n1, border: `1px dashed ${clubDesign.color.n3}`, borderRadius: 8 }}>
+              <Text size="sm" c="dimmed" ta="center">
+                No registration statuses found. Import players to see statuses.
+              </Text>
+            </Box>
+          ) : (
+            <Table.ScrollContainer minWidth={560}>
+              <Table highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Subscription level</Table.Th>
+                    <Table.Th>Per payment</Table.Th>
+                    <Table.Th></Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {statuses.map(status => {
+                    const rate = clubRates.find(r => r.registrationStatus === status);
+                    const per = rate ? Math.round(rate.yearlyPriceInPence / Math.max(1, rate.intervalCount)) : null;
+                    return (
+                      <Table.Tr key={status}>
+                        <Table.Td><Badge variant="light" color="orange">{status}</Badge></Table.Td>
+                        <Table.Td style={{ minWidth: 240 }}>
+                          <Select
+                            placeholder="No override (uses team default)"
+                            data={levelOptions}
+                            value={rate?.subscriptionLevelId ?? null}
+                            onChange={(v) => handleAssignClubStatus(status, v ?? null)}
+                            clearable
+                            radius="md"
+                            size="sm"
+                            nothingFoundMessage="Create a level first"
+                          />
+                        </Table.Td>
+                        <Table.Td>
+                          {per != null ? (
+                            <Text size="sm">{formatGBP(per)} × {rate!.intervalCount} {rate!.intervalUnit}</Text>
+                          ) : (
+                            <Text size="sm" c="dimmed">—</Text>
+                          )}
+                        </Table.Td>
+                        <Table.Td>
+                          {rate && (
+                            <Tooltip label="Clear">
+                              <ActionIcon variant="subtle" color="gray" onClick={() => handleAssignClubStatus(status, null)}>
+                                <IconX size={16} />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          )}
+
+          {/* Team-specific status overrides */}
+          <Divider label="Team status overrides" labelPosition="left" mt="xs" />
+          <Text size="sm" c="dimmed">
+            Override a specific team's rate for a particular status.
+          </Text>
+
+          {teamRates.length > 0 && (
+            <Table.ScrollContainer minWidth={640}>
+              <Table highlightOnHover verticalSpacing="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Team</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Level</Table.Th>
+                    <Table.Th>Per payment</Table.Th>
+                    <Table.Th></Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {teamRates.map(r => {
+                    const per = Math.round(r.yearlyPriceInPence / Math.max(1, r.intervalCount));
+                    return (
+                      <Table.Tr key={`${r.teamName}-${r.registrationStatus}`}>
+                        <Table.Td><Text fw={600} size="sm">{r.teamName}</Text></Table.Td>
+                        <Table.Td><Badge variant="light" color="orange">{r.registrationStatus}</Badge></Table.Td>
+                        <Table.Td><Text size="sm">{r.subscriptionLevelName}</Text></Table.Td>
+                        <Table.Td><Text size="sm">{formatGBP(per)} × {r.intervalCount} {r.intervalUnit}</Text></Table.Td>
+                        <Table.Td>
+                          <Tooltip label="Remove override">
+                            <ActionIcon variant="subtle" color="red" onClick={() => handleAssignTeamStatus(r.teamName, r.registrationStatus, null)}>
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Table.Td>
+                      </Table.Tr>
+                    );
+                  })}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          )}
+
+          {/* Add a new team override */}
+          <Box>
+            <Text size="sm" fw={600} mb="xs">Add team override</Text>
+            <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="sm">
+              <Select
+                placeholder="Team"
+                data={teams.map(t => ({ value: t.teamName, label: t.teamName }))}
+                value={addTeamName}
+                onChange={setAddTeamName}
+                searchable
+                radius="md"
+                size="sm"
+              />
+              <Select
+                placeholder="Registration status"
+                data={statuses.map(s => ({ value: s, label: s }))}
+                value={addStatus}
+                onChange={setAddStatus}
+                searchable
+                radius="md"
+                size="sm"
+                nothingFoundMessage="No statuses found"
+              />
+              <Select
+                placeholder="Subscription level"
+                data={levelOptions}
+                value={addLevelId}
+                onChange={setAddLevelId}
+                radius="md"
+                size="sm"
+                nothingFoundMessage="Create a level first"
+              />
+            </SimpleGrid>
+            <Button
+              mt="sm"
+              size="sm"
+              radius="xl"
+              leftSection={addSaving ? <Loader size={12} color="white" /> : <IconPlus size={14} />}
+              disabled={!addTeamName || !addStatus || !addLevelId || addSaving}
+              onClick={handleAddTeamStatusRule}
+            >
+              Add override
+            </Button>
+          </Box>
         </Stack>
       </Paper>
     </Stack>

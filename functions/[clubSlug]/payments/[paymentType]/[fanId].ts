@@ -62,9 +62,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               sl.intervalUnit
          FROM player_registration pr
          JOIN player p ON p.id = pr.playerId
+         LEFT JOIN team_status_subscription_level tssl
+                ON tssl.clubSlug = pr.clubSlug
+               AND tssl.teamName = pr.teamName
+               AND tssl.registrationStatus = pr.registrationStatus
+         LEFT JOIN status_subscription_level ssl
+                ON ssl.clubSlug = pr.clubSlug
+               AND ssl.registrationStatus = pr.registrationStatus
          LEFT JOIN team_subscription_level tsl
                 ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-         LEFT JOIN subscription_level sl ON sl.id = tsl.subscriptionLevelId
+         LEFT JOIN subscription_level sl
+                ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
         WHERE pr.clubSlug = ? AND p.fanId = ?
         ORDER BY (sl.id IS NULL) ASC, pr.teamName ASC`
     )
@@ -116,7 +124,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     amountInPence: perPaymentInPence,
     intervalUnit: registration.intervalUnit,
     count: registration.intervalCount,
-    description: `${paymentType} subscription - FAN ${registration.fanId}`,
+    description: `${registration.teamName} subscription — FAN ${registration.fanId}`,
     origin,
   });
 
