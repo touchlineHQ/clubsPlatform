@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { makeContext, makeDb, adminSession, getReq, postReq } from '../test-utils';
+import { makeContext, makeDb, adminSession, getReq, postReq, patchReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -74,7 +74,7 @@ describe('player-registrations GET', () => {
 
 // ─── player-payments.ts ───────────────────────────────────────────────────────
 
-import { onRequestGet as playerPaymentsGet } from '../../api/admin/player-payments';
+import { onRequestGet as playerPaymentsGet, onRequestPatch as playerPaymentsPatch } from '../../api/admin/player-payments';
 
 describe('player-payments GET', () => {
   beforeEach(() => {
@@ -130,6 +130,56 @@ describe('player-payments GET', () => {
     const ctx = makeContext(req, { env: { DB: db as any } });
 
     const res = await playerPaymentsGet(ctx as any);
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('player-payments PATCH', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('deactivates a payment and returns ok', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = patchReq('/api/admin/player-payments', { id: 'pay_1' }, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await playerPaymentsPatch(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+  });
+
+  it('returns 400 when id is missing', async () => {
+    const db = makeDb();
+    const req = patchReq('/api/admin/player-payments', {}, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await playerPaymentsPatch(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/id/i);
+  });
+
+  it('returns 404 when payment is not found', async () => {
+    const db = makeDb({ run: { meta: { changes: 0 } } });
+    const req = patchReq('/api/admin/player-payments', { id: 'pay_unknown' }, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await playerPaymentsPatch(ctx as any);
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not found/i);
+  });
+
+  it('returns 401 when not authenticated', async () => {
+    mockGetSession.mockResolvedValue(null);
+    const db = makeDb();
+    const req = patchReq('/api/admin/player-payments', { id: 'pay_1' }, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await playerPaymentsPatch(ctx as any);
     expect(res.status).toBe(401);
   });
 });

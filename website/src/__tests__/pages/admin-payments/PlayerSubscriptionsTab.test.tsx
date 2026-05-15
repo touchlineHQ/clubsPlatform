@@ -284,6 +284,44 @@ describe('PlayerSubscriptionsTab', () => {
     });
   });
 
+  it('shows Deactivate button for active payment and completes deactivation on confirm', async () => {
+    mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/api/admin/player-registrations')) {
+        return { ok: true, json: async () => ({ registrations: [] }) };
+      }
+      if (url.includes('/api/admin/player-payments')) {
+        if (opts?.method === 'PATCH') {
+          return { ok: true, json: async () => ({ ok: true }) };
+        }
+        return { ok: true, json: async () => ({ payments: [samplePayment] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    // Wait for the payment row to appear, then the Deactivate button
+    await waitFor(() => {
+      expect(screen.getByText('Deactivate')).toBeTruthy();
+    });
+
+    // First click shows inline Confirm / Cancel
+    fireEvent.click(screen.getByText('Deactivate'));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm/i })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeTruthy();
+    });
+
+    // Confirm triggers the PATCH and updates the badge to Inactive
+    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
+    await waitFor(() => {
+      expect(screen.getByText('Inactive')).toBeTruthy();
+    });
+  });
+
   it('shows error alert when generate link API returns ok:false', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/api/admin/player-registrations')) {

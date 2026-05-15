@@ -343,6 +343,47 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     intervalUnit: 'monthly' as const,
   };
 
+  it('redirects to payment-cancelled when fanId is missing from params', async () => {
+    const db = makeDb({ first: { slug: 'test-club' } });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: '' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-cancelled');
+    expect(res.headers.get('location')).toContain('invalid_url');
+  });
+
+  it('redirects to payment-success with amount=0 when active payment exists but registration has no pricing', async () => {
+    const unpricedRegistration = {
+      ...sampleRegistration,
+      levelId: null,
+      yearlyPriceInPence: null,
+      intervalCount: null,
+      intervalUnit: null,
+    };
+    const db = makeDb({
+      first: [{ slug: 'test-club' }, { reference: 'REF-SUB-NOPRICE' }],
+      all: [[unpricedRegistration]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    const location = res.headers.get('location') ?? '';
+    expect(location).toContain('/payment-success');
+    expect(location).toContain('existing=1');
+    expect(location).toContain('amount=0');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
+
   it('redirects to GoCardless authorisation URL for a valid player', async () => {
     mockCreateGoCardlessLink.mockResolvedValue({
       ok: true,
