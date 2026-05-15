@@ -6,6 +6,7 @@ import {
 import { IconAlertCircle, IconCheck, IconFileUpload, IconUsers } from '@tabler/icons-react';
 import * as XLSX from 'xlsx';
 import { useClub } from '../../context/ClubContext';
+import { clubDesign } from '../../theme';
 
 interface ParsedPlayerRow {
   fanId: string;
@@ -201,11 +202,24 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       {!rows && !result && (
         <Paper
           withBorder
+          radius="md"
           p="xl"
-          style={{ borderStyle: 'dashed', cursor: 'pointer', textAlign: 'center' }}
+          style={{
+            borderStyle: 'dashed',
+            cursor: 'pointer',
+            textAlign: 'center',
+            background: clubDesign.color.n1,
+            transition: 'border-color 0.15s, background 0.15s',
+          }}
           onDrop={handleDrop}
           onDragOver={e => e.preventDefault()}
           onClick={() => inputRef.current?.click()}
+          onMouseEnter={e => {
+            e.currentTarget.style.borderColor = 'var(--mantine-primary-color-filled)';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.borderColor = '';
+          }}
         >
           <input
             ref={inputRef}
@@ -216,8 +230,21 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           />
           <Center>
             <Stack align="center" gap="xs">
-              <IconFileUpload size={40} color="gray" />
-              <Text fw={500}>Drop a file here or click to browse</Text>
+              <Box
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 14,
+                  background: 'var(--mantine-primary-color-light)',
+                  color: 'var(--mantine-primary-color-filled)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <IconFileUpload size={28} />
+              </Box>
+              <Text fw={700} ff={clubDesign.font.heading}>Drop a file here or click to browse</Text>
               <Text size="sm" c="dimmed">Accepts .csv, .xlsx, .xls (FA Club Player Report)</Text>
             </Stack>
           </Center>
@@ -225,9 +252,9 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       )}
 
       {parseErrors.length > 0 && (
-        <Alert icon={<IconAlertCircle size={16} />} color="red" title="Could not parse file">
+        <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not parse file">
           {parseErrors.map((e, i) => <Text key={i} size="sm">{e}</Text>)}
-          <Button mt="sm" size="xs" variant="outline" onClick={() => { setParseErrors([]); setFileName(''); }}>
+          <Button mt="sm" size="xs" radius="xl" variant="outline" onClick={() => { setParseErrors([]); setFileName(''); }}>
             Try another file
           </Button>
         </Alert>
@@ -235,54 +262,58 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
       {rows && summary && (
         <Stack gap="md">
-          <Group justify="space-between">
-            <div>
-              <Title order={5}>{fileName}</Title>
+          <Group justify="space-between" wrap="wrap">
+            <Box>
+              <Title order={5} ff={clubDesign.font.heading} fw={800}>{fileName}</Title>
               <Text size="sm" c="dimmed">Preview — review before importing</Text>
-            </div>
-            <Button variant="subtle" size="xs" onClick={() => { setRows(null); setFileName(''); }}>
+            </Box>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setRows(null); setFileName(''); }}>
               Change file
             </Button>
           </Group>
 
           <Group gap="xs">
-            <Badge color="blue">{summary.uniqueFans} players</Badge>
-            <Badge color="teal">{summary.allEmails} email accounts</Badge>
-            <Badge color="grape">{summary.guardianOnlyEmails} guardians</Badge>
-            <Badge color="orange">{summary.uniqueTeams} teams</Badge>
+            <Badge color="blue" radius="xl" variant="light">{summary.uniqueFans} players</Badge>
+            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} email accounts</Badge>
+            <Badge color="grape" radius="xl" variant="light">{summary.guardianOnlyEmails} guardians</Badge>
+            <Badge color="orange" radius="xl" variant="light">{summary.uniqueTeams} teams</Badge>
           </Group>
 
-          <ScrollArea>
-            <Table striped highlightOnHover withTableBorder fz="xs">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>FAN ID</Table.Th>
-                  <Table.Th>Age</Table.Th>
-                  <Table.Th>Team</Table.Th>
-                  <Table.Th>Expiry</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Player email</Table.Th>
-                  <Table.Th>Parent email(s)</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {rows.map((r, i) => (
-                  <Table.Tr key={i}>
-                    <Table.Td>{r.fanId}</Table.Td>
-                    <Table.Td>{r.ageGroup}</Table.Td>
-                    <Table.Td>{r.teamName}</Table.Td>
-                    <Table.Td>{r.registrationExpiry}</Table.Td>
-                    <Table.Td>{r.registrationStatus}</Table.Td>
-                    <Table.Td>{r.playerEmail || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
-                    <Table.Td>{r.parentEmails.join(', ') || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+          <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+            <ScrollArea>
+              <Table striped highlightOnHover fz="xs">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>FAN ID</Table.Th>
+                    <Table.Th>Age</Table.Th>
+                    <Table.Th>Team</Table.Th>
+                    <Table.Th>Expiry</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th>Player email</Table.Th>
+                    <Table.Th>Parent email(s)</Table.Th>
                   </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
+                </Table.Thead>
+                <Table.Tbody>
+                  {rows.map((r, i) => (
+                    <Table.Tr key={i}>
+                      <Table.Td>{r.fanId}</Table.Td>
+                      <Table.Td>{r.ageGroup}</Table.Td>
+                      <Table.Td>{r.teamName}</Table.Td>
+                      <Table.Td>{r.registrationExpiry}</Table.Td>
+                      <Table.Td>{r.registrationStatus}</Table.Td>
+                      <Table.Td>{r.playerEmail || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+                      <Table.Td>{r.parentEmails.join(', ') || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+          </Paper>
 
           <Box>
             <Button
+              radius="xl"
+              size="md"
               leftSection={importing ? <Loader size={14} color="white" /> : <IconUsers size={16} />}
               onClick={handleConfirm}
               loading={importing}
@@ -295,7 +326,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       )}
 
       {apiError && (
-        <Alert icon={<IconAlertCircle size={16} />} color="red" title="Import failed">
+        <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Import failed">
           {apiError}
         </Alert>
       )}
@@ -305,6 +336,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           <Alert
             icon={<IconCheck size={16} />}
             color={result.errors.length ? 'yellow' : 'green'}
+            radius="md"
             title={result.errors.length ? 'Import completed with warnings' : 'Import successful'}
           >
             <Stack gap={4}>
@@ -314,8 +346,8 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           </Alert>
 
           {result.errors.length > 0 && (
-            <Paper withBorder p="md">
-              <Title order={6} mb="xs">Row errors</Title>
+            <Paper withBorder radius="md" p="md">
+              <Title order={6} ff={clubDesign.font.heading} fw={800} mb="xs">Row errors</Title>
               <Table fz="xs">
                 <Table.Thead>
                   <Table.Tr>
@@ -336,7 +368,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           )}
 
           <Box>
-            <Button variant="subtle" size="xs" onClick={() => { setResult(null); setFileName(''); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); }}>
               Import another file
             </Button>
           </Box>

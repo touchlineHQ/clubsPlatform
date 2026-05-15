@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert } from '@mantine/core';
+import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert, Box } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { signIn, signOut } from '../auth-client';
 import { useAuth } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
+import { clubDesign } from '../theme';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -52,33 +53,47 @@ export function LoginPage() {
   };
 
   return (
-    <Stack maw={400} mx="auto" mt="xl">
-      <Title order={2}>Log In</Title>
-      <Paper p="xl" withBorder>
+    <Stack maw={420} mx="auto" mt="xl" gap="lg">
+      <Box ta="center">
+        <Title order={2} ff={clubDesign.font.heading} fw={800}>Log In</Title>
+        <Text c="dimmed" size="sm" mt={4}>
+          Welcome back. Sign in to manage your team and bookings.
+        </Text>
+      </Box>
+      <Paper p="xl" radius="md" withBorder>
         <form onSubmit={handleSubmit}>
           <Stack gap="md">
-            {error && <Alert color="red" variant="light">{error}</Alert>}
+            {error && <Alert color="red" variant="light" radius="md">{error}</Alert>}
             <TextInput
               label="Email"
               type="email"
               required
+              radius="md"
               value={email}
               onChange={e => setEmail(e.currentTarget.value)}
             />
             <PasswordInput
               label="Password"
               required
+              radius="md"
               value={password}
               onChange={e => setPassword(e.currentTarget.value)}
             />
-            <Button type="submit" loading={loading} fullWidth>
+            <Button type="submit" loading={loading} fullWidth radius="xl" size="md">
               Log In
             </Button>
           </Stack>
         </form>
       </Paper>
-      <Text size="sm" ta="center">
-        Don't have an account? <Anchor component={Link} to={`/signup${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}>Sign up</Anchor>
+      <Text size="sm" ta="center" c="dimmed">
+        Don't have an account?{' '}
+        <Anchor
+          component={Link}
+          to={`/signup${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}
+          fw={600}
+        >
+          Sign up
+        </Anchor>
       </Text>
     </Stack>
   );
