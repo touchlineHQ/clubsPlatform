@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert } from '@mantine/core';
+import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert, Box } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { signUp } from '../auth-client';
 import { useAuth } from '../context/AuthContext';
+import { clubDesign } from '../theme';
 
 export function SignUpPage() {
   const [name, setName] = useState('');
@@ -40,15 +41,21 @@ export function SignUpPage() {
   };
 
   return (
-    <Stack maw={400} mx="auto" mt="xl">
-      <Title order={2}>Create Account</Title>
-      <Paper p="xl" withBorder>
+    <Stack maw={420} mx="auto" mt="xl" gap="lg">
+      <Box ta="center">
+        <Title order={2} ff={clubDesign.font.heading} fw={800}>Create Account</Title>
+        <Text c="dimmed" size="sm" mt={4}>
+          Join your club to receive updates and manage bookings.
+        </Text>
+      </Box>
+      <Paper p="xl" radius="md" withBorder>
         <form onSubmit={handleSubmit}>
           <Stack gap="md">
-            {error && <Alert color="red" variant="light">{error}</Alert>}
+            {error && <Alert color="red" variant="light" radius="md">{error}</Alert>}
             <TextInput
               label="Full Name"
               required
+              radius="md"
               value={name}
               onChange={e => setName(e.currentTarget.value)}
             />
@@ -56,23 +63,32 @@ export function SignUpPage() {
               label="Email"
               type="email"
               required
+              radius="md"
               value={email}
               onChange={e => setEmail(e.currentTarget.value)}
             />
             <PasswordInput
               label="Password"
               required
+              radius="md"
               value={password}
               onChange={e => setPassword(e.currentTarget.value)}
             />
-            <Button type="submit" loading={loading} fullWidth>
+            <Button type="submit" loading={loading} fullWidth radius="xl" size="md">
               Create Account
             </Button>
           </Stack>
         </form>
       </Paper>
-      <Text size="sm" ta="center">
-        Already have an account? <Anchor component={Link} to={`/login${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}>Log in</Anchor>
+      <Text size="sm" ta="center" c="dimmed">
+        Already have an account?{' '}
+        <Anchor
+          component={Link}
+          to={`/login${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}
+          fw={600}
+        >
+          Log in
+        </Anchor>
       </Text>
     </Stack>
   );
