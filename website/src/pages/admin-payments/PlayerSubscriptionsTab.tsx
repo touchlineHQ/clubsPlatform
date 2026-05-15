@@ -32,6 +32,9 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   const [paymentCount, setPaymentCount] = useState<string>('');
   const [autofilled, setAutofilled] = useState(false);
 
+  const [confirmDeactivate, setConfirmDeactivate] = useState<string | null>(null);
+  const [deactivating, setDeactivating] = useState<string | null>(null);
+
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState('');
   const [generatedLink, setGeneratedLink] = useState('');
@@ -124,6 +127,25 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
       setGenError('Network error. Please check your connection and try again.');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleDeactivate = async (paymentId: string) => {
+    setDeactivating(paymentId);
+    try {
+      const res = await fetch('/api/admin/player-payments', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
+        body: JSON.stringify({ id: paymentId }),
+      });
+      if (res.ok) {
+        setPayments(prev =>
+          prev.map(p => p.id === paymentId ? { ...p, status: 'inactive' } : p)
+        );
+      }
+    } finally {
+      setDeactivating(null);
+      setConfirmDeactivate(null);
     }
   };
 
@@ -331,6 +353,7 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
                     <Table.Th>Subscription</Table.Th>
                     <Table.Th>Status</Table.Th>
                     <Table.Th>Date</Table.Th>
+                    <Table.Th>Actions</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -364,12 +387,45 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
                         )}
                       </Table.Td>
                       <Table.Td>
-                        <Badge size="sm" color={p.status === 'active' ? 'green' : 'orange'} variant="light">
-                          {p.status === 'active' ? 'Active' : 'Mandate only'}
+                        <Badge
+                          size="sm"
+                          color={p.status === 'active' ? 'green' : p.status === 'inactive' ? 'red' : 'orange'}
+                          variant="light"
+                        >
+                          {p.status === 'active' ? 'Active' : p.status === 'inactive' ? 'Inactive' : 'Mandate only'}
                         </Badge>
                       </Table.Td>
                       <Table.Td>
                         <Text size="xs" c="dimmed">{new Date(p.createdAt).toLocaleDateString('en-GB')}</Text>
+                      </Table.Td>
+                      <Table.Td>
+                        {p.status !== 'inactive' && (
+                          confirmDeactivate === p.id ? (
+                            <Group gap="xs">
+                              <Button
+                                size="xs"
+                                color="red"
+                                variant="filled"
+                                loading={deactivating === p.id}
+                                onClick={() => handleDeactivate(p.id)}
+                              >
+                                Confirm
+                              </Button>
+                              <Button size="xs" variant="subtle" onClick={() => setConfirmDeactivate(null)}>
+                                Cancel
+                              </Button>
+                            </Group>
+                          ) : (
+                            <Button
+                              size="xs"
+                              color="orange"
+                              variant="subtle"
+                              onClick={() => setConfirmDeactivate(p.id)}
+                            >
+                              Deactivate
+                            </Button>
+                          )
+                        )}
                       </Table.Td>
                     </Table.Tr>
                   ))}
