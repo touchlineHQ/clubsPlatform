@@ -99,24 +99,19 @@ export function ClubForm({ club, onChange, clubSlugs }: Props) {
       <Divider label="Live Feeds (fulltimeFeeds)" />
 
       <Alert icon={<IconInfoCircle size={16} />} variant="light" mb="xs">
-        <Text size="xs">Select your club from the dropdown to connect live fixtures. If your club isn't listed, you can type a slug manually. The team prefix filters which teams appear in your feeds.</Text>
+        <Text size="xs">Select your club from the dropdown to connect live fixtures. If your club isn't listed, you can type a slug manually.</Text>
       </Alert>
 
-      <Group grow>
-        <Autocomplete
-          label="Club Feed"
-          description="Type to search or enter a custom slug"
-          data={clubSlugs ?? []}
-          value={club.clubFeedSlug ?? ''}
-          onChange={v => update('clubFeedSlug', v)}
-          onOptionSubmit={v => {
-            onChange({ ...club, clubFeedSlug: v, teamSlugPrefix: v ? `${v}-` : '' });
-          }}
-          limit={20}
-          placeholder={clubSlugs && clubSlugs.length > 0 ? 'Search clubs...' : 'Loading clubs...'}
-        />
-        <TextInput label="Team Slug Prefix" description="Auto-set when you pick a club — edit if needed" value={club.teamSlugPrefix ?? ''} onChange={e => update('teamSlugPrefix', e.target.value)} />
-      </Group>
+      <Autocomplete
+        label="Club Feed"
+        description="Type to search or enter a custom slug"
+        data={clubSlugs ?? []}
+        value={club.clubFeedSlug ?? ''}
+        onChange={v => update('clubFeedSlug', v)}
+        onOptionSubmit={v => update('clubFeedSlug', v)}
+        limit={20}
+        placeholder={clubSlugs && clubSlugs.length > 0 ? 'Search clubs...' : 'Loading clubs...'}
+      />
 
       <Divider label="Home Banner" />
 

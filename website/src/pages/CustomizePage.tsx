@@ -61,7 +61,6 @@ export function CustomizePage({
   const applyPreview = async () => {
     const slugsChanged =
       localData.club.clubFeedSlug !== originalData.club.clubFeedSlug ||
-      localData.club.teamSlugPrefix !== originalData.club.teamSlugPrefix ||
       JSON.stringify(localData.teams.sections.map(s => s.teams.map(t => t.slug))) !==
       JSON.stringify(originalData.teams.sections.map(s => s.teams.map(t => t.slug)));
 
@@ -160,7 +159,7 @@ export function CustomizePage({
             teams={localData.teams}
             onChange={teams => set(d => ({ ...d, teams }))}
             feedTeams={feedTeams}
-            teamSlugPrefix={localData.club.teamSlugPrefix}
+            teamSlugPrefix={localData.club.teamSlugPrefix || (localData.club.clubFeedSlug ? `${localData.club.clubFeedSlug}-` : undefined)}
           />
         </Tabs.Panel>
 
