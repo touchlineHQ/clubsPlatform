@@ -33,7 +33,6 @@ import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
 import { AdminSecretsPage } from './pages/AdminSecretsPage';
 import { AdminPaymentsPage } from './pages/AdminPaymentsPage';
-import { AdminRegistrationsPage } from './pages/AdminRegistrationsPage';
 import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
 import { PaymentCancelledPage } from './pages/PaymentCancelledPage';
 
@@ -227,12 +226,7 @@ export const App = () => {
                 <BookingAdminPage clubFeedSlug={data.club.clubFeedSlug} />
               </ProtectedRoute>
             } />
-            <Route path="/admin/registrations" element={
-              <ProtectedRoute requireAdmin>
-                <AdminRegistrationsPage />
-              </ProtectedRoute>
-            } />
-            <Route path="/admin/import" element={<Navigate to="/admin/registrations" replace />} />
+            <Route path="/admin/import" element={<Navigate to="/my-registrations" replace />} />
             <Route path="/schedule" element={<PitchSchedulePage />} />
             <Route path="/admin/secrets" element={
               <ProtectedRoute requireAdmin>

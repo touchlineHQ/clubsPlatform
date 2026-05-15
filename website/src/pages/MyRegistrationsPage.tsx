@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton,
   Select, ActionIcon, Modal, Tooltip, Tabs,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
-  IconArrowRight, IconChevronDown, IconChevronUp, IconSelector, IconTrash,
+  IconArrowRight, IconChevronDown, IconChevronUp, IconFileUpload, IconSelector, IconTrash,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 
 interface RegistrationRow {
   registrationId: string;
@@ -434,28 +435,33 @@ export function MyRegistrationsPage() {
   const [pendingDelete, setPendingDelete] = useState<RegistrationRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [importOpened, { open: openImport, close: closeImport }] = useDisclosure(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/my-registrations', {
-          headers: { 'X-Club-Slug': clubSlug },
-        });
-        if (!res.ok) throw new Error('Failed to load registrations');
-        const data = await res.json() as Response;
-        if (cancelled) return;
-        setPersonal(data.personal);
-        setClub(data.club);
-        setScope(data.scope);
-      } catch {
-        if (!cancelled) setError('Failed to load registrations');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/my-registrations', {
+        headers: { 'X-Club-Slug': clubSlug },
+      });
+      if (!res.ok) throw new Error('Failed to load registrations');
+      const data = await res.json() as Response;
+      setPersonal(data.personal);
+      setClub(data.club);
+      setScope(data.scope);
+    } catch {
+      setError('Failed to load registrations');
+    } finally {
+      setLoading(false);
+    }
   }, [clubSlug]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleImported = () => {
+    closeImport();
+    refresh();
+  };
 
   const isAdmin = scope === 'admin';
 
@@ -506,23 +512,32 @@ export function MyRegistrationsPage() {
       />;
 
   const clubContent = club && (
-    club.length === 0
-      ? <EmptyState isAdmin={isAdmin} scope="club" />
-      : (
-        <Stack gap="sm">
-          <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
-          {filteredClub && filteredClub.length === 0 ? (
-            <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
-          ) : (
-            <RegistrationsTable
-              rows={filteredClub ?? club}
-              sixthHeader="Linked accounts"
-              canDelete
-              onDelete={setPendingDelete}
-            />
-          )}
-        </Stack>
-      )
+    <Stack gap="sm">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
+        <Button
+          leftSection={<IconFileUpload size={16} />}
+          onClick={openImport}
+          radius="xl"
+          variant="light"
+          size="xs"
+        >
+          Import Players
+        </Button>
+      </Group>
+      {club.length === 0 ? (
+        <EmptyState isAdmin={isAdmin} scope="club" />
+      ) : filteredClub && filteredClub.length === 0 ? (
+        <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
+      ) : (
+        <RegistrationsTable
+          rows={filteredClub ?? club}
+          sixthHeader="Linked accounts"
+          canDelete
+          onDelete={setPendingDelete}
+        />
+      )}
+    </Stack>
   );
 
   return (
@@ -550,6 +565,16 @@ export function MyRegistrationsPage() {
       ) : (
         personalContent
       )}
+
+      <Modal
+        opened={importOpened}
+        onClose={closeImport}
+        title="Import Players"
+        size="xl"
+        radius="md"
+      >
+        <ImportPlayersPanel onImported={handleImported} />
+      </Modal>
 
       <Modal
         opened={pendingDelete !== null}

@@ -176,11 +176,11 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </>
       )}
 
-      {user && belongsToClub && !canAdmin && (
+      {user && belongsToClub && (
         <NavLink
           component={Link}
           to="/my-registrations"
-          label="My Registrations"
+          label={canAdmin ? 'Registrations' : 'My Registrations'}
           leftSection={<IconShirt size={16} />}
           active={pathname === '/my-registrations'}
           onClick={onNavClick}
@@ -218,14 +218,6 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             label="Manage Users"
             leftSection={<IconUsers size={16} />}
             active={pathname === '/admin/users'}
-            onClick={onNavClick}
-          />
-          <NavLink
-            component={Link}
-            to="/admin/registrations"
-            label="Registrations"
-            leftSection={<IconShirt size={16} />}
-            active={pathname === '/admin/registrations'}
             onClick={onNavClick}
           />
           <NavLink
