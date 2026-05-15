@@ -33,7 +33,7 @@ interface Response {
   scope: 'admin' | 'user';
 }
 
-type SortKey = 'fanId' | 'teamName' | 'ageGroup' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'sixthCol';
+type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'sixthCol';
 type SortDir = 'asc' | 'desc';
 
 interface SortState {
@@ -81,7 +81,6 @@ function sortRows(rows: RegistrationRow[], sort: SortState, sixthIsLinkedAccount
     switch (sort.key) {
       case 'fanId': return r.fanId;
       case 'teamName': return r.teamName;
-      case 'ageGroup': return r.ageGroup ?? '';
       case 'registrationExpiry': return r.registrationExpiry ?? '';
       case 'registrationStatus': return r.registrationStatus ?? '';
       case 'subscription': return getSubscriptionStatus(r).label;
@@ -235,10 +234,7 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
                 <StatusBadge value={r.registrationStatus} />
                 <SubscriptionBadge row={r} />
               </Group>
-              <Group gap="md" wrap="wrap">
-                <Text size="xs" c="dimmed"><b>Age:</b> {r.ageGroup || '—'}</Text>
-                <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
-              </Group>
+              <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
               <Box>
                 <Text size="xs" c="dimmed" mb={2}>{sixthHeader}</Text>
                 {sixthIsLinkedAccounts
@@ -259,7 +255,6 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
           <Table.Tr>
             <Table.Th><SortHeader label="FAN ID" sortKey="fanId" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Team" sortKey="teamName" {...headerProps} /></Table.Th>
-            <Table.Th><SortHeader label="Age" sortKey="ageGroup" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Expiry" sortKey="registrationExpiry" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Status" sortKey="registrationStatus" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Subscription" sortKey="subscription" {...headerProps} /></Table.Th>
@@ -274,7 +269,6 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
                 <Text size="sm" ff="monospace">{r.fanId}</Text>
               </Table.Td>
               <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
-              <Table.Td><Text size="sm">{r.ageGroup || '—'}</Text></Table.Td>
               <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
               <Table.Td><StatusBadge value={r.registrationStatus} /></Table.Td>
               <Table.Td><SubscriptionBadge row={r} /></Table.Td>
