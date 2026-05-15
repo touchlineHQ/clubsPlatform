@@ -44,12 +44,47 @@ Set in `wrangler.toml` under `[vars]`:
 | `BETTER_AUTH_URL` | Override auth base URL | auto-detected |
 | `MULTI_CLUB` | Enable multi-club platform mode | disabled |
 | `PITCH_BOOKINGS` | Enable pitch scheduling & booking features | disabled |
+| `SECRETS_ENCRYPTION_KEY` | AES-256-GCM key for at-rest secret encryption (64 hex chars) | required for secrets |
+| `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
+| `SECRETS_TRANSPORT_PUBLIC_KEY` | RSA-2048 SPKI public key sent to the browser | required for secrets |
 
 For local-only overrides without editing `wrangler.toml`, create a `.dev.vars` file (gitignored by Wrangler):
 
 ```
 BETTER_AUTH_URL=http://localhost:8788
 ```
+
+## API Secrets
+
+Club admins can store encrypted API keys (e.g. `GC_ACCESS_TOKEN`) via the **API Secrets** page in the admin dashboard (`/#/admin/secrets`). Values are encrypted in the browser before transmission and stored with AES-256-GCM — the plaintext never touches the network or the database.
+
+### Generating the required keys
+
+**At-rest encryption key** (32 random bytes as hex):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Set the output as `SECRETS_ENCRYPTION_KEY`.
+
+**Transport key pair** (RSA-2048):
+
+```bash
+node -e "
+const c = require('crypto');
+const { privateKey, publicKey } = c.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding:  { type: 'spki',  format: 'der' },
+  privateKeyEncoding: { type: 'pkcs8', format: 'der' },
+});
+console.log('SECRETS_TRANSPORT_PRIVATE_KEY=' + privateKey.toString('base64'));
+console.log('SECRETS_TRANSPORT_PUBLIC_KEY='  + publicKey.toString('base64'));
+"
+```
+
+For **local dev** add all three to `.dev.vars` (gitignored by Wrangler).
+For **production** set `SECRETS_ENCRYPTION_KEY` and `SECRETS_TRANSPORT_PRIVATE_KEY` as Cloudflare dashboard secrets. `SECRETS_TRANSPORT_PUBLIC_KEY` can go in `wrangler.toml` under `[vars]` since it is not sensitive.
 
 ## Multi-Club Mode
 

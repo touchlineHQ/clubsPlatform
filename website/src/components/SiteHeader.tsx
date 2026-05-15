@@ -20,9 +20,17 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
   const showFcSuffix = !club.tagShort && / FC$/i.test(club.name);
 
   const { activeSection, setActiveSection } = useSection();
-  const { user, isAdmin, loading: authLoading } = useAuth();
-  const { isMultiClub } = useClub();
+  const { user, isAdmin, isPlatformAdmin, loading: authLoading } = useAuth();
+  const { isMultiClub, clubSlug, clubs } = useClub();
   const navigate = useNavigate();
+
+  const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
+  const canAdmin = isAdmin && belongsToClub;
+
+  // For cross-club users, find their home club so we can link to it.
+  const userClub = isMultiClub && user && !belongsToClub
+    ? clubs.find(c => c.slug === user.clubSlug) ?? null
+    : null;
   const activeData = activeSection !== 'all'
     ? sections.find(s => s.id === activeSection)
     : null;
@@ -158,7 +166,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               </Button>
             </Menu.Target>
             <Menu.Dropdown>
-              {isAdmin && (
+              {canAdmin && (
                 <>
                   <Menu.Item
                     leftSection={<IconSettings size={14} />}
@@ -173,6 +181,15 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
                     Manage Users
                   </Menu.Item>
                 </>
+              )}
+              {userClub && (
+                <Menu.Item
+                  leftSection={<IconArrowLeft size={14} />}
+                  component="a"
+                  href={`/${userClub.slug}/`}
+                >
+                  Go to {userClub.name}
+                </Menu.Item>
               )}
               <Menu.Item
                 leftSection={<IconLogout size={14} />}

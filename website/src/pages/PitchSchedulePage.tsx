@@ -3,6 +3,7 @@ import { Stack, Text, Table, Badge, Divider, Group, Loader, Center, Alert, Tabs,
 import { IconCalendarMonth, IconList } from '@tabler/icons-react';
 import { DatePicker } from '@mantine/dates';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 
@@ -63,7 +64,10 @@ function timeToFraction(time: string) {
 }
 
 export function PitchSchedulePage() {
-  const { isManager, isAdmin } = useAuth();
+  const { isManager, isAdmin, isPlatformAdmin, user } = useAuth();
+  const { isMultiClub, clubSlug } = useClub();
+  const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
+  const canManage = (isManager || isAdmin) && belongsToClub;
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,7 +87,7 @@ export function PitchSchedulePage() {
         .catch(() => setError('Failed to load bookings')),
     ];
 
-    if (isManager || isAdmin) {
+    if (canManage) {
       fetches.push(
         fetch('/api/booking-requests')
           .then(r => r.ok ? r.json() as Promise<{ requests: BookingRequest[] }> : Promise.reject())
@@ -93,7 +97,7 @@ export function PitchSchedulePage() {
     }
 
     Promise.all(fetches).finally(() => setLoading(false));
-  }, [isManager, isAdmin]);
+  }, [canManage]);
 
   useEffect(() => {
     fetch('/api/pitches')
@@ -265,7 +269,7 @@ export function PitchSchedulePage() {
 
         <Tabs.Panel value="list" pt="md">
           <Stack>
-            {(isManager || isAdmin) && (
+            {canManage && (
               <>
                 <Divider label="Your Requests" labelPosition="left" />
                 {requests.length === 0 ? (

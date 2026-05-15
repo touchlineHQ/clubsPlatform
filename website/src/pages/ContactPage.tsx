@@ -31,7 +31,7 @@ function ContactCard({ icon, title, iconColor, children }: ContactCardProps) {
   );
 }
 
-export function ContactPage({ club }: Props) {
+export const ContactPage = ({ club }: Props) => {
   const hasAddress = !!(club.address?.line1 || club.address?.line2 || club.address?.postcode);
   const addressLines = [club.address?.line1, club.address?.line2, club.address?.postcode].filter(Boolean);
   const hasFacebook = club.socials?.facebook && club.socials.facebook !== '#';

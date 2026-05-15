@@ -39,6 +39,7 @@ export function SaveButton({ data, onSaved }: Props) {
       ]);
       setResult('success');
       onSaved?.(data.club);
+      window.location.reload();
     } catch {
       setResult('error');
     } finally {

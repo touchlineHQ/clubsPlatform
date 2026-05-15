@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert } from '@mantine/core';
-import { Link, useNavigate } from 'react-router-dom';
-import { signIn } from '../auth-client';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { signIn, signOut } from '../auth-client';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 
 export function LoginPage() {
   const [email, setEmail] = useState('');
@@ -10,7 +11,15 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { refresh } = useAuth();
+  const { clubSlug: currentClubSlug, isMultiClub } = useClub();
+
+  const rawRedirect = searchParams.get('redirectTo');
+  // Only honour same-app paths to prevent open-redirect.
+  const redirectTo = rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+    ? rawRedirect
+    : '/';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,8 +31,18 @@ export function LoginPage() {
       if (result.error) {
         setError(result.error.message ?? 'Login failed');
       } else {
-        await refresh();
-        navigate('/');
+        const loggedInUser = await refresh();
+
+        // In multi-club mode, reject users who belong to a different club.
+        // Platform admins (clubSlug === null) are allowed everywhere.
+        if (isMultiClub && loggedInUser && loggedInUser.clubSlug !== null && loggedInUser.clubSlug !== currentClubSlug) {
+          await signOut();
+          await refresh();
+          setError('This account is not registered with this club. Please log in on the correct club page.');
+          return;
+        }
+
+        navigate(redirectTo, { replace: true });
       }
     } catch {
       setError('Login failed — please try again');
@@ -59,7 +78,7 @@ export function LoginPage() {
         </form>
       </Paper>
       <Text size="sm" ta="center">
-        Don't have an account? <Anchor component={Link} to="/signup">Sign up</Anchor>
+        Don't have an account? <Anchor component={Link} to={`/signup${rawRedirect ? `?redirectTo=${encodeURIComponent(redirectTo)}` : ''}`}>Sign up</Anchor>
       </Text>
     </Stack>
   );

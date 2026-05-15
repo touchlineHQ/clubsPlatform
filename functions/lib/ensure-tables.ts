@@ -33,6 +33,25 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user_team_role" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "teamSlug" TEXT NOT NULL, "teamLeague" TEXT NOT NULL, "teamName" TEXT NOT NULL, "role" TEXT NOT NULL CHECK("role" IN ('coach', 'manager', 'subscriber')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "teamSlug", "teamLeague"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_team_role_userId" ON "user_team_role" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_team_role_teamSlug" ON "user_team_role" ("teamSlug", "teamLeague")`,
+  `CREATE TABLE IF NOT EXISTS "player" ("id" TEXT PRIMARY KEY NOT NULL, "fanId" TEXT NOT NULL UNIQUE, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS "player_registration" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "ageGroup" TEXT, "registrationExpiry" TEXT, "registrationStatus" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "playerId", "teamName"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_clubSlug" ON "player_registration" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_playerId" ON "player_registration" ("playerId")`,
+  `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
+  `CREATE TABLE IF NOT EXISTS "club_secret" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "key" TEXT NOT NULL, "encryptedValue" TEXT NOT NULL, "iv" TEXT NOT NULL, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "uq_club_secret_slug_key" ON "club_secret" (COALESCE("clubSlug",''), "key")`,
+  `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_payment_registrationId" ON "player_payment" ("registrationId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_payment_mandateId" ON "player_payment" ("mandateId")`,
+  `CREATE TABLE IF NOT EXISTS "subscription_level" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "name" TEXT NOT NULL, "yearlyPriceInPence" INTEGER NOT NULL, "intervalCount" INTEGER NOT NULL DEFAULT 1, "intervalUnit" TEXT NOT NULL DEFAULT 'yearly' CHECK ("intervalUnit" IN ('weekly', 'monthly', 'yearly')), "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE ("clubSlug", "name"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_subscription_level_clubSlug" ON "subscription_level" ("clubSlug")`,
+  `CREATE TABLE IF NOT EXISTS "team_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_team_subscription_level_levelId" ON "team_subscription_level" ("subscriptionLevelId")`,
+  `CREATE TABLE IF NOT EXISTS "status_subscription_level" ("clubSlug" TEXT NOT NULL, "registrationStatus" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "registrationStatus"))`,
+  `CREATE TABLE IF NOT EXISTS "team_status_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "registrationStatus" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName", "registrationStatus"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_team_status_sub_level_clubTeam" ON "team_status_subscription_level" ("clubSlug", "teamName")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [
@@ -52,6 +71,10 @@ const COLUMN_MIGRATIONS = [
   `ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "data" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE "player_payment" ADD COLUMN "registrationId" TEXT`,
+  `UPDATE "player_payment" SET "amountInPence" = NULL WHERE "amountInPence" IS NOT NULL`,
+  `UPDATE "player_payment" SET "intervalUnit" = NULL WHERE "intervalUnit" IS NOT NULL`,
 ];
 
 const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');

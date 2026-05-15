@@ -43,6 +43,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT id, clubSlug, sectionKey, name, subtitle, icon, logo, sortOrder, createdAt, updatedAt
        FROM team_section ts
        WHERE (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))
+         AND sectionKey != 'imported'
        ORDER BY sortOrder ASC, name ASC`
     )
     .bind(clubSlug, clubSlug)
@@ -58,6 +59,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT id, sectionId, name, description, manager, coach, contact, photo, slug, sidebar, managerLabel, coachLabel, sortOrder, createdAt, updatedAt
        FROM team
        WHERE sectionId IN (${placeholders})
+         AND forConsolidation = 0
        ORDER BY sectionId ASC, sortOrder ASC, name ASC`
     )
     .bind(...sectionIds)

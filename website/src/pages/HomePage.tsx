@@ -1,16 +1,19 @@
 import { Title, Text, Button, Group, SimpleGrid, Paper, ThemeIcon, Stack, Image, Box, Badge } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
-import type { Club } from '../types';
+import type { Club, VisibleItems } from '../types';
 import { tablerIcon } from '../utils/icons';
 import { useAuth } from '../context/AuthContext';
 import { HeroBanner } from '../components/club/HeroBanner';
 import { StatTileRow } from '../components/club/StatTile';
 import { clubDesign } from '../theme';
 
-interface Props { club: Club }
+interface Props {
+  club: Club,
+  visibility: VisibleItems
+}
 
-export function HomePage({ club }: Props) {
+export const HomePage = ({ club, visibility }: Props) => {
   const { user, loading, teamRoles } = useAuth();
   const hasAbout = club.about && club.about.length > 0;
   const hasHistory = club.history && club.history.length > 0;
@@ -60,18 +63,22 @@ export function HomePage({ club }: Props) {
               />
             )}
             <Group gap="xs" mt={4}>
-              <Button component={Link} to="/about" variant="white" color="dark" radius="xl" size="sm">
-                About Us
-              </Button>
-              <Button
-                component={Link}
-                to="/register"
-                radius="xl"
-                size="sm"
-                rightSection={<IconArrowRight size={14} />}
-              >
-                Register &amp; Pay
-              </Button>
+              {visibility['/about'] && (
+                <Button component={Link} to="/about" variant="white" color="dark" radius="xl" size="sm">
+                  About Us
+                </Button>
+              )}
+              {visibility['/register'] && (
+                <Button
+                  component={Link}
+                  to="/register"
+                  radius="xl"
+                  size="sm"
+                  rightSection={<IconArrowRight size={14} />}
+                >
+                  Register &amp; Pay
+                </Button>
+              )}
             </Group>
           </Stack>
           {club.badge && (

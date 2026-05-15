@@ -27,9 +27,14 @@ import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { MyRegistrationsPage } from './pages/MyRegistrationsPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
+import { AdminSecretsPage } from './pages/AdminSecretsPage';
+import { AdminPaymentsPage } from './pages/AdminPaymentsPage';
+import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
+import { PaymentCancelledPage } from './pages/PaymentCancelledPage';
 
 /** Extract the first path segment as a potential club slug, e.g. "/east-leake/" → "east-leake" */
 function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
@@ -39,7 +44,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
   return null;
 }
 
-export default function App() {
+export const App = () => {
   const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
@@ -101,6 +106,22 @@ export default function App() {
     );
   }
 
+  // Payment result pages are club-agnostic — render them before any club-slug
+  // guard so GoCardless redirects (which carry no club slug in the path) work.
+  const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+  if (hashPath === '/payment-success' || hashPath === '/payment-cancelled') {
+    return (
+      <MantineProvider theme={createLandingTheme()}>
+        <HashRouter>
+          <Routes>
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
+          </Routes>
+        </HashRouter>
+      </MantineProvider>
+    );
+  }
+
   // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
     return (
@@ -146,35 +167,37 @@ export default function App() {
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
             pitchBookings={registry.pitchBookings}
-            visibility={{
-              '/about':     (data.club.about?.length ?? 0) > 0 || (data.club.history?.length ?? 0) > 0,
-              '/teams':     data.teams.sections.length > 0 || data.liveTeams.length > 0,
-              '/fixtures':  data.teams.sections.length > 0 || data.liveTeams.length > 0,
-              '/register':  data.registration.length > 0,
-              '/committee': (data.committee.committee?.length ?? 0) > 0,
-              '/news':      data.news.length > 0,
-              '/gallery':   data.gallery.length > 0,
-              '/matchday':  data.matchday.length > 0,
-            }}
+            visibility={data.visibility}
           />
         </AppShell.Navbar>
 
         <AppShell.Main>
           <Routes>
-            <Route path="/" element={<HomePage club={data.club} />} />
-            <Route path="/about" element={<AboutPage club={data.club} />} />
-            <Route path="/teams" element={<TeamsPage teams={data.teams} liveTeams={data.liveTeams} />} />
-            <Route path="/teams/:league/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
-            <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
-            <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />
-            <Route path="/register" element={<RegisterPage items={data.registration} />} />
-            <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />
-            <Route path="/news" element={<NewsPage items={data.news} />} />
-            <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />
-            <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />
-            <Route path="/contact" element={<ContactPage club={data.club} />} />
+            <Route path="/" element={<HomePage club={data.club} visibility={data.visibility} />} />
+
+            {data.visibility['/about'] && <Route path="/about" element={<AboutPage club={data.club} />} />}
+            {data.visibility['/teams'] && (
+              <>
+                <Route path="/teams" element={<TeamsPage teams={data.teams} liveTeams={data.liveTeams} />} />
+                <Route path="/teams/:league/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
+                <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
+              </>
+            )}
+            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />})
+            {data.visibility['/register'] && <Route path="/register" element={<RegisterPage items={data.registration} />} />}
+            {data.visibility['/committee'] && <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />}
+            {data.visibility['/news'] && <Route path="/news" element={<NewsPage items={data.news} />} />}
+            {data.visibility['/gallery'] && <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />}
+            {data.visibility['/matchday'] && <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />}
+            {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
+
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
+            <Route path="/my-registrations" element={
+              <ProtectedRoute>
+                <MyRegistrationsPage />
+              </ProtectedRoute>
+            } />
             <Route path="/admin/users" element={
               <ProtectedRoute requireAdmin>
                 <AdminUsersPage liveTeams={data.liveTeams} />
@@ -203,7 +226,20 @@ export default function App() {
                 <BookingAdminPage clubFeedSlug={data.club.clubFeedSlug} />
               </ProtectedRoute>
             } />
+            <Route path="/admin/import" element={<Navigate to="/my-registrations" replace />} />
             <Route path="/schedule" element={<PitchSchedulePage />} />
+            <Route path="/admin/secrets" element={
+              <ProtectedRoute requireAdmin>
+                <AdminSecretsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/payments" element={
+              <ProtectedRoute requireAdmin>
+                <AdminPaymentsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AppShell.Main>
@@ -215,3 +251,5 @@ export default function App() {
     </ClubContext.Provider>
   );
 }
+
+export default App;

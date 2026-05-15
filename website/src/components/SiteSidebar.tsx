@@ -1,9 +1,10 @@
 import { NavLink, Stack, Text, Divider, Badge, Group, Paper, Button } from '@mantine/core';
 import { useLocation, Link } from 'react-router-dom';
-import { IconCalendar, IconClipboardList, IconSettings, IconShoppingBag, IconUsers } from '@tabler/icons-react';
+import { IconCalendar, IconClipboardList, IconKey, IconReceipt, IconSettings, IconShirt, IconShoppingBag, IconUsers } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 import { tablerIcon } from '../utils/icons';
 
 const DEFAULT_NAV: NavItem[] = [
@@ -62,10 +63,16 @@ interface Props {
   visibility?: Record<string, boolean>;
 }
 
-export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) {
+export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) => {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
-  const { user, isAdmin, isManager } = useAuth();
+  const { user, isAdmin, isManager, isPlatformAdmin } = useAuth();
+  const { clubSlug, isMultiClub } = useClub();
+
+  // In multi-club mode, only show elevated links to users who belong to this club.
+  const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
+  const canAdmin = isAdmin && belongsToClub;
+  const canManage = isManager && belongsToClub;
 
   const navItems = (club.nav ?? DEFAULT_NAV).filter(
     ({ to }) => visibility === undefined || !(to in visibility) || visibility[to]
@@ -169,7 +176,18 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </>
       )}
 
-      {pitchBookings && user && (isManager || isAdmin) && (
+      {user && belongsToClub && (
+        <NavLink
+          component={Link}
+          to="/my-registrations"
+          label={canAdmin ? 'Registrations' : 'My Registrations'}
+          leftSection={<IconShirt size={16} />}
+          active={pathname === '/my-registrations'}
+          onClick={onNavClick}
+        />
+      )}
+
+      {pitchBookings && canManage && (
         <div style={{ marginTop: 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
@@ -183,7 +201,7 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         </div>
       )}
 
-      {isAdmin && (
+      {canAdmin && (
         <div style={{ marginTop: user ? undefined : 'auto' }}>
           <Divider mx="md" mb="xs" />
           <NavLink
@@ -200,6 +218,22 @@ export function SiteSidebar({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             label="Manage Users"
             leftSection={<IconUsers size={16} />}
             active={pathname === '/admin/users'}
+            onClick={onNavClick}
+          />
+          <NavLink
+            component={Link}
+            to="/admin/payments"
+            label="Payments"
+            leftSection={<IconReceipt size={16} />}
+            active={pathname === '/admin/payments'}
+            onClick={onNavClick}
+          />
+          <NavLink
+            component={Link}
+            to="/admin/secrets"
+            label="API Secrets"
+            leftSection={<IconKey size={16} />}
+            active={pathname === '/admin/secrets'}
             onClick={onNavClick}
           />
           {pitchBookings && (

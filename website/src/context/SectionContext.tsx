@@ -5,7 +5,7 @@ interface SectionContextValue {
   setActiveSection: (s: string) => void;
 }
 
-const SectionContext = createContext<SectionContextValue>({
+export const SectionContext = createContext<SectionContextValue>({
   activeSection: 'all',
   setActiveSection: () => {},
 });

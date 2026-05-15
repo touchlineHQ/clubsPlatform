@@ -17,17 +17,17 @@ interface AuthContextValue {
   /** True when the user is an admin with no specific clubSlug — can manage all clubs. */
   isPlatformAdmin: boolean;
   teamRoles: UserTeamRole[];
-  refresh: () => Promise<void>;
+  refresh: () => Promise<AuthUser | null>;
 }
 
-const AuthContext = createContext<AuthContextValue>({
+export const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
   isAdmin: false,
   isManager: false,
   isPlatformAdmin: false,
   teamRoles: [],
-  refresh: async () => {},
+  refresh: async () => null,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -35,31 +35,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [teamRoles, setTeamRoles] = useState<UserTeamRole[]>([]);
 
-  const refresh = async () => {
+  const refresh = async (): Promise<AuthUser | null> => {
     try {
       const [meRes, teamsRes] = await Promise.all([
         fetch('/api/me'),
         fetch('/api/my-teams'),
       ]);
 
-      if (meRes.ok) {
-        const data = await meRes.json() as { user: AuthUser };
-        setUser(data.user);
-      } else {
+      if (!meRes.ok) {
         setUser(null);
         setTeamRoles([]);
-        return;
+        return null;
       }
 
+      const data = await meRes.json() as { user: AuthUser };
+      setUser(data.user);
+
       if (teamsRes.ok) {
-        const data = await teamsRes.json() as { teams: UserTeamRole[] };
-        setTeamRoles(data.teams ?? []);
+        const teamData = await teamsRes.json() as { teams: UserTeamRole[] };
+        setTeamRoles(teamData.teams ?? []);
       } else {
         setTeamRoles([]);
       }
+
+      return data.user;
     } catch {
       setUser(null);
       setTeamRoles([]);
+      return null;
     } finally {
       setLoading(false);
     }

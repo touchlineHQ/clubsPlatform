@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 
 const enc = new TextEncoder();
 
-async function hashPwd(password: string): Promise<string> {
+export async function hashPwd(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey(
     "raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]
@@ -17,7 +17,7 @@ async function hashPwd(password: string): Promise<string> {
   return "pbkdf2$" + btoa(String.fromCharCode(...out));
 }
 
-async function verifyPwd({ hash, password }: { hash: string; password: string }): Promise<boolean> {
+export async function verifyPwd({ hash, password }: { hash: string; password: string }): Promise<boolean> {
   if (!hash.startsWith("pbkdf2$")) return false;
   try {
     const bytes = Uint8Array.from(atob(hash.slice(7)), c => c.charCodeAt(0));
