@@ -214,6 +214,185 @@ describe('subscription-levels/[id] DELETE', () => {
   });
 });
 
+// ─── status-subscription-levels.ts ───────────────────────────────────────────
+
+import {
+  onRequestGet as statusLevelsGet,
+  onRequestPost as statusLevelsPost,
+} from '../../api/admin/status-subscription-levels';
+
+describe('status-subscription-levels GET', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('returns statuses, clubRates, and teamRates from batch', async () => {
+    const db = makeDb({
+      batch: [[
+        [{ registrationStatus: 'Training Only' }],
+        [{ registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_1', subscriptionLevelName: 'Monthly', yearlyPriceInPence: 1200, intervalCount: 12, intervalUnit: 'monthly' }],
+        [{ teamName: 'U11s', registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_1', subscriptionLevelName: 'Monthly', yearlyPriceInPence: 1200, intervalCount: 12, intervalUnit: 'monthly' }],
+      ]],
+    });
+    const req = getReq('/api/admin/status-subscription-levels', { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsGet(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.statuses).toEqual(['Training Only']);
+    expect(body.clubRates).toHaveLength(1);
+    expect(body.clubRates[0].subscriptionLevelId).toBe('lvl_1');
+    expect(body.teamRates).toHaveLength(1);
+    expect(body.teamRates[0].teamName).toBe('U11s');
+  });
+
+  it('returns empty arrays when batch returns empty results', async () => {
+    const db = makeDb({
+      batch: [[[], [], []]],
+    });
+    const req = getReq('/api/admin/status-subscription-levels', { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsGet(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.statuses).toEqual([]);
+    expect(body.clubRates).toEqual([]);
+    expect(body.teamRates).toEqual([]);
+  });
+});
+
+describe('status-subscription-levels POST (club-wide)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('assigns a subscription level club-wide and returns ok', async () => {
+    const db = makeDb({
+      first: { id: 'lvl_1' },
+      run: { meta: { changes: 1 } },
+    });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.cleared).toBeUndefined();
+  });
+
+  it('clears a club-wide level when subscriptionLevelId is null and returns cleared', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { registrationStatus: 'Training Only', subscriptionLevelId: null },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.cleared).toBe(true);
+  });
+
+  it('returns 404 when the subscription level does not exist club-wide', async () => {
+    const db = makeDb({ first: null });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_missing' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not found/);
+  });
+
+  it('returns 400 when registrationStatus is missing', async () => {
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { subscriptionLevelId: 'lvl_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/registrationStatus/);
+  });
+});
+
+describe('status-subscription-levels POST (team-specific)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('assigns a subscription level to a team status override and returns ok', async () => {
+    const db = makeDb({
+      first: { id: 'lvl_1' },
+      run: { meta: { changes: 1 } },
+    });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { teamName: 'U11s', registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.cleared).toBeUndefined();
+  });
+
+  it('clears a team-specific override when subscriptionLevelId is null and returns cleared', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { teamName: 'U11s', registrationStatus: 'Training Only', subscriptionLevelId: null },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.cleared).toBe(true);
+  });
+
+  it('returns 404 when the subscription level does not exist for a team override', async () => {
+    const db = makeDb({ first: null });
+    const req = postReq(
+      '/api/admin/status-subscription-levels',
+      { teamName: 'U11s', registrationStatus: 'Training Only', subscriptionLevelId: 'lvl_missing' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await statusLevelsPost(ctx as any);
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/not found/);
+  });
+});
+
 // ─── team-subscription-levels.ts ─────────────────────────────────────────────
 
 import {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderWithMantine, mockMember, mockAdmin, mockSingleClub } from '../test-utils';
 
 vi.mock('react-router-dom', () => ({
@@ -94,6 +94,72 @@ describe('MyRegistrationsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/failed to load/i)).toBeTruthy();
+    });
+  });
+
+  it('shows Import Players button in Club Registrations tab for admins', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
+    });
+
+    renderWithMantine(<MyRegistrationsPage />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
+    });
+  });
+
+  it('opens the delete modal when the remove button is clicked on a club registration', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
+    });
+
+    renderWithMantine(<MyRegistrationsPage />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+
+    await waitFor(() => {
+      const removeBtn = document.querySelector('[aria-label="Remove registration"]');
+      expect(removeBtn).toBeTruthy();
+      fireEvent.click(removeBtn!);
+    });
+
+    expect(screen.getByTestId('modal')).toBeInTheDocument();
+  });
+
+  it('shows "No registrations linked to your account yet" when personal is empty and scope is user', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ personal: [], club: null, scope: 'user' }),
+    });
+
+    renderWithMantine(<MyRegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No registrations linked to your account yet/i)).toBeTruthy();
     });
   });
 });
