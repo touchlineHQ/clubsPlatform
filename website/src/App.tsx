@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
@@ -35,6 +35,15 @@ import { AdminSecretsPage } from './pages/AdminSecretsPage';
 import { AdminPaymentsPage } from './pages/AdminPaymentsPage';
 import { PaymentSuccessPage } from './pages/PaymentSuccessPage';
 import { PaymentCancelledPage } from './pages/PaymentCancelledPage';
+
+function NavigationHandler({ onNavigate }: { onNavigate: () => void }) {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    onNavigate();
+  }, [pathname, onNavigate]);
+  return null;
+}
 
 /** Extract the first path segment as a potential club slug, e.g. "/east-leake/" → "east-leake" */
 function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
@@ -151,6 +160,7 @@ export const App = () => {
     <AuthProvider>
     <SectionProvider>
     <HashRouter>
+      <NavigationHandler onNavigate={close} />
       <AppShell
         header={{ height: 60 }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
