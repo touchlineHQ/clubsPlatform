@@ -99,6 +99,30 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return selectionPage(env.DB, clubSlug, fanId, registrations, origin, paymentType);
   }
 
+  const existingPayment = await env.DB
+    .prepare(
+      `SELECT reference FROM "player_payment"
+        WHERE registrationId = ? AND status = 'active'
+        LIMIT 1`
+    )
+    .bind(registration.registrationId)
+    .first<{ reference: string }>();
+
+  if (existingPayment?.reference) {
+    const intervalUnit = registration.intervalUnit ?? 'monthly';
+    const perPaymentInPence =
+      registration.yearlyPriceInPence != null && registration.intervalCount != null
+        ? Math.round(registration.yearlyPriceInPence / Math.max(1, registration.intervalCount))
+        : 0;
+    const successParams = new URLSearchParams({
+      ref: existingPayment.reference,
+      amount: String(perPaymentInPence),
+      interval_unit: intervalUnit,
+      existing: '1',
+    });
+    return Response.redirect(`${origin}/#/payment-success?${successParams}`, 302);
+  }
+
   if (
     !registration.levelId ||
     registration.yearlyPriceInPence == null ||
@@ -166,10 +190,10 @@ async function selectionPage(
 
   const cards = registrations.map(r => {
     const hasLevel = r.levelId != null && r.yearlyPriceInPence != null;
-    const href = hasLevel
+    const isActive = activeRegistrationIds.has(r.registrationId);
+    const href = (hasLevel && !isActive)
       ? `${origin}/${clubSlug}/payments/${paymentType}/${fanId}?reg=${encodeURIComponent(r.registrationId)}`
       : null;
-    const isActive = activeRegistrationIds.has(r.registrationId);
 
     const amountText = hasLevel
       ? (() => {
@@ -182,7 +206,7 @@ async function selectionPage(
       : null;
 
     return `
-    <div class="card${hasLevel ? '' : ' card--disabled'}">
+    <div class="card${(hasLevel && !isActive) ? '' : ' card--disabled'}">
       <div class="card-body">
         <div class="card-team">${escHtml(r.teamName)}</div>
         ${amountText
@@ -193,7 +217,7 @@ async function selectionPage(
       </div>
       ${href
         ? `<a class="btn" href="${escAttr(href)}">Set up payment</a>`
-        : `<span class="btn btn--disabled">Set up payment</span>`
+        : `<span class="btn btn--disabled">${isActive ? 'Already set up' : 'Set up payment'}</span>`
       }
     </div>`;
   }).join('');

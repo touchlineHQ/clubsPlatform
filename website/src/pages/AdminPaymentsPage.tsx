@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Alert, Stack, Tabs, Text } from '@mantine/core';
-import { IconCash, IconShield, IconUserDollar } from '@tabler/icons-react';
+import { IconCash, IconReceipt, IconShield, IconUserDollar } from '@tabler/icons-react';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { SubscriptionLevelsTab } from './admin-payments/SubscriptionLevelsTab';
 import { PlayerSubscriptionsTab } from './admin-payments/PlayerSubscriptionsTab';
+import { PaymentRecordsTab } from './admin-payments/PaymentRecordsTab';
 
-type TabId = 'levels' | 'subs';
+type TabId = 'levels' | 'subs' | 'records';
 
 export function AdminPaymentsPage() {
   const { clubSlug } = useClub();
@@ -42,6 +43,9 @@ export function AdminPaymentsPage() {
           <Tabs.Tab value="subs" leftSection={<IconUserDollar size={14} />}>
             Player Subscriptions
           </Tabs.Tab>
+          <Tabs.Tab value="records" leftSection={<IconReceipt size={14} />}>
+            Payment Records
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="levels" pt="lg">
@@ -50,6 +54,10 @@ export function AdminPaymentsPage() {
 
         <Tabs.Panel value="subs" pt="lg">
           <PlayerSubscriptionsTab clubSlug={clubSlug} clubHeaders={clubHeaders} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="records" pt="lg">
+          <PaymentRecordsTab clubHeaders={clubHeaders} />
         </Tabs.Panel>
 
       </Tabs>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActionIcon, Alert, Badge, Box, Button, Center, Code, Divider, Group,
-  Loader, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Tooltip,
+  Loader, Paper, Select, SimpleGrid, Stack, Text, TextInput, Tooltip,
 } from '@mantine/core';
 import {
   IconAlertCircle, IconCheck, IconCopy,
@@ -24,7 +24,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   const [loadError, setLoadError] = useState('');
 
   const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
-  const [loadingPayments, setLoadingPayments] = useState(true);
 
   const [selectedRegId, setSelectedRegId] = useState<string | null>(null);
   const [amountGbp, setAmountGbp] = useState('');
@@ -48,8 +47,7 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
     fetch('/api/admin/player-payments', { headers: clubHeaders })
       .then(r => r.ok ? r.json() as Promise<{ payments: PlayerPaymentRow[] }> : Promise.reject())
       .then(d => setPayments(d.payments))
-      .catch(() => { /* non-fatal */ })
-      .finally(() => setLoadingPayments(false));
+      .catch(() => { /* non-fatal */ });
   }, []);
 
   const playerOptions = registrations.map(r => ({
@@ -309,76 +307,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
         </Paper>
       )}
 
-      {/* Existing payments */}
-      <Paper p={{ base: 'md', sm: 'lg' }} withBorder radius="md">
-        <Stack gap="md">
-          <Text fw={700} ff={clubDesign.font.heading} fz="md">Payment records</Text>
-          {loadingPayments ? (
-            <Center h={60}><Loader size="sm" /></Center>
-          ) : payments.length === 0 ? (
-            <Box p="xl" style={{ background: clubDesign.color.n1, border: `1px dashed ${clubDesign.color.n3}`, borderRadius: 8, textAlign: 'center' }}>
-              <Text size="sm" c="dimmed">No payment records yet.</Text>
-            </Box>
-          ) : (
-            <Table.ScrollContainer minWidth={720}>
-              <Table striped highlightOnHover verticalSpacing="sm">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>FAN</Table.Th>
-                    <Table.Th>Team</Table.Th>
-                    <Table.Th>Reference</Table.Th>
-                    <Table.Th>Mandate</Table.Th>
-                    <Table.Th>Subscription</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                    <Table.Th>Date</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {payments.map(p => (
-                    <Table.Tr key={p.id}>
-                      <Table.Td><Text size="sm" ff="monospace" fw={600}>{p.fanId}</Text></Table.Td>
-                      <Table.Td><Text size="sm">{p.teamName}</Text></Table.Td>
-                      <Table.Td>
-                        <Tooltip label={p.reference} withArrow>
-                          <Text size="sm" ff="monospace" style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.reference}
-                          </Text>
-                        </Tooltip>
-                      </Table.Td>
-                      <Table.Td>
-                        <Tooltip label={p.mandateId} withArrow>
-                          <Text size="xs" ff="monospace" c="dimmed" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {p.mandateId}
-                          </Text>
-                        </Tooltip>
-                      </Table.Td>
-                      <Table.Td>
-                        {p.subscriptionId ? (
-                          <Tooltip label={p.subscriptionId} withArrow>
-                            <Text size="xs" ff="monospace" c="dimmed" style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {p.subscriptionId}
-                            </Text>
-                          </Tooltip>
-                        ) : (
-                          <Text size="xs" c="dimmed">—</Text>
-                        )}
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge size="sm" color={p.status === 'active' ? 'green' : 'orange'} variant="light">
-                          {p.status === 'active' ? 'Active' : 'Mandate only'}
-                        </Badge>
-                      </Table.Td>
-                      <Table.Td>
-                        <Text size="xs" c="dimmed">{new Date(p.createdAt).toLocaleDateString('en-GB')}</Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            </Table.ScrollContainer>
-          )}
-        </Stack>
-      </Paper>
     </Stack>
   );
 }

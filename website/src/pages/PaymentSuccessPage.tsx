@@ -56,7 +56,7 @@ export function PaymentSuccessPage() {
           </Alert>
         )}
 
-        {existing && subscriptionId && (
+        {existing && (
           <Alert icon={<IconReceipt size={16} />} color="blue" variant="light" radius="md" w="100%">
             <Text size="sm">
               This subscription is already active — no further action needed.

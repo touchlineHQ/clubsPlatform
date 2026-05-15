@@ -1,5 +1,5 @@
 import { ensureTables } from '../../lib/ensure-tables';
-import { type Env, json, requireAdmin, getClubSlug } from '../../lib/api-helpers';
+import { type Env, json, nowMs, requireAdmin, getClubSlug } from '../../lib/api-helpers';
 
 interface PlayerPaymentRow {
   id: string;
@@ -38,4 +38,28 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .all<PlayerPaymentRow>();
 
   return json({ payments: rows.results });
+};
+
+export const onRequestPatch: PagesFunction<Env> = async (context) => {
+  await ensureTables(context.env.DB);
+
+  const result = await requireAdmin(context);
+  if ('error' in result) return result.error;
+
+  const clubSlug = getClubSlug(context.request);
+  const body = await context.request.json<{ id?: string }>();
+
+  if (!body.id) return json({ error: 'id required' }, { status: 400 });
+
+  const { meta } = await context.env.DB
+    .prepare(
+      `UPDATE "player_payment" SET status = 'inactive', updatedAt = ?
+        WHERE id = ? AND clubSlug = ?`
+    )
+    .bind(nowMs(), body.id, clubSlug)
+    .run();
+
+  if (!meta.changes) return json({ error: 'Payment not found' }, { status: 404 });
+
+  return json({ ok: true });
 };
