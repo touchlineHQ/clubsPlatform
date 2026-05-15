@@ -21,13 +21,20 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",
+    "@mantine/core": "^9.0.0",
+    "@mantine/dates": "^9.0.0",
+    "@mantine/hooks": "^9.0.0",
+    "@tabler/icons-react": "^3.44.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.5.0",
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/coverage-v8": "^2.0.0",
+    "dayjs": "^1.11.20",
     "jsdom": "^25.0.0",
+    "react-router-dom": "^7.13.2",
     "vitest": "^2.0.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.0.0",
+    "xlsx": "^0.18.5"
   }
 }

@@ -36,6 +36,9 @@ beforeEach(() => {
     if (url.includes('/api/admin/team-subscription-levels')) {
       return { ok: true, json: async () => ({ teams: [] }) };
     }
+    if (url.includes('/api/admin/status-subscription-levels')) {
+      return { ok: true, json: async () => ({ statuses: [], clubRates: [], teamRates: [] }) };
+    }
     return { ok: true, json: async () => ({}) };
   });
 });
@@ -81,6 +84,9 @@ describe('SubscriptionLevelsTab', () => {
       if (url.includes('/api/admin/team-subscription-levels')) {
         return { ok: true, json: async () => ({ teams: [] }) };
       }
+      if (url.includes('/api/admin/status-subscription-levels')) {
+        return { ok: true, json: async () => ({ statuses: [], clubRates: [], teamRates: [] }) };
+      }
       if (url.includes('/api/admin/subscription-levels')) {
         return {
           ok: true,
@@ -125,6 +131,86 @@ describe('SubscriptionLevelsTab', () => {
 
     await waitFor(() => {
       expect(screen.getAllByRole('alert').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('renders the status in the club-wide status rates table when statuses are provided', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/api/admin/status-subscription-levels')) {
+        return {
+          ok: true,
+          json: async () => ({ statuses: ['Training Only'], clubRates: [], teamRates: [] }),
+        };
+      }
+      if (url.includes('/api/admin/team-subscription-levels')) {
+        return { ok: true, json: async () => ({ teams: [] }) };
+      }
+      if (url.includes('/api/admin/subscription-levels')) {
+        return { ok: true, json: async () => ({ levels: [] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(<SubscriptionLevelsTab clubHeaders={clubHeaders} />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Training Only')).toBeTruthy();
+    });
+  });
+
+  it('renders the team override row when teamRates are provided', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/api/admin/status-subscription-levels')) {
+        return {
+          ok: true,
+          json: async () => ({
+            statuses: ['Training Only'],
+            clubRates: [],
+            teamRates: [
+              {
+                teamName: 'U11s',
+                registrationStatus: 'Training Only',
+                subscriptionLevelId: 'lvl-1',
+                subscriptionLevelName: 'Junior',
+                yearlyPriceInPence: 1200,
+                intervalCount: 12,
+                intervalUnit: 'monthly',
+              },
+            ],
+          }),
+        };
+      }
+      if (url.includes('/api/admin/team-subscription-levels')) {
+        return { ok: true, json: async () => ({ teams: [] }) };
+      }
+      if (url.includes('/api/admin/subscription-levels')) {
+        return { ok: true, json: async () => ({ levels: [] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(<SubscriptionLevelsTab clubHeaders={clubHeaders} />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('U11s')).toBeTruthy();
+    });
+  });
+
+  it('shows "No registration statuses found" empty state when statuses array is empty', async () => {
+    // Default beforeEach mock already returns statuses: [] for status-subscription-levels
+    renderWithMantine(<SubscriptionLevelsTab clubHeaders={clubHeaders} />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No registration statuses found/i)).toBeTruthy();
     });
   });
 });

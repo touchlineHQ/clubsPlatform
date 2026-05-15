@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton,
   Select, ActionIcon, Modal, Tooltip, Tabs,
 } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
-  IconArrowRight, IconChevronDown, IconChevronUp, IconSelector, IconTrash,
+  IconArrowRight, IconChevronDown, IconChevronUp, IconFileUpload, IconSelector, IconTrash,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 
 interface RegistrationRow {
   registrationId: string;
@@ -32,7 +33,7 @@ interface Response {
   scope: 'admin' | 'user';
 }
 
-type SortKey = 'fanId' | 'teamName' | 'ageGroup' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'sixthCol';
+type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'sixthCol';
 type SortDir = 'asc' | 'desc';
 
 interface SortState {
@@ -80,7 +81,6 @@ function sortRows(rows: RegistrationRow[], sort: SortState, sixthIsLinkedAccount
     switch (sort.key) {
       case 'fanId': return r.fanId;
       case 'teamName': return r.teamName;
-      case 'ageGroup': return r.ageGroup ?? '';
       case 'registrationExpiry': return r.registrationExpiry ?? '';
       case 'registrationStatus': return r.registrationStatus ?? '';
       case 'subscription': return getSubscriptionStatus(r).label;
@@ -234,10 +234,7 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
                 <StatusBadge value={r.registrationStatus} />
                 <SubscriptionBadge row={r} />
               </Group>
-              <Group gap="md" wrap="wrap">
-                <Text size="xs" c="dimmed"><b>Age:</b> {r.ageGroup || '—'}</Text>
-                <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
-              </Group>
+              <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
               <Box>
                 <Text size="xs" c="dimmed" mb={2}>{sixthHeader}</Text>
                 {sixthIsLinkedAccounts
@@ -258,7 +255,6 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
           <Table.Tr>
             <Table.Th><SortHeader label="FAN ID" sortKey="fanId" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Team" sortKey="teamName" {...headerProps} /></Table.Th>
-            <Table.Th><SortHeader label="Age" sortKey="ageGroup" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Expiry" sortKey="registrationExpiry" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Status" sortKey="registrationStatus" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Subscription" sortKey="subscription" {...headerProps} /></Table.Th>
@@ -273,7 +269,6 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
                 <Text size="sm" ff="monospace">{r.fanId}</Text>
               </Table.Td>
               <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
-              <Table.Td><Text size="sm">{r.ageGroup || '—'}</Text></Table.Td>
               <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
               <Table.Td><StatusBadge value={r.registrationStatus} /></Table.Td>
               <Table.Td><SubscriptionBadge row={r} /></Table.Td>
@@ -434,28 +429,33 @@ export function MyRegistrationsPage() {
   const [pendingDelete, setPendingDelete] = useState<RegistrationRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [importOpened, { open: openImport, close: closeImport }] = useDisclosure(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/my-registrations', {
-          headers: { 'X-Club-Slug': clubSlug },
-        });
-        if (!res.ok) throw new Error('Failed to load registrations');
-        const data = await res.json() as Response;
-        if (cancelled) return;
-        setPersonal(data.personal);
-        setClub(data.club);
-        setScope(data.scope);
-      } catch {
-        if (!cancelled) setError('Failed to load registrations');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/my-registrations', {
+        headers: { 'X-Club-Slug': clubSlug },
+      });
+      if (!res.ok) throw new Error('Failed to load registrations');
+      const data = await res.json() as Response;
+      setPersonal(data.personal);
+      setClub(data.club);
+      setScope(data.scope);
+    } catch {
+      setError('Failed to load registrations');
+    } finally {
+      setLoading(false);
+    }
   }, [clubSlug]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleImported = () => {
+    closeImport();
+    refresh();
+  };
 
   const isAdmin = scope === 'admin';
 
@@ -506,23 +506,32 @@ export function MyRegistrationsPage() {
       />;
 
   const clubContent = club && (
-    club.length === 0
-      ? <EmptyState isAdmin={isAdmin} scope="club" />
-      : (
-        <Stack gap="sm">
-          <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
-          {filteredClub && filteredClub.length === 0 ? (
-            <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
-          ) : (
-            <RegistrationsTable
-              rows={filteredClub ?? club}
-              sixthHeader="Linked accounts"
-              canDelete
-              onDelete={setPendingDelete}
-            />
-          )}
-        </Stack>
-      )
+    <Stack gap="sm">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
+        <Button
+          leftSection={<IconFileUpload size={16} />}
+          onClick={openImport}
+          radius="xl"
+          variant="light"
+          size="xs"
+        >
+          Import Players
+        </Button>
+      </Group>
+      {club.length === 0 ? (
+        <EmptyState isAdmin={isAdmin} scope="club" />
+      ) : filteredClub && filteredClub.length === 0 ? (
+        <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
+      ) : (
+        <RegistrationsTable
+          rows={filteredClub ?? club}
+          sixthHeader="Linked accounts"
+          canDelete
+          onDelete={setPendingDelete}
+        />
+      )}
+    </Stack>
   );
 
   return (
@@ -550,6 +559,16 @@ export function MyRegistrationsPage() {
       ) : (
         personalContent
       )}
+
+      <Modal
+        opened={importOpened}
+        onClose={closeImport}
+        title="Import Players"
+        size="xl"
+        radius="md"
+      >
+        <ImportPlayersPanel onImported={handleImported} />
+      </Modal>
 
       <Modal
         opened={pendingDelete !== null}

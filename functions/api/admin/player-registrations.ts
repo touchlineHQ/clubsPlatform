@@ -31,7 +31,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          pr.registrationExpiry,
          pr.registrationStatus,
          GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts,
-         tsl.subscriptionLevelId            AS subscriptionLevelId,
+         COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId) AS subscriptionLevelId,
          sl.name                            AS subscriptionLevelName,
          sl.yearlyPriceInPence              AS yearlyPriceInPence,
          sl.intervalCount                   AS intervalCount,
@@ -40,9 +40,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
        LEFT JOIN "user" u ON u.id = up.userId
+       LEFT JOIN team_status_subscription_level tssl
+              ON tssl.clubSlug = pr.clubSlug
+             AND tssl.teamName = pr.teamName
+             AND tssl.registrationStatus = pr.registrationStatus
+       LEFT JOIN status_subscription_level ssl
+              ON ssl.clubSlug = pr.clubSlug
+             AND ssl.registrationStatus = pr.registrationStatus
        LEFT JOIN team_subscription_level tsl
               ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl ON sl.id = tsl.subscriptionLevelId
+       LEFT JOIN subscription_level sl
+              ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
        WHERE pr.clubSlug = ?
        GROUP BY pr.id
        ORDER BY pr.teamName ASC, p.fanId ASC`

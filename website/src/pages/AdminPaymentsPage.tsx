@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import { Alert, Stack, Tabs, Text } from '@mantine/core';
-import { IconCash, IconReceipt, IconShield, IconUserDollar } from '@tabler/icons-react';
+import { IconCash, IconShield, IconUserDollar } from '@tabler/icons-react';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { SubscriptionLevelsTab } from './admin-payments/SubscriptionLevelsTab';
 import { PlayerSubscriptionsTab } from './admin-payments/PlayerSubscriptionsTab';
-import { OneTimePaymentsTab } from './admin-payments/OneTimePaymentsTab';
 
-type TabId = 'levels' | 'subs' | 'one-time';
+type TabId = 'levels' | 'subs';
 
 export function AdminPaymentsPage() {
   const { clubSlug } = useClub();
@@ -18,7 +17,7 @@ export function AdminPaymentsPage() {
     <Stack maw={1100} mx="auto" gap="lg" px={{ base: 'xs', sm: 0 }}>
       <PageHeader
         title="Payments"
-        subtitle="Subscription levels, player subscriptions and one-off payments — all powered by GoCardless"
+        subtitle="Subscription levels and player subscriptions — all powered by GoCardless"
       />
 
       <Alert icon={<IconShield size={16} />} color="green" variant="light" radius="md">
@@ -43,9 +42,6 @@ export function AdminPaymentsPage() {
           <Tabs.Tab value="subs" leftSection={<IconUserDollar size={14} />}>
             Player Subscriptions
           </Tabs.Tab>
-          <Tabs.Tab value="one-time" leftSection={<IconReceipt size={14} />}>
-            One-time Payments
-          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="levels" pt="lg">
@@ -56,9 +52,6 @@ export function AdminPaymentsPage() {
           <PlayerSubscriptionsTab clubSlug={clubSlug} clubHeaders={clubHeaders} />
         </Tabs.Panel>
 
-        <Tabs.Panel value="one-time" pt="lg">
-          <OneTimePaymentsTab clubHeaders={clubHeaders} />
-        </Tabs.Panel>
       </Tabs>
     </Stack>
   );

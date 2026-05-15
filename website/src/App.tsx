@@ -226,7 +226,7 @@ export const App = () => {
                 <BookingAdminPage clubFeedSlug={data.club.clubFeedSlug} />
               </ProtectedRoute>
             } />
-            <Route path="/admin/import" element={<Navigate to="/admin/users" replace />} />
+            <Route path="/admin/import" element={<Navigate to="/my-registrations" replace />} />
             <Route path="/schedule" element={<PitchSchedulePage />} />
             <Route path="/admin/secrets" element={
               <ProtectedRoute requireAdmin>

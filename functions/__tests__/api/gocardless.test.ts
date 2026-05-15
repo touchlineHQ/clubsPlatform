@@ -351,9 +351,9 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
       billingRequestId: 'B1',
     });
 
-    // Queue: first call returns club, second returns registration
     const db = makeDb({
-      first: [{ slug: 'test-club' }, sampleRegistration],
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration]],
     });
     const env = makeEnv({ DB: db as any });
     const ctx = makeContext(
@@ -375,7 +375,8 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     });
 
     const db = makeDb({
-      first: [{ slug: 'test-club' }, sampleRegistration],
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration]],
     });
     const env = makeEnv({ DB: db as any });
     const ctx = makeContext(
@@ -410,8 +411,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
   });
 
   it('redirects to payment-cancelled when player is not found', async () => {
-    // Club found, but no registration
-    const db = makeDb({ first: [{ slug: 'test-club' }, null] });
+    const db = makeDb({ first: { slug: 'test-club' }, all: [[]] });
     const env = makeEnv({ DB: db as any });
     const ctx = makeContext(
       new Request('https://example.com/test-club/payments/SUBS/UNKNOWN'),
@@ -426,7 +426,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
 
   it('redirects to payment-cancelled when player has no subscription level assigned', async () => {
     const regWithoutLevel = { ...sampleRegistration, levelId: null, yearlyPriceInPence: null, intervalCount: null, intervalUnit: null };
-    const db = makeDb({ first: [{ slug: 'test-club' }, regWithoutLevel] });
+    const db = makeDb({ first: { slug: 'test-club' }, all: [[regWithoutLevel]] });
     const env = makeEnv({ DB: db as any });
     const ctx = makeContext(
       new Request('https://example.com/test-club/payments/SUBS/FAN001'),
@@ -460,7 +460,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
       error: 'GoCardless API token not configured',
     });
 
-    const db = makeDb({ first: [{ slug: 'test-club' }, sampleRegistration] });
+    const db = makeDb({ first: { slug: 'test-club' }, all: [[sampleRegistration]] });
     const env = makeEnv({ DB: db as any });
     const ctx = makeContext(
       new Request('https://example.com/test-club/payments/SUBS/FAN001'),
@@ -471,5 +471,99 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/payment-cancelled');
     expect(res.headers.get('location')).toContain('link_failed');
+  });
+
+  // ── Multi-team cases ──────────────────────────────────────────────────────
+
+  const reg2 = {
+    registrationId: 'reg_2',
+    fanId: 'FAN001',
+    teamName: 'Sunday Vets',
+    levelId: 'level_2',
+    yearlyPriceInPence: 6000,
+    intervalCount: 6,
+    intervalUnit: 'monthly' as const,
+  };
+
+  it('returns 200 HTML selection page when player has multiple registrations', async () => {
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration, reg2], []],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('U11s');
+    expect(html).toContain('Sunday Vets');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
+
+  it('redirects to GoCardless when ?reg= targets a valid registration among multiple', async () => {
+    mockCreateGoCardlessLink.mockResolvedValue({
+      ok: true,
+      authorisationUrl: 'https://gc.com/auth/2',
+      reference: 'R2',
+      billingRequestId: 'B2',
+    });
+
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration, reg2]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001?reg=reg_2'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://gc.com/auth/2');
+    expect(mockCreateGoCardlessLink).toHaveBeenCalledOnce();
+    expect(mockCreateGoCardlessLink.mock.calls[0][0].registrationId).toBe('reg_2');
+  });
+
+  it('redirects to payment-cancelled when ?reg= does not belong to this player', async () => {
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration, reg2]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001?reg=reg_999'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-cancelled');
+    expect(res.headers.get('location')).toContain('invalid_reg');
+  });
+
+  it('returns 200 HTML with disabled cards when all registrations have no subscription level', async () => {
+    const noLevel1 = { ...sampleRegistration, levelId: null, yearlyPriceInPence: null, intervalCount: null, intervalUnit: null };
+    const noLevel2 = { ...reg2, levelId: null, yearlyPriceInPence: null, intervalCount: null, intervalUnit: null };
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[noLevel1, noLevel2], []],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('card--disabled');
+    expect(html).toContain('No subscription level assigned');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 });

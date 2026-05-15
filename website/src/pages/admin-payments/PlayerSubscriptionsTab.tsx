@@ -84,7 +84,7 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   };
 
   const existingForSelected = selectedRegId
-    ? payments.filter(p => p.registrationId === selectedRegId && p.reference.endsWith('-SUBS'))
+    ? payments.filter(p => p.registrationId === selectedRegId && p.reference.includes('-SUBS'))
     : [];
 
   const amountValid = () => {
@@ -192,8 +192,9 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
                   </Tooltip>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  When the player opens this URL we generate a fresh GoCardless link from their team's
-                  subscription level and redirect them. Only works once a level is assigned.
+                  If this player is on multiple teams at this club, opening this link shows a
+                  team-selection page. For single-team players it redirects straight to GoCardless.
+                  Only works once a subscription level is assigned to the team.
                 </Text>
               </Stack>
             </Paper>
@@ -244,8 +245,9 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
           {existingForSelected.length > 0 && (
             <Alert color="orange" variant="light" radius="md">
               <Text size="sm">
-                This registration already has a SUBS payment record — generating a new link may
-                create a duplicate. GoCardless reuses the existing subscription if the mandate matches.
+                This registration has {existingForSelected.length} existing payment record{existingForSelected.length !== 1 ? 's' : ''}.
+                Generating a new link will add another attempt — if the player already has an active
+                mandate, GoCardless will reuse it.
               </Text>
             </Alert>
           )}

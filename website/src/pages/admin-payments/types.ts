@@ -46,6 +46,19 @@ export interface TeamRow {
   intervalUnit: IntervalUnit | null;
 }
 
+export interface StatusRate {
+  registrationStatus: string;
+  subscriptionLevelId: string;
+  subscriptionLevelName: string;
+  yearlyPriceInPence: number;
+  intervalCount: number;
+  intervalUnit: IntervalUnit;
+}
+
+export interface TeamStatusRate extends StatusRate {
+  teamName: string;
+}
+
 export const INTERVAL_OPTIONS: { value: IntervalUnit; label: string }[] = [
   { value: 'monthly', label: 'Monthly' },
   { value: 'weekly', label: 'Weekly' },

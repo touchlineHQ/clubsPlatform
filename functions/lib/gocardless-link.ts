@@ -75,7 +75,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
 
   const { fanId, teamName } = reg;
   const reference = `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
-  const baseDescription = input.description || `${paymentType} payment - FAN ${fanId}`;
+  const baseDescription = input.description ?? `${teamName} — FAN ${fanId}`;
 
   const pounds = (amountInPence / 100).toLocaleString('en-GB', {
     style: 'currency',

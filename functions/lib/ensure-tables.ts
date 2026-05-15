@@ -49,6 +49,9 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_subscription_level_clubSlug" ON "subscription_level" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "team_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName"))`,
   `CREATE INDEX IF NOT EXISTS "idx_team_subscription_level_levelId" ON "team_subscription_level" ("subscriptionLevelId")`,
+  `CREATE TABLE IF NOT EXISTS "status_subscription_level" ("clubSlug" TEXT NOT NULL, "registrationStatus" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "registrationStatus"))`,
+  `CREATE TABLE IF NOT EXISTS "team_status_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "registrationStatus" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName", "registrationStatus"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_team_status_sub_level_clubTeam" ON "team_status_subscription_level" ("clubSlug", "teamName")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [
