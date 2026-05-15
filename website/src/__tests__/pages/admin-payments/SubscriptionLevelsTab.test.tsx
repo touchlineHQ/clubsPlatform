@@ -36,6 +36,9 @@ beforeEach(() => {
     if (url.includes('/api/admin/team-subscription-levels')) {
       return { ok: true, json: async () => ({ teams: [] }) };
     }
+    if (url.includes('/api/admin/status-subscription-levels')) {
+      return { ok: true, json: async () => ({ statuses: [], clubRates: [], teamRates: [] }) };
+    }
     return { ok: true, json: async () => ({}) };
   });
 });
@@ -80,6 +83,9 @@ describe('SubscriptionLevelsTab', () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/api/admin/team-subscription-levels')) {
         return { ok: true, json: async () => ({ teams: [] }) };
+      }
+      if (url.includes('/api/admin/status-subscription-levels')) {
+        return { ok: true, json: async () => ({ statuses: [], clubRates: [], teamRates: [] }) };
       }
       if (url.includes('/api/admin/subscription-levels')) {
         return {
