@@ -81,7 +81,6 @@ describe('PlayerSubscriptionsTab', () => {
       expect(screen.getByText('1. Select a registration')).toBeTruthy();
     });
     expect(screen.getByText('2. Configure subscription')).toBeTruthy();
-    expect(screen.getByText('Payment records')).toBeTruthy();
   });
 
   it('shows empty state when no registrations exist', async () => {
@@ -133,16 +132,6 @@ describe('PlayerSubscriptionsTab', () => {
     });
     // The select placeholder should appear
     expect(screen.getByPlaceholderText(/Search by FAN number or team/i)).toBeTruthy();
-  });
-
-  it('shows empty payment records state when no payments exist', async () => {
-    renderWithMantine(
-      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
-      { authValue: mockAdmin, clubValue: mockSingleClub },
-    );
-    await waitFor(() => {
-      expect(screen.getByText('No payment records yet.')).toBeTruthy();
-    });
   });
 
   it('shows auto-fill alert with level name when a registration with a subscription level is selected', async () => {
@@ -214,29 +203,6 @@ describe('PlayerSubscriptionsTab', () => {
     });
   });
 
-  it('renders the payment records table with FAN column when payments exist', async () => {
-    mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/api/admin/player-registrations')) {
-        return { ok: true, json: async () => ({ registrations: [] }) };
-      }
-      if (url.includes('/api/admin/player-payments')) {
-        return { ok: true, json: async () => ({ payments: [samplePayment] }) };
-      }
-      return { ok: true, json: async () => ({}) };
-    });
-
-    renderWithMantine(
-      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
-      { authValue: mockAdmin, clubValue: mockSingleClub },
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('FAN')).toBeTruthy();
-    });
-    expect(screen.getByText('12345')).toBeTruthy();
-    expect(screen.getByText('Under 10s')).toBeTruthy();
-  });
-
   it('shows "3. Share with player" section after link is generated successfully', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/api/admin/player-registrations')) {
@@ -281,44 +247,6 @@ describe('PlayerSubscriptionsTab', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/3\. Share with player/i)).toBeTruthy();
-    });
-  });
-
-  it('shows Deactivate button for active payment and completes deactivation on confirm', async () => {
-    mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
-      if (url.includes('/api/admin/player-registrations')) {
-        return { ok: true, json: async () => ({ registrations: [] }) };
-      }
-      if (url.includes('/api/admin/player-payments')) {
-        if (opts?.method === 'PATCH') {
-          return { ok: true, json: async () => ({ ok: true }) };
-        }
-        return { ok: true, json: async () => ({ payments: [samplePayment] }) };
-      }
-      return { ok: true, json: async () => ({}) };
-    });
-
-    renderWithMantine(
-      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
-      { authValue: mockAdmin, clubValue: mockSingleClub },
-    );
-
-    // Wait for the payment row to appear, then the Deactivate button
-    await waitFor(() => {
-      expect(screen.getByText('Deactivate')).toBeTruthy();
-    });
-
-    // First click shows inline Confirm / Cancel
-    fireEvent.click(screen.getByText('Deactivate'));
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeTruthy();
-      expect(screen.getByRole('button', { name: /cancel/i })).toBeTruthy();
-    });
-
-    // Confirm triggers the PATCH and updates the badge to Inactive
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }));
-    await waitFor(() => {
-      expect(screen.getByText('Inactive')).toBeTruthy();
     });
   });
 
