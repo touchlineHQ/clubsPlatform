@@ -165,6 +165,7 @@ export const App = () => {
         header={{ height: 60 }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
         padding="md"
+        styles={{ navbar: { background: '#1a2332', border: 'none' } }}
       >
         <AppShell.Header>
           <SiteHeader club={data.club} sections={data.teams.sections} navOpen={opened} onNavToggle={toggle} />
