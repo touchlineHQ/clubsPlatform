@@ -58,7 +58,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
   const { isMultiClub, clubSlug, clubs } = useClub();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+  const isMobile = useMediaQuery('(max-width: 61.99em)') ?? false;
 
   const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
   const canAdmin = isAdmin && belongsToClub;

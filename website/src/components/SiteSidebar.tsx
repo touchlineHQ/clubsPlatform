@@ -251,7 +251,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
   const { activeSection, setActiveSection } = useSection();
   const { user, isAdmin, isManager, isPlatformAdmin } = useAuth();
   const { clubSlug, isMultiClub } = useClub();
-  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+  const isMobile = useMediaQuery('(max-width: 61.99em)') ?? false;
 
   const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
   const canAdmin = isAdmin && belongsToClub;

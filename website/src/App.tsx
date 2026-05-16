@@ -60,7 +60,7 @@ export const App = () => {
   const [editingData, setEditingData] = useState<AppData | null>(null);
   const [previewData, setPreviewData] = useState<AppData | null>(null);
   const [opened, { toggle, close }] = useDisclosure();
-  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+  const isMobile = useMediaQuery('(max-width: 61.99em)') ?? false;
 
   // Lock body scroll while the mobile drawer is open so the page behind
   // doesn't slide around when the user swipes.
