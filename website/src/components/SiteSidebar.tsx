@@ -29,6 +29,8 @@ const DEFAULT_NAV: NavItem[] = [
 
 const PRIMARY = 'var(--mantine-primary-color-filled)';
 const PRIMARY_DARK = 'var(--mantine-primary-color-7)';
+const SURFACE_DARK = 'var(--mantine-color-secondary-9)';
+const SURFACE_DARK_2 = 'var(--mantine-color-secondary-8)';
 const TEXT_DIM = 'rgba(255,255,255,0.62)';
 const TEXT_FAINT = 'rgba(255,255,255,0.45)';
 const TEXT_GHOST = 'rgba(255,255,255,0.35)';
@@ -274,7 +276,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
       gap={0}
       h="100%"
       style={{
-        background: 'linear-gradient(180deg, #1a2332 0%, #131b28 100%)',
+        background: `linear-gradient(180deg, ${SURFACE_DARK} 0%, ${SURFACE_DARK_2} 100%)`,
         color: '#fff',
       }}
     >

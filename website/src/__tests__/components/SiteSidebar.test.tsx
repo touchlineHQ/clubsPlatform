@@ -120,9 +120,10 @@ describe('SiteSidebar', () => {
       />,
       { authValue: mockLoggedOut },
     );
-    expect(screen.getByText('Test FC')).toBeTruthy();
+    // 'Test FC' now appears in both the club hero and the feed home_team —
+    // assert via the feed-specific copy that's unique to the fixture card.
     expect(screen.getByText('Rival FC')).toBeTruthy();
-    expect(screen.getByText('Division 1')).toBeTruthy();
+    expect(screen.getByText('NEXT FIRST XI')).toBeTruthy();
   });
 
   it('NextTeamFixture returns nothing when all fixtures are in the past', () => {
@@ -151,7 +152,9 @@ describe('SiteSidebar', () => {
         sectionValue: { activeSection: 'seniors', setActiveSection: vi.fn() },
       },
     );
-    expect(screen.queryByText('Test FC')).toBeNull();
+    // 'Rival FC' only appears inside the (filtered-out) feed card, so it being
+    // absent confirms the card itself didn't render.
+    expect(screen.queryByText('Rival FC')).toBeNull();
   });
 
   it('clicking a section button calls setActiveSection with that section id', () => {

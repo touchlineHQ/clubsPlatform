@@ -33,6 +33,7 @@ export interface ClubEntry {
   name: string;
   badge?: string;
   primaryColor?: string | null;
+  secondaryColor?: string | null;
   location?: string;
 }
 
@@ -48,6 +49,7 @@ export interface Club {
   socials: ClubSocials;
   badge?: string;
   primaryColor?: string;
+  secondaryColor?: string;
   colours?: string;
   kitDescription?: string;
   clubFeedSlug?: string;

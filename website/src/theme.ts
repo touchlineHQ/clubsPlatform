@@ -1,5 +1,6 @@
 import { createTheme, Tabs } from '@mantine/core';
 import type { MantineColorsTuple } from '@mantine/core';
+import { generateShades, isHexColor } from './utils/colorShades';
 
 const ORANGE_SHADES: MantineColorsTuple = [
   '#fff4eb',
@@ -13,6 +14,8 @@ const ORANGE_SHADES: MantineColorsTuple = [
   '#a8440d',
   '#8a350b',
 ];
+
+const DEFAULT_SECONDARY_HEX = '#1a2332';
 
 const HEADING_FONT = '"Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif';
 const BODY_FONT = '"Inter", system-ui, -apple-system, sans-serif';
@@ -32,10 +35,43 @@ const TABS_OVERRIDE = Tabs.extend({
   },
 });
 
-export function createClubTheme(primaryColor = 'blue') {
+/**
+ * Build a Mantine theme for a club.
+ *
+ * `primaryColor` may be a Mantine palette name ('orange', 'blue', …) for
+ * back-compat with rows saved before hex picking, OR a hex string ('#f07820').
+ * Hex inputs are expanded into a full 10-shade tuple and registered as the
+ * named Mantine palette 'primary', so `var(--mantine-primary-color-*)` and
+ * `var(--mantine-color-primary-N)` both work.
+ *
+ * `secondaryColor` is always treated as a hex string; if absent we fall back
+ * to the dark navy from the design system so dark surfaces still themselves
+ * with shades rather than hard-coded greys.
+ */
+export function createClubTheme(
+  primaryColor: string | null | undefined = 'blue',
+  secondaryColor: string | null | undefined = null,
+) {
+  const primaryInput = primaryColor ?? 'blue';
+  const secondaryInput = secondaryColor ?? DEFAULT_SECONDARY_HEX;
+
+  const useHexPrimary = isHexColor(primaryInput);
+  const primaryShades = useHexPrimary ? generateShades(primaryInput) : null;
+  const secondaryShades = generateShades(secondaryInput);
+
+  const colors: Record<string, MantineColorsTuple> = {
+    secondary: secondaryShades,
+  };
+
+  if (useHexPrimary && primaryShades) {
+    colors.primary = primaryShades;
+  } else if (primaryInput === 'orange') {
+    colors.orange = ORANGE_SHADES;
+  }
+
   return createTheme({
-    primaryColor,
-    ...(primaryColor === 'orange' ? { colors: { orange: ORANGE_SHADES } } : {}),
+    primaryColor: useHexPrimary ? 'primary' : primaryInput,
+    colors,
     fontFamily: BODY_FONT,
     headings: {
       fontFamily: HEADING_FONT,

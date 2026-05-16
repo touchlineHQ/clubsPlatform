@@ -6,6 +6,7 @@ type ClubRow = {
   slug: string;
   name: string;
   primaryColor: string | null;
+  secondaryColor: string | null;
   data: string | null;
   seeded: number;
 };
@@ -32,7 +33,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
   const row = await context.env.DB
-    .prepare(`SELECT slug, name, primaryColor, data, seeded FROM club_config WHERE slug = ? AND active = 1`)
+    .prepare(`SELECT slug, name, primaryColor, secondaryColor, data, seeded FROM club_config WHERE slug = ? AND active = 1`)
     .bind(clubSlug)
     .first<ClubRow>();
 
@@ -53,6 +54,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const base = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : defaultClub(row.slug, row.name);
   const club = { ...base, slug: row.slug, name: row.name };
   if (row.primaryColor) club.primaryColor = row.primaryColor;
+  if (row.secondaryColor) club.secondaryColor = row.secondaryColor;
 
   return json(club);
 };
@@ -77,12 +79,17 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const body = await context.request.json() as Record<string, unknown>;
   const updated = { ...existing, ...body, slug: clubSlug };
 
-  // Keep club_config.primaryColor in sync so the directory listing reflects the change
+  // Keep club_config.primaryColor / secondaryColor in sync so the directory
+  // listing reflects the change without needing to re-parse the JSON blob.
   const sets = ['data = ?', 'seeded = 1'];
   const binds: unknown[] = [JSON.stringify(updated)];
   if ('primaryColor' in body) {
     sets.push('primaryColor = ?');
     binds.push(body.primaryColor ?? null);
+  }
+  if ('secondaryColor' in body) {
+    sets.push('secondaryColor = ?');
+    binds.push(body.secondaryColor ?? null);
   }
   binds.push(clubSlug);
 

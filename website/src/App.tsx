@@ -101,6 +101,13 @@ export const App = () => {
     } : prev);
   }, [clubSlug]);
 
+  const handleSecondaryColorSaved = useCallback((color: string | null) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, secondaryColor: color } : c),
+    } : prev);
+  }, [clubSlug]);
+
   const handleResetPreview = useCallback(() => {
     setPreviewData(null);
     setEditingData(null);
@@ -152,7 +159,10 @@ export const App = () => {
   }
 
   const registryEntry = registry?.clubs.find(c => c.slug === clubSlug);
-  const clubTheme = createClubTheme(registryEntry?.primaryColor ?? data.club.primaryColor);
+  const clubTheme = createClubTheme(
+    registryEntry?.primaryColor ?? data.club.primaryColor,
+    registryEntry?.secondaryColor ?? data.club.secondaryColor,
+  );
 
   return (
     <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
@@ -165,7 +175,7 @@ export const App = () => {
         header={{ height: 60 }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
         padding="md"
-        styles={{ navbar: { background: '#1a2332', border: 'none' } }}
+        styles={{ navbar: { background: 'var(--mantine-color-secondary-9)', border: 'none' } }}
       >
         <AppShell.Header>
           <SiteHeader club={data.club} sections={data.teams.sections} navOpen={opened} onNavToggle={toggle} />
@@ -224,6 +234,7 @@ export const App = () => {
                   onResetPreview={handleResetPreview}
                   previewActive={previewData !== null}
                   onPrimaryColorSaved={handlePrimaryColorSaved}
+                  onSecondaryColorSaved={handleSecondaryColorSaved}
                 />
               </ProtectedRoute>
             } />

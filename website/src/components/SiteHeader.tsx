@@ -1,6 +1,10 @@
-import { Burger, Group, Text, ActionIcon, Badge, Box, Button, Menu } from '@mantine/core';
-import { IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconUser, IconLogout, IconSettings, IconUsers, IconArrowLeft } from '@tabler/icons-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Burger, Group, Text, ActionIcon, Badge, Box, Button, Menu, UnstyledButton } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
+import {
+  IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconUser, IconLogout,
+  IconSettings, IconUsers, IconArrowLeft, IconChevronRight,
+} from '@tabler/icons-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { Club, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
 import { useAuth } from '../context/AuthContext';
@@ -15,6 +19,36 @@ interface Props {
   onNavToggle: () => void;
 }
 
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'Home',
+  '/about': 'About Us',
+  '/teams': 'Teams',
+  '/fixtures': 'Fixtures & Results',
+  '/register': 'Register & Pay',
+  '/committee': 'Committee & Staff',
+  '/news': 'Club News',
+  '/gallery': 'Gallery',
+  '/matchday': 'Matchday Info',
+  '/contact': 'Contact',
+  '/customise': 'Site Admin',
+  '/admin/users': 'Manage Users',
+  '/admin/payments': 'Payments',
+  '/admin/secrets': 'API Secrets',
+  '/admin/bookings': 'Booking Requests',
+  '/bookings': 'Request a Pitch',
+  '/schedule': 'Pitch Schedule',
+  '/my-registrations': 'My Registrations',
+};
+
+function currentPageTitle(pathname: string): string {
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  // Longest-prefix match for nested routes (e.g. /teams/.../...)
+  const match = Object.keys(PAGE_TITLES)
+    .filter(p => p !== '/' && pathname.startsWith(p))
+    .sort((a, b) => b.length - a.length)[0];
+  return match ? PAGE_TITLES[match] : '';
+}
+
 export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
   const clubShort = club.tagShort ?? club.name.replace(/ FC$/i, '');
   const showFcSuffix = !club.tagShort && / FC$/i.test(club.name);
@@ -23,11 +57,12 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
   const { user, isAdmin, isPlatformAdmin, loading: authLoading } = useAuth();
   const { isMultiClub, clubSlug, clubs } = useClub();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
 
   const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
   const canAdmin = isAdmin && belongsToClub;
 
-  // For cross-club users, find their home club so we can link to it.
   const userClub = isMultiClub && user && !belongsToClub
     ? clubs.find(c => c.slug === user.clubSlug) ?? null
     : null;
@@ -44,10 +79,161 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
     window.location.reload();
   };
 
+  const pageTitle = currentPageTitle(pathname);
+
+  // ── Mobile: dark navy bar matching the sidebar ────────────────────────────
+  if (isMobile) {
+    return (
+      <Group
+        h="100%"
+        px={14}
+        gap={12}
+        wrap="nowrap"
+        style={{
+          background: 'var(--mantine-color-secondary-9)',
+          color: '#fff',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        <UnstyledButton
+          onClick={onNavToggle}
+          aria-label="Open menu"
+          style={{
+            background: 'rgba(255,255,255,0.08)',
+            width: 38,
+            height: 38,
+            borderRadius: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <Burger opened={navOpen} color="#fff" size="sm" />
+        </UnstyledButton>
+
+        <Group gap={10} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+          {club.badge && (
+            <img
+              src={club.badge}
+              alt=""
+              width={32}
+              height={32}
+              style={{ objectFit: 'contain', flexShrink: 0 }}
+              onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+          )}
+          <Box style={{ minWidth: 0, flex: 1 }}>
+            <Text
+              component={Link}
+              to="/"
+              fw={800}
+              size="sm"
+              c="#fff"
+              lh={1.1}
+              style={{
+                fontFamily: 'var(--mantine-h-font-family, inherit)',
+                textDecoration: 'none',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: 'block',
+              }}
+            >
+              {clubShort}{showFcSuffix ? ' FC' : ''}
+            </Text>
+            {pageTitle && (
+              <Text size="10px" c="rgba(255,255,255,0.4)" truncate>
+                {pageTitle}
+              </Text>
+            )}
+          </Box>
+        </Group>
+
+        {!authLoading && !user && (
+          <UnstyledButton
+            component={Link}
+            to="/login"
+            aria-label="Log in"
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              width: 38,
+              height: 38,
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: '#fff',
+            }}
+          >
+            <IconUser size={18} />
+          </UnstyledButton>
+        )}
+
+        {!authLoading && user && (
+          <Menu shadow="md" width={220} position="bottom-end">
+            <Menu.Target>
+              <UnstyledButton
+                aria-label={`Account menu for ${user.name}`}
+                style={{
+                  background: 'rgba(255,255,255,0.08)',
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  color: '#fff',
+                  fontWeight: 700,
+                  fontSize: '0.75rem',
+                }}
+              >
+                {user.name.split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase() || <IconUser size={18} />}
+              </UnstyledButton>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {canAdmin && (
+                <>
+                  <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => navigate('/customise')}>
+                    Site Admin
+                  </Menu.Item>
+                  <Menu.Item leftSection={<IconUsers size={14} />} onClick={() => navigate('/admin/users')}>
+                    Manage Users
+                  </Menu.Item>
+                </>
+              )}
+              {userClub && (
+                <Menu.Item leftSection={<IconArrowLeft size={14} />} component="a" href={`/${userClub.slug}/`}>
+                  Go to {userClub.name}
+                </Menu.Item>
+              )}
+              <Menu.Item leftSection={<IconLogout size={14} />} onClick={handleLogout} color="red">
+                Logout
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )}
+      </Group>
+    );
+  }
+
+  // ── Desktop: white frosted bar with breadcrumb ────────────────────────────
   return (
-    <Group h="100%" px="md" justify="space-between" wrap="nowrap">
-      <Group wrap="nowrap">
-        <Burger opened={navOpen} onClick={onNavToggle} hiddenFrom="md" size="sm" />
+    <Group
+      h="100%"
+      px="lg"
+      gap="md"
+      wrap="nowrap"
+      justify="space-between"
+      style={{
+        background: 'rgba(255,255,255,0.95)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--mantine-color-gray-2)',
+      }}
+    >
+      <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
         {isMultiClub && (
           <ActionIcon
             component="a"
@@ -55,31 +241,38 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             variant="subtle"
             aria-label="All clubs"
             title="All clubs"
-            visibleFrom="sm"
           >
             <IconArrowLeft size={16} />
           </ActionIcon>
         )}
+        <Text size="xs" c="dimmed">clubsPlatform</Text>
+        <IconChevronRight size={12} color="var(--mantine-color-gray-4)" />
         <Text
           component={Link}
           to="/"
-          fw={700}
-          size="lg"
-          c="var(--mantine-primary-color-filled)"
+          size="xs"
+          fw={600}
+          c="var(--mantine-color-gray-7)"
           style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}
         >
-          {clubShort}
-          {showFcSuffix && (
+          {clubShort}{showFcSuffix && (
             <Text component="span" fw={400} c="dimmed"> FC</Text>
           )}
         </Text>
+        {pageTitle && (
+          <>
+            <IconChevronRight size={12} color="var(--mantine-color-gray-4)" />
+            <Text size="xs" fw={600} c="var(--mantine-primary-color-filled)" truncate>
+              {pageTitle}
+            </Text>
+          </>
+        )}
       </Group>
 
       <Group gap="sm" wrap="nowrap">
         {activeData && (
           <Box visibleFrom="md">
             <Badge
-  
               variant="filled"
               size="md"
               leftSection={tablerIcon(activeData.icon)}
@@ -99,10 +292,9 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             variant="subtle"
-
             aria-label="Facebook"
           >
-            <IconBrandFacebook size={20} />
+            <IconBrandFacebook size={18} />
           </ActionIcon>
         )}
         {club.socials.instagram && club.socials.instagram !== '#' && (
@@ -112,10 +304,9 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             variant="subtle"
-
             aria-label="Instagram"
           >
-            <IconBrandInstagram size={20} />
+            <IconBrandInstagram size={18} />
           </ActionIcon>
         )}
         {club.socials.twitter && club.socials.twitter !== '#' && (
@@ -125,10 +316,9 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             variant="subtle"
-
             aria-label="Twitter / X"
           >
-            <IconBrandTwitter size={20} />
+            <IconBrandTwitter size={18} />
           </ActionIcon>
         )}
 
@@ -138,8 +328,8 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               key={s.id}
               src={s.logo}
               alt={`${s.name} logo`}
-              height={44}
-              width={44}
+              height={32}
+              width={32}
               style={{ objectFit: 'contain', display: 'block', flexShrink: 0 }}
               onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
             />

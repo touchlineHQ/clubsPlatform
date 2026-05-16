@@ -26,6 +26,7 @@ interface Props {
   onResetPreview: () => void;
   previewActive: boolean;
   onPrimaryColorSaved?: (color: string | null) => void;
+  onSecondaryColorSaved?: (color: string | null) => void;
 }
 
 export function CustomizePage({
@@ -36,6 +37,7 @@ export function CustomizePage({
   onResetPreview,
   previewActive,
   onPrimaryColorSaved,
+  onSecondaryColorSaved,
 }: Props) {
   const { clubSlug } = useClub();
   const [loadingFeeds, setLoadingFeeds] = useState(false);
@@ -107,6 +109,9 @@ export function CustomizePage({
               onSaved={(savedClub) => {
                 if (savedClub?.primaryColor !== undefined) {
                   onPrimaryColorSaved?.(savedClub.primaryColor ?? null);
+                }
+                if (savedClub?.secondaryColor !== undefined) {
+                  onSecondaryColorSaved?.(savedClub.secondaryColor ?? null);
                 }
               }}
             />
