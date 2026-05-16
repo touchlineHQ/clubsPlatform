@@ -182,7 +182,7 @@ export const App = () => {
     <HashRouter>
       <NavigationHandler onNavigate={close} />
       <AppShell
-        header={{ height: 60 }}
+        header={{ height: 60, collapsed: opened && isMobile }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
         padding="md"
         styles={{ navbar: { background: 'var(--cp-surface)', border: 'none' } }}
