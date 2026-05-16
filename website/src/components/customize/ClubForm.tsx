@@ -1,7 +1,13 @@
-import { TextInput, Textarea, Select, Autocomplete, Stack, Group, Title, Paper, Button, Text, ColorSwatch, Divider, Alert } from '@mantine/core';
+import { TextInput, Textarea, Select, Autocomplete, Stack, Group, Title, Paper, Button, Text, ColorInput, Divider, Alert } from '@mantine/core';
 import { IconPlus, IconTrash, IconInfoCircle } from '@tabler/icons-react';
 import type { Club, AboutItem } from '../../types';
-import { COLOR_OPTIONS, ICON_OPTIONS } from './iconOptions';
+import { ICON_OPTIONS } from './iconOptions';
+import { normalizeToHex } from '../../utils/colorShades';
+
+const COLOR_PRESETS = [
+  '#f07820', '#e64980', '#7950f2', '#228be6', '#15aabf',
+  '#12b886', '#40c057', '#fab005', '#fa5252', '#1a2332',
+];
 
 interface Props {
   club: Club;
@@ -75,21 +81,35 @@ export function ClubForm({ club, onChange, clubSlugs }: Props) {
 
       <Divider label="Appearance" />
 
+      <Alert icon={<IconInfoCircle size={16} />} variant="light" mb="xs">
+        <Text size="xs">
+          Primary colour drives CTAs, active nav state and the user-chip avatar.
+          Secondary is used in the sidebar and dark surfaces — typically a deeper
+          shade of your kit colour. Each picks a full 10-step shade palette
+          automatically.
+        </Text>
+      </Alert>
+
       <Group grow>
-        <Select
+        <ColorInput
           label="Primary Colour"
-          data={COLOR_OPTIONS.map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) }))}
-          value={club.primaryColor ?? 'orange'}
-          onChange={v => update('primaryColor', v ?? 'orange')}
-          renderOption={({ option }) => (
-            <Group gap="sm">
-              <ColorSwatch color={`var(--mantine-color-${option.value}-6)`} size={16} />
-              <Text size="sm">{option.label}</Text>
-            </Group>
-          )}
+          format="hex"
+          swatches={COLOR_PRESETS}
+          swatchesPerRow={10}
+          value={normalizeToHex(club.primaryColor) ?? '#f07820'}
+          onChange={v => update('primaryColor', v || undefined)}
         />
-        <TextInput label="Badge Image Path" description="e.g. images/badge.png" value={club.badge ?? ''} onChange={e => update('badge', e.target.value)} />
+        <ColorInput
+          label="Secondary Colour"
+          format="hex"
+          swatches={COLOR_PRESETS}
+          swatchesPerRow={10}
+          value={normalizeToHex(club.secondaryColor) ?? '#1a2332'}
+          onChange={v => update('secondaryColor', v || undefined)}
+        />
       </Group>
+
+      <TextInput label="Badge Image Path" description="e.g. images/badge.png" value={club.badge ?? ''} onChange={e => update('badge', e.target.value)} />
 
       <Group grow>
         <TextInput label="Kit Colours" description="e.g. Blue and white" value={club.colours ?? ''} onChange={e => update('colours', e.target.value)} />

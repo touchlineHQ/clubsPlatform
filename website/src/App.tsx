@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
-import { createClubTheme, createLandingTheme } from './theme';
+import { createClubTheme, createLandingTheme, clubCssVariablesResolver } from './theme';
 import { AuthProvider } from './context/AuthContext';
 import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
@@ -60,6 +60,16 @@ export const App = () => {
   const [editingData, setEditingData] = useState<AppData | null>(null);
   const [previewData, setPreviewData] = useState<AppData | null>(null);
   const [opened, { toggle, close }] = useDisclosure();
+  const isMobile = useMediaQuery('(max-width: 61.99em)') ?? false;
+
+  // Lock body scroll while the mobile drawer is open so the page behind
+  // doesn't slide around when the user swipes.
+  useEffect(() => {
+    if (!opened || !isMobile) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, [opened, isMobile]);
 
   // Step 1: load club registry to determine single vs multi-club mode
   useEffect(() => {
@@ -98,6 +108,13 @@ export const App = () => {
     setRegistry(prev => prev ? {
       ...prev,
       clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, primaryColor: color } : c),
+    } : prev);
+  }, [clubSlug]);
+
+  const handleSecondaryColorSaved = useCallback((color: string | null) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, secondaryColor: color } : c),
     } : prev);
   }, [clubSlug]);
 
@@ -152,19 +169,24 @@ export const App = () => {
   }
 
   const registryEntry = registry?.clubs.find(c => c.slug === clubSlug);
-  const clubTheme = createClubTheme(registryEntry?.primaryColor ?? data.club.primaryColor);
+  const clubTheme = createClubTheme(
+    registryEntry?.primaryColor ?? data.club.primaryColor,
+    registryEntry?.secondaryColor ?? data.club.secondaryColor,
+  );
 
   return (
     <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
-    <MantineProvider theme={clubTheme}>
+    <MantineProvider theme={clubTheme} cssVariablesResolver={clubCssVariablesResolver}>
     <AuthProvider>
     <SectionProvider>
     <HashRouter>
       <NavigationHandler onNavigate={close} />
       <AppShell
-        header={{ height: 60 }}
+        layout="alt"
+        header={{ height: 60, collapsed: opened && isMobile }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
         padding="md"
+        styles={{ navbar: { background: 'var(--cp-surface)', border: 'none' } }}
       >
         <AppShell.Header>
           <SiteHeader club={data.club} sections={data.teams.sections} navOpen={opened} onNavToggle={toggle} />
@@ -223,6 +245,7 @@ export const App = () => {
                   onResetPreview={handleResetPreview}
                   previewActive={previewData !== null}
                   onPrimaryColorSaved={handlePrimaryColorSaved}
+                  onSecondaryColorSaved={handleSecondaryColorSaved}
                 />
               </ProtectedRoute>
             } />

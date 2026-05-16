@@ -12,6 +12,9 @@ vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: mockPathname.current }),
 }));
 
+const mockSignOut = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('../../auth-client', () => ({ signOut: mockSignOut }));
+
 import { SiteSidebar } from '../../components/SiteSidebar';
 
 const club: Club = {
@@ -120,9 +123,10 @@ describe('SiteSidebar', () => {
       />,
       { authValue: mockLoggedOut },
     );
-    expect(screen.getByText('Test FC')).toBeTruthy();
+    // 'Test FC' now appears in both the club hero and the feed home_team —
+    // assert via the feed-specific copy that's unique to the fixture card.
     expect(screen.getByText('Rival FC')).toBeTruthy();
-    expect(screen.getByText('Division 1')).toBeTruthy();
+    expect(screen.getByText('NEXT FIRST XI')).toBeTruthy();
   });
 
   it('NextTeamFixture returns nothing when all fixtures are in the past', () => {
@@ -151,7 +155,9 @@ describe('SiteSidebar', () => {
         sectionValue: { activeSection: 'seniors', setActiveSection: vi.fn() },
       },
     );
-    expect(screen.queryByText('Test FC')).toBeNull();
+    // 'Rival FC' only appears inside the (filtered-out) feed card, so it being
+    // absent confirms the card itself didn't render.
+    expect(screen.queryByText('Rival FC')).toBeNull();
   });
 
   it('clicking a section button calls setActiveSection with that section id', () => {
@@ -231,5 +237,47 @@ describe('SiteSidebar', () => {
       },
     );
     expect(screen.getByText('Booking Requests')).toBeTruthy();
+  });
+
+  it('renders the user chip with initials when logged in', () => {
+    renderWithMantine(
+      <SiteSidebar {...defaultProps} />,
+      { authValue: mockMember, clubValue: mockSingleClub },
+    );
+    expect(screen.getByText('Alice')).toBeTruthy();
+    expect(screen.getByText('Signed in')).toBeTruthy();
+  });
+
+  it('shows ADMIN badge on the user chip for admin users', () => {
+    renderWithMantine(
+      <SiteSidebar {...defaultProps} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+    // "ADMIN" appears twice for an admin: once on the user chip badge, once on
+    // the admin section divider. Both confirm the admin branches rendered.
+    expect(screen.getAllByText('ADMIN').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders Log out button when logged in and calls signOut when clicked', async () => {
+    mockSignOut.mockClear();
+    // window.location.reload is called after signOut — stub it to a no-op so
+    // jsdom doesn't blow up.
+    const origLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { ...origLocation, reload: vi.fn() },
+      writable: true,
+    });
+
+    renderWithMantine(
+      <SiteSidebar {...defaultProps} />,
+      { authValue: mockMember, clubValue: mockSingleClub },
+    );
+
+    const btn = screen.getByText('Log out');
+    fireEvent.mouseEnter(btn);
+    fireEvent.mouseLeave(btn);
+    fireEvent.click(btn);
+
+    expect(mockSignOut).toHaveBeenCalled();
   });
 });
