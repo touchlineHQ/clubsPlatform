@@ -441,7 +441,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
       </Box>
 
       {/* ───── Scrollable middle ───── */}
-      <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 0 4px' }}>
+      <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 0 12px', display: 'flex', flexDirection: 'column' }}>
         {sections.length > 0 && (
           <>
             <Text fw={800} size="10px" c={TEXT_GHOST} px={20} pb={8} style={{ letterSpacing: '0.12em' }}>
@@ -529,6 +529,12 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             />
           )}
         </Stack>
+
+        {/* Flex spacer — pushes everything after the public nav (next
+            fixture, Registrations CTA, admin, footer links) to the bottom of
+            the sidebar when there's room. Collapses to 0 when content
+            overflows so the natural scroll kicks in. */}
+        <Box style={{ flex: 1, minHeight: 16 }} />
 
         {visibleFeeds?.map(({ feed, label }) => (
           <NextTeamFixture key={label} feed={feed} label={`Next ${label}`} />
@@ -650,15 +656,13 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             </Stack>
           </>
         )}
-      </Box>
 
-      {/* ───── Footer ───── */}
-      <Box p={12} style={{ borderTop: `1px solid ${BORDER_FAINT}`, flexShrink: 0 }}>
         {(club.email || club.address?.line1 || club.address?.line2 || club.address?.postcode) && (
           <Paper
             component={club.email ? 'a' : 'div'}
             href={club.email ? `mailto:${club.email}` : undefined}
-            mb={8}
+            mx={12}
+            mt={12}
             p="8px 10px"
             radius={9}
             style={{
@@ -689,8 +693,9 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               display: 'flex',
               alignItems: 'center',
               gap: 9,
+              margin: '4px 8px 0',
               padding: '9px 12px',
-              width: '100%',
+              width: 'calc(100% - 16px)',
               borderRadius: 9,
               color: TEXT_FAINT,
               fontSize: '0.82rem',
