@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
 import { createClubTheme, createLandingTheme, clubCssVariablesResolver } from './theme';
@@ -60,6 +60,16 @@ export const App = () => {
   const [editingData, setEditingData] = useState<AppData | null>(null);
   const [previewData, setPreviewData] = useState<AppData | null>(null);
   const [opened, { toggle, close }] = useDisclosure();
+  const isMobile = useMediaQuery('(max-width: 768px)') ?? false;
+
+  // Lock body scroll while the mobile drawer is open so the page behind
+  // doesn't slide around when the user swipes.
+  useEffect(() => {
+    if (!opened || !isMobile) return;
+    const original = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = original; };
+  }, [opened, isMobile]);
 
   // Step 1: load club registry to determine single vs multi-club mode
   useEffect(() => {
