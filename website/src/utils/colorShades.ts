@@ -110,3 +110,54 @@ export function generateShades(input: string): MantineColorsTuple {
   out[6] = hex;
   return out as unknown as MantineColorsTuple;
 }
+
+/** Perceptual luminance of a hex colour, 0 (black) → 1 (white). */
+export function hexLuminance(input: string): number {
+  const hex = normalizeToHex(input) ?? '#000000';
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+function rgbaText(hex: string, alpha: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Derive the set of CSS variables used by dark-surface chrome (sidebar /
+ * mobile header) from a single hex.
+ *
+ * The variables describe a *surface*: the colour itself plus a stack of
+ * tinted overlays for text, hover state, borders etc. Everything is computed
+ * from the input so a light surface gets dark text and dark overlays, and a
+ * dark surface gets white text and light overlays — i.e. picking white as
+ * the secondary colour really does produce a white sidebar with readable
+ * dark text.
+ */
+export function getSurfaceVars(input: string | null | undefined): Record<string, string> {
+  const hex = normalizeToHex(input) ?? '#1a2332';
+  const lum = hexLuminance(hex);
+  const isDark = lum < 0.6;
+  const textHex = isDark ? '#ffffff' : '#0f172a';
+
+  // Companion shade for subtle vertical gradient — push lightness slightly the
+  // *opposite* way from the surface so the gradient is always visible.
+  const [r, g, b] = hexToRgb(hex);
+  const [h, s, l] = rgbToHsl(r, g, b);
+  const gradientL = isDark ? Math.max(0.02, l * 0.78) : Math.min(0.98, l - 0.04);
+  const [gr, gg, gb] = hslToRgb(h, s, gradientL);
+  const gradientEnd = rgbToHex(gr, gg, gb);
+
+  return {
+    '--cp-surface': hex,
+    '--cp-surface-end': gradientEnd,
+    '--cp-surface-text': textHex,
+    '--cp-surface-text-dim': rgbaText(textHex, 0.62),
+    '--cp-surface-text-faint': rgbaText(textHex, 0.45),
+    '--cp-surface-text-ghost': rgbaText(textHex, 0.35),
+    '--cp-surface-hover': rgbaText(textHex, 0.06),
+    '--cp-surface-active': rgbaText(textHex, 0.1),
+    '--cp-surface-border': rgbaText(textHex, 0.08),
+    '--cp-surface-card': rgbaText(textHex, 0.04),
+  };
+}

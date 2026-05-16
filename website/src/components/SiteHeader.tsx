@@ -81,7 +81,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
 
   const pageTitle = currentPageTitle(pathname);
 
-  // ── Mobile: dark navy bar matching the sidebar ────────────────────────────
+  // ── Mobile: surface bar matching the sidebar ─────────────────────────────
   if (isMobile) {
     return (
       <Group
@@ -90,16 +90,16 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
         gap={12}
         wrap="nowrap"
         style={{
-          background: 'var(--mantine-color-secondary-9)',
-          color: '#fff',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          background: 'var(--cp-surface)',
+          color: 'var(--cp-surface-text)',
+          borderBottom: '1px solid var(--cp-surface-border)',
         }}
       >
         <UnstyledButton
           onClick={onNavToggle}
           aria-label="Open menu"
           style={{
-            background: 'rgba(255,255,255,0.08)',
+            background: 'var(--cp-surface-active)',
             width: 38,
             height: 38,
             borderRadius: 10,
@@ -107,9 +107,10 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
+            color: 'var(--cp-surface-text)',
           }}
         >
-          <Burger opened={navOpen} color="#fff" size="sm" />
+          <Burger opened={navOpen} color="var(--cp-surface-text)" size="sm" />
         </UnstyledButton>
 
         <Group gap={10} wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
@@ -129,7 +130,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               to="/"
               fw={800}
               size="sm"
-              c="#fff"
+              c="var(--cp-surface-text)"
               lh={1.1}
               style={{
                 fontFamily: 'var(--mantine-h-font-family, inherit)',
@@ -143,7 +144,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               {clubShort}{showFcSuffix ? ' FC' : ''}
             </Text>
             {pageTitle && (
-              <Text size="10px" c="rgba(255,255,255,0.4)" truncate>
+              <Text size="10px" c="var(--cp-surface-text-faint)" truncate>
                 {pageTitle}
               </Text>
             )}
@@ -156,7 +157,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             to="/login"
             aria-label="Log in"
             style={{
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--cp-surface-active)',
               width: 38,
               height: 38,
               borderRadius: 10,
@@ -164,7 +165,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
-              color: '#fff',
+              color: 'var(--cp-surface-text)',
             }}
           >
             <IconUser size={18} />
@@ -177,7 +178,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               <UnstyledButton
                 aria-label={`Account menu for ${user.name}`}
                 style={{
-                  background: 'rgba(255,255,255,0.08)',
+                  background: 'var(--cp-surface-active)',
                   width: 38,
                   height: 38,
                   borderRadius: 10,
@@ -185,7 +186,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
-                  color: '#fff',
+                  color: 'var(--cp-surface-text)',
                   fontWeight: 700,
                   fontSize: '0.75rem',
                 }}

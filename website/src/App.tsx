@@ -4,7 +4,7 @@ import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
-import { createClubTheme, createLandingTheme } from './theme';
+import { createClubTheme, createLandingTheme, clubCssVariablesResolver } from './theme';
 import { AuthProvider } from './context/AuthContext';
 import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
@@ -166,7 +166,7 @@ export const App = () => {
 
   return (
     <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
-    <MantineProvider theme={clubTheme}>
+    <MantineProvider theme={clubTheme} cssVariablesResolver={clubCssVariablesResolver}>
     <AuthProvider>
     <SectionProvider>
     <HashRouter>
@@ -175,7 +175,7 @@ export const App = () => {
         header={{ height: 60 }}
         navbar={{ width: 300, breakpoint: 'md', collapsed: { mobile: !opened } }}
         padding="md"
-        styles={{ navbar: { background: 'var(--mantine-color-secondary-9)', border: 'none' } }}
+        styles={{ navbar: { background: 'var(--cp-surface)', border: 'none' } }}
       >
         <AppShell.Header>
           <SiteHeader club={data.club} sections={data.teams.sections} navOpen={opened} onNavToggle={toggle} />

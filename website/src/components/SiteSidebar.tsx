@@ -29,14 +29,16 @@ const DEFAULT_NAV: NavItem[] = [
 
 const PRIMARY = 'var(--mantine-primary-color-filled)';
 const PRIMARY_DARK = 'var(--mantine-primary-color-7)';
-const SURFACE_DARK = 'var(--mantine-color-secondary-9)';
-const SURFACE_DARK_2 = 'var(--mantine-color-secondary-8)';
-const TEXT_DIM = 'rgba(255,255,255,0.62)';
-const TEXT_FAINT = 'rgba(255,255,255,0.45)';
-const TEXT_GHOST = 'rgba(255,255,255,0.35)';
-const SURFACE_HOVER = 'rgba(255,255,255,0.06)';
-const SURFACE_ACTIVE = 'rgba(255,255,255,0.08)';
-const BORDER_FAINT = 'rgba(255,255,255,0.06)';
+const SURFACE = 'var(--cp-surface)';
+const SURFACE_END = 'var(--cp-surface-end)';
+const TEXT = 'var(--cp-surface-text)';
+const TEXT_DIM = 'var(--cp-surface-text-dim)';
+const TEXT_FAINT = 'var(--cp-surface-text-faint)';
+const TEXT_GHOST = 'var(--cp-surface-text-ghost)';
+const SURFACE_HOVER = 'var(--cp-surface-hover)';
+const SURFACE_ACTIVE = 'var(--cp-surface-active)';
+const BORDER_FAINT = 'var(--cp-surface-border)';
+const CARD_BG = 'var(--cp-surface-card)';
 
 interface NavRowProps {
   to?: string;
@@ -59,7 +61,7 @@ function NavRow({ to, href, label, icon, active, external, onClick }: NavRowProp
     width: 'calc(100% - 16px)',
     textAlign: 'left',
     position: 'relative',
-    color: active ? '#fff' : TEXT_DIM,
+    color: active ? TEXT : TEXT_DIM,
     background: active ? SURFACE_ACTIVE : 'transparent',
     fontWeight: active ? 700 : 500,
     fontSize: '0.875rem',
@@ -70,7 +72,7 @@ function NavRow({ to, href, label, icon, active, external, onClick }: NavRowProp
   const handleEnter = (e: React.MouseEvent<HTMLElement>) => {
     if (!active) {
       e.currentTarget.style.background = SURFACE_HOVER;
-      e.currentTarget.style.color = '#fff';
+      e.currentTarget.style.color = TEXT;
     }
   };
   const handleLeave = (e: React.MouseEvent<HTMLElement>) => {
@@ -155,7 +157,7 @@ function NextTeamFixture({ feed, label }: { feed: TeamFeed; label: string }) {
       style={{
         position: 'relative',
         overflow: 'hidden',
-        background: 'rgba(255,255,255,0.04)',
+        background: CARD_BG,
         border: `1px solid ${BORDER_FAINT}`,
         borderRadius: 12,
       }}
@@ -192,7 +194,7 @@ function NextTeamFixture({ feed, label }: { feed: TeamFeed; label: string }) {
         fw={800}
         size="sm"
         lh={1.3}
-        c="#fff"
+        c={TEXT}
         style={{ fontFamily: clubDesign.font.heading }}
       >
         {next.home_team}
@@ -202,7 +204,7 @@ function NextTeamFixture({ feed, label }: { feed: TeamFeed; label: string }) {
         fw={800}
         size="sm"
         lh={1.3}
-        c="#fff"
+        c={TEXT}
         style={{ fontFamily: clubDesign.font.heading }}
       >
         {next.away_team}
@@ -276,8 +278,8 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
       gap={0}
       h="100%"
       style={{
-        background: `linear-gradient(180deg, ${SURFACE_DARK} 0%, ${SURFACE_DARK_2} 100%)`,
-        color: '#fff',
+        background: `linear-gradient(180deg, ${SURFACE} 0%, ${SURFACE_END} 100%)`,
+        color: TEXT,
       }}
     >
       {/* ───── Club hero ───── */}
@@ -312,13 +314,13 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               width: 46,
               height: 46,
               borderRadius: 12,
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: SURFACE_ACTIVE,
+              border: `1px solid ${BORDER_FAINT}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0,
-              color: '#fff',
+              color: TEXT,
             }}
           >
             {club.badge ? (
@@ -335,7 +337,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
           <Box style={{ minWidth: 0, flex: 1 }}>
             <Text
               fw={800}
-              c="#fff"
+              c={TEXT}
               size="md"
               lh={1.15}
               style={{
@@ -369,7 +371,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               onClick={onNavClick}
               aria-label="Close menu"
               style={{
-                background: 'rgba(255,255,255,0.06)',
+                background: SURFACE_HOVER,
                 width: 32,
                 height: 32,
                 borderRadius: 8,
@@ -377,7 +379,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                color: '#fff',
+                color: TEXT,
               }}
             >
               <IconX size={16} />
@@ -394,7 +396,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             py={8}
             wrap="nowrap"
             style={{
-              background: 'rgba(255,255,255,0.05)',
+              background: SURFACE_HOVER,
               border: `1px solid ${BORDER_FAINT}`,
               borderRadius: 10,
             }}
@@ -417,7 +419,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               {userInitials(user.name)}
             </Box>
             <Box style={{ flex: 1, minWidth: 0 }}>
-              <Text size="xs" fw={600} c="#fff" lh={1.2} truncate>{user.name}</Text>
+              <Text size="xs" fw={600} c={TEXT} lh={1.2} truncate>{user.name}</Text>
               <Text size="10px" c={TEXT_FAINT}>Signed in</Text>
             </Box>
             {canAdmin && (
@@ -458,7 +460,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
                         root: {
                           background: 'transparent',
                           color: TEXT_DIM,
-                          borderColor: 'rgba(255,255,255,0.18)',
+                          borderColor: 'var(--cp-surface-border)',
                         },
                       }
                 }
@@ -481,7 +483,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
                             root: {
                               background: 'transparent',
                               color: TEXT_DIM,
-                              borderColor: 'rgba(255,255,255,0.18)',
+                              borderColor: 'var(--cp-surface-border)',
                             },
                           }
                     }
@@ -559,7 +561,8 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
                   width: 24,
                   height: 24,
                   borderRadius: 7,
-                  background: 'rgba(255,255,255,0.2)',
+                  background: 'rgba(255,255,255,0.22)',
+                  color: '#fff',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -588,14 +591,14 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         {canAdmin && (
           <>
             <Group gap={8} mx={12} my="md" wrap="nowrap">
-              <Box style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+              <Box style={{ flex: 1, height: 1, background: BORDER_FAINT }} />
               <Group gap={5} wrap="nowrap">
                 <Box style={{ width: 5, height: 5, borderRadius: '50%', background: PRIMARY }} />
                 <Text size="10px" fw={800} c={TEXT_GHOST} style={{ letterSpacing: '0.14em' }}>
                   ADMIN
                 </Text>
               </Group>
-              <Box style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.07)' }} />
+              <Box style={{ flex: 1, height: 1, background: BORDER_FAINT }} />
             </Group>
             <Stack gap={2} pb={8}>
               {pitchBookings && canManage && (
@@ -659,7 +662,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             p="8px 10px"
             radius={9}
             style={{
-              background: 'rgba(255,255,255,0.03)',
+              background: CARD_BG,
               textDecoration: 'none',
               display: 'block',
             }}
@@ -695,7 +698,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = SURFACE_HOVER;
-              e.currentTarget.style.color = '#fff';
+              e.currentTarget.style.color = `var(--cp-surface-text)`;
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = 'transparent';

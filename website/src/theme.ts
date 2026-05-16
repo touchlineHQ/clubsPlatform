@@ -1,6 +1,6 @@
 import { createTheme, Tabs } from '@mantine/core';
-import type { MantineColorsTuple } from '@mantine/core';
-import { generateShades, isHexColor } from './utils/colorShades';
+import type { MantineColorsTuple, MantineTheme } from '@mantine/core';
+import { generateShades, isHexColor, getSurfaceVars, normalizeToHex } from './utils/colorShades';
 
 const ORANGE_SHADES: MantineColorsTuple = [
   '#fff4eb',
@@ -53,7 +53,7 @@ export function createClubTheme(
   secondaryColor: string | null | undefined = null,
 ) {
   const primaryInput = primaryColor ?? 'blue';
-  const secondaryInput = secondaryColor ?? DEFAULT_SECONDARY_HEX;
+  const secondaryInput = normalizeToHex(secondaryColor) ?? DEFAULT_SECONDARY_HEX;
 
   const useHexPrimary = isHexColor(primaryInput);
   const primaryShades = useHexPrimary ? generateShades(primaryInput) : null;
@@ -81,7 +81,25 @@ export function createClubTheme(
     components: {
       Tabs: TABS_OVERRIDE,
     },
+    other: {
+      secondaryHex: secondaryInput,
+    },
   });
+}
+
+/**
+ * MantineProvider `cssVariablesResolver` — exposes a stable
+ * `--cp-surface-*` set derived from the club's secondary colour so the dark
+ * chrome (sidebar, mobile header) adapts whether the secondary is dark navy,
+ * white, or any colour in between.
+ */
+export function clubCssVariablesResolver(theme: MantineTheme) {
+  const secondaryHex = (theme.other?.secondaryHex as string | undefined) ?? DEFAULT_SECONDARY_HEX;
+  return {
+    variables: getSurfaceVars(secondaryHex),
+    light: {},
+    dark: {},
+  };
 }
 
 export function createLandingTheme() {

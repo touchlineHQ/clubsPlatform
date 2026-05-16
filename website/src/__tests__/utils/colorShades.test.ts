@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateShades, normalizeToHex, isHexColor } from '../../utils/colorShades';
+import { generateShades, normalizeToHex, isHexColor, hexLuminance, getSurfaceVars } from '../../utils/colorShades';
 
 describe('isHexColor', () => {
   it('accepts 6-digit hex with or without #', () => {
@@ -46,5 +46,47 @@ describe('generateShades', () => {
     const shades = generateShades('not-a-colour');
     expect(shades).toHaveLength(10);
     expect(shades[6]).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+});
+
+describe('hexLuminance', () => {
+  it('returns ~1 for white', () => {
+    expect(hexLuminance('#ffffff')).toBeCloseTo(1, 2);
+  });
+  it('returns ~0 for black', () => {
+    expect(hexLuminance('#000000')).toBeCloseTo(0, 2);
+  });
+});
+
+describe('getSurfaceVars', () => {
+  it('returns dark surface colour and white text when secondary is dark navy', () => {
+    const v = getSurfaceVars('#1a2332');
+    expect(v['--cp-surface']).toBe('#1a2332');
+    expect(v['--cp-surface-text']).toBe('#ffffff');
+    // light overlay (white at low alpha) since text is white
+    expect(v['--cp-surface-hover']).toMatch(/rgba\(255,255,255,/);
+  });
+
+  it('returns white surface colour and dark text when secondary is white', () => {
+    const v = getSurfaceVars('#ffffff');
+    expect(v['--cp-surface']).toBe('#ffffff');
+    expect(v['--cp-surface-text']).toBe('#0f172a');
+    // dark overlay (text colour at low alpha) for hover, so it shows on white
+    expect(v['--cp-surface-hover']).toMatch(/rgba\(15,23,42,/);
+  });
+
+  it('falls back to the design-system dark navy when input is missing', () => {
+    const v = getSurfaceVars(null);
+    expect(v['--cp-surface']).toBe('#1a2332');
+    expect(v['--cp-surface-text']).toBe('#ffffff');
+  });
+
+  it('exposes every variable the chrome needs', () => {
+    const v = getSurfaceVars('#f07820');
+    expect(Object.keys(v)).toEqual(expect.arrayContaining([
+      '--cp-surface', '--cp-surface-end', '--cp-surface-text',
+      '--cp-surface-text-dim', '--cp-surface-text-faint', '--cp-surface-text-ghost',
+      '--cp-surface-hover', '--cp-surface-active', '--cp-surface-border', '--cp-surface-card',
+    ]));
   });
 });
