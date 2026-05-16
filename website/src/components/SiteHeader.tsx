@@ -11,42 +11,13 @@ import { useAuth } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
 import { signOut } from '../auth-client';
 import { tablerIcon } from '../utils/icons';
+import { currentPageTitle } from '../utils/navHelpers';
 
 interface Props {
   club: Club;
   sections: TeamSection[];
   navOpen: boolean;
   onNavToggle: () => void;
-}
-
-const PAGE_TITLES: Record<string, string> = {
-  '/': 'Home',
-  '/about': 'About Us',
-  '/teams': 'Teams',
-  '/fixtures': 'Fixtures & Results',
-  '/register': 'Register & Pay',
-  '/committee': 'Committee & Staff',
-  '/news': 'Club News',
-  '/gallery': 'Gallery',
-  '/matchday': 'Matchday Info',
-  '/contact': 'Contact',
-  '/customise': 'Site Admin',
-  '/admin/users': 'Manage Users',
-  '/admin/payments': 'Payments',
-  '/admin/secrets': 'API Secrets',
-  '/admin/bookings': 'Booking Requests',
-  '/bookings': 'Request a Pitch',
-  '/schedule': 'Pitch Schedule',
-  '/my-registrations': 'My Registrations',
-};
-
-function currentPageTitle(pathname: string): string {
-  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
-  // Longest-prefix match for nested routes (e.g. /teams/.../...)
-  const match = Object.keys(PAGE_TITLES)
-    .filter(p => p !== '/' && pathname.startsWith(p))
-    .sort((a, b) => b.length - a.length)[0];
-  return match ? PAGE_TITLES[match] : '';
 }
 
 export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {

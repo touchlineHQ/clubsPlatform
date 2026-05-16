@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
 import { signOut } from '../auth-client';
 import { tablerIcon } from '../utils/icons';
+import { userInitials } from '../utils/navHelpers';
 import { clubDesign } from '../theme';
 
 const DEFAULT_NAV: NavItem[] = [
@@ -226,15 +227,6 @@ function NextTeamFixture({ feed, label }: { feed: TeamFeed; label: string }) {
       )}
     </Box>
   );
-}
-
-function userInitials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? '')
-    .join('');
 }
 
 interface Props {
