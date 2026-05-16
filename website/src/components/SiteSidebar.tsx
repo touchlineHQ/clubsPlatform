@@ -442,6 +442,9 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
 
       {/* ───── Scrollable middle ───── */}
       <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 0 12px', display: 'flex', flexDirection: 'column' }}>
+        {/* Top group — VIEW filter + MENU nav. flexShrink:0 so it keeps its
+            intrinsic height when the bottom group also fills out. */}
+        <Box style={{ flexShrink: 0 }}>
         {sections.length > 0 && (
           <>
             <Text fw={800} size="10px" c={TEXT_GHOST} px={20} pb={8} style={{ letterSpacing: '0.12em' }}>
@@ -529,6 +532,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             />
           )}
         </Stack>
+        </Box>
 
         {/* Flex spacer — pushes everything after the public nav (next
             fixture, Registrations CTA, admin, footer links) to the bottom of
@@ -536,6 +540,10 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             overflows so the natural scroll kicks in. */}
         <Box style={{ flex: 1, minHeight: 16 }} />
 
+        {/* Bottom group — next fixture → log out. flexShrink:0 so the
+            next-fixture card keeps its full intrinsic height instead of
+            being squashed into a sliver by the spacer above. */}
+        <Box style={{ flexShrink: 0 }}>
         {visibleFeeds?.map(({ feed, label }) => (
           <NextTeamFixture key={label} feed={feed} label={`Next ${label}`} />
         ))}
@@ -714,6 +722,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             Log out
           </UnstyledButton>
         )}
+        </Box>
       </Box>
     </Stack>
   );
