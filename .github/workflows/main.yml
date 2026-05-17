@@ -25,51 +25,30 @@ jobs:
         run: npm ci
         working-directory: website
       - name: Apply DB migrations
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          DB="clubsplatform-auth"
-          WR="npx --yes wrangler@4"
-
-          # Cloudflare Pages preview deployments share the production D1 database.
-          # When a PR preview runs, ensure-tables COLUMN_MIGRATIONS can pre-add
-          # columns before CI runs the corresponding D1 migration. That causes the
-          # migration to fail with "duplicate column name" and leaves it untracked.
-          # This function detects and repairs that specific stuck-migration pattern
-          # without touching any data.
-          repair_if_stuck() {
-            local mig_name="$1" table="$2" col="$3"
-            col_exists=$($WR d1 execute "$DB" --remote --json \
-              --command "SELECT COUNT(*) AS n FROM pragma_table_info('$table') WHERE name='$col'" \
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          preCommands: |
+            # Cloudflare Pages previews share the production D1 database, so
+            # ensure-tables COLUMN_MIGRATIONS can pre-add a column before CI runs
+            # the D1 migration for it. That leaves the migration stuck: the column
+            # exists but is untracked, so wrangler retries and fails every time.
+            # Fix: if the column is already present but the migration is untracked,
+            # insert the tracking row so wrangler skips it cleanly.
+            col=$(wrangler d1 execute clubsplatform-auth --remote --json \
+              --command "SELECT COUNT(*) AS n FROM pragma_table_info('club_config') WHERE name='secondaryColor'" \
               2>/dev/null | jq -r '.[0].results[0].n // "0"' 2>/dev/null || echo "0")
-            is_tracked=$($WR d1 execute "$DB" --remote --json \
-              --command "SELECT COUNT(*) AS n FROM migrations WHERE name='$mig_name'" \
+            tracked=$(wrangler d1 execute clubsplatform-auth --remote --json \
+              --command "SELECT COUNT(*) AS n FROM migrations WHERE name='0015_add_club_secondarycolor'" \
               2>/dev/null | jq -r '.[0].results[0].n // "0"' 2>/dev/null || echo "0")
-            if [ "$col_exists" = "1" ] && [ "$is_tracked" != "1" ]; then
-              echo "Repairing stuck migration '$mig_name': column '$col' already exists in '$table'"
-              $WR d1 execute "$DB" --remote \
-                --command "INSERT OR IGNORE INTO migrations (name, applied_at) VALUES ('$mig_name', CURRENT_TIMESTAMP)"
-              return 0
+            if [ "$col" = "1" ] && [ "$tracked" != "1" ]; then
+              echo "Repairing stuck migration 0015_add_club_secondarycolor"
+              wrangler d1 execute clubsplatform-auth --remote \
+                --command "INSERT OR IGNORE INTO migrations (name, applied_at) VALUES ('0015_add_club_secondarycolor', CURRENT_TIMESTAMP)"
             fi
-            return 1
-          }
-
-          if $WR d1 migrations apply "$DB" --remote; then
-            exit 0
-          fi
-
-          echo "Migration apply failed — checking for stuck migrations caused by preview deployments…"
-          repaired=false
-          repair_if_stuck "0015_add_club_secondarycolor" "club_config" "secondaryColor" && repaired=true || true
-
-          if [ "$repaired" = "true" ]; then
-            echo "Retrying after repair…"
-            $WR d1 migrations apply "$DB" --remote
-          else
-            echo "Migration failed for an unknown reason — manual intervention required"
-            exit 1
-          fi
+          command: d1 migrations apply clubsplatform-auth --remote
       - name: Build
         run: npm run build
         working-directory: website
