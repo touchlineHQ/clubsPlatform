@@ -30,6 +30,24 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
+          preCommands: |
+            # Cloudflare Pages previews share the production D1 database, so
+            # ensure-tables COLUMN_MIGRATIONS can pre-add a column before CI runs
+            # the D1 migration for it. That leaves the migration stuck: the column
+            # exists but is untracked, so wrangler retries and fails every time.
+            # Fix: if the column is already present but the migration is untracked,
+            # insert the tracking row so wrangler skips it cleanly.
+            col=$(wrangler d1 execute clubsplatform-auth --remote --json \
+              --command "SELECT COUNT(*) AS n FROM pragma_table_info('club_config') WHERE name='secondaryColor'" \
+              2>/dev/null | jq -r '.[0].results[0].n // "0"' 2>/dev/null || echo "0")
+            tracked=$(wrangler d1 execute clubsplatform-auth --remote --json \
+              --command "SELECT COUNT(*) AS n FROM migrations WHERE name='0015_add_club_secondarycolor'" \
+              2>/dev/null | jq -r '.[0].results[0].n // "0"' 2>/dev/null || echo "0")
+            if [ "$col" = "1" ] && [ "$tracked" != "1" ]; then
+              echo "Repairing stuck migration 0015_add_club_secondarycolor"
+              wrangler d1 execute clubsplatform-auth --remote \
+                --command "INSERT OR IGNORE INTO migrations (name, applied_at) VALUES ('0015_add_club_secondarycolor', CURRENT_TIMESTAMP)"
+            fi
           command: d1 migrations apply clubsplatform-auth --remote
       - name: Build
         run: npm run build
