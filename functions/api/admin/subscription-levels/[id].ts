@@ -1,5 +1,6 @@
 import { ensureTables } from "../../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../../lib/api-helpers";
+import { getPostHog } from "../../../lib/posthog";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
 const INTERVAL_UNITS: ReadonlyArray<IntervalUnit> = ["weekly", "monthly", "yearly"];
@@ -90,6 +91,20 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     throw e;
   }
 
+  const adminId = (auth.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'subscription level updated',
+      properties: {
+        club_slug: clubSlug,
+        level_id: id,
+        fields_updated: fields.filter(f => !f.startsWith('updatedAt')).map(f => f.split(' ')[0]),
+      },
+    });
+  }
+
   return json({ ok: true });
 };
 
@@ -112,5 +127,16 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   if (result.meta.changes === 0) {
     return json({ error: "subscription level not found" }, { status: 404 });
   }
+
+  const adminId = (auth.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'subscription level deleted',
+      properties: { club_slug: clubSlug, level_id: id },
+    });
+  }
+
   return json({ ok: true });
 };

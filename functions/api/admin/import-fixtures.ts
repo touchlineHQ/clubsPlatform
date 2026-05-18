@@ -1,4 +1,5 @@
 import { type Env, json, requireAdmin } from "../../lib/api-helpers";
+import { getPostHog } from "../../lib/posthog";
 
 interface LiveFixture {
   id: string;
@@ -90,6 +91,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .run();
 
     created++;
+  }
+
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: session.user.id,
+      event: 'fixtures imported',
+      properties: {
+        club_feed_slug: clubFeedSlug,
+        fixtures_created: created,
+        fixtures_skipped: skipped,
+      },
+    });
   }
 
   return json({ ok: true, created, skipped });

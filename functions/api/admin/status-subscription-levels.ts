@@ -1,5 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { getPostHog } from "../../lib/posthog";
 
 interface ClubRateRow {
   registrationStatus: string;
@@ -108,6 +109,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const teamName = (body.teamName ?? "").trim() || null;
   const levelId = body.subscriptionLevelId ?? null;
 
+  const adminId = (auth.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+
   if (teamName) {
     // Team-specific override
     if (levelId === null) {
@@ -118,6 +122,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         )
         .bind(clubSlug, teamName, registrationStatus)
         .run();
+      if (posthog) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'subscription rate cleared',
+          properties: { club_slug: clubSlug, team_name: teamName, registration_status: registrationStatus, scope: 'team' },
+        });
+      }
       return json({ ok: true, cleared: true });
     }
 
@@ -148,6 +159,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         )
         .bind(clubSlug, registrationStatus)
         .run();
+      if (posthog) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'subscription rate cleared',
+          properties: { club_slug: clubSlug, registration_status: registrationStatus, scope: 'club' },
+        });
+      }
       return json({ ok: true, cleared: true });
     }
 
@@ -168,6 +186,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       )
       .bind(clubSlug, registrationStatus, levelId, nowMs())
       .run();
+  }
+
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'subscription rate assigned',
+      properties: {
+        club_slug: clubSlug,
+        registration_status: registrationStatus,
+        subscription_level_id: levelId,
+        team_name: teamName ?? null,
+        scope: teamName ? 'team' : 'club',
+      },
+    });
   }
 
   return json({ ok: true });
