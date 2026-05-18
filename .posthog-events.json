@@ -1,0 +1,37 @@
+[
+  {
+    "event": "players imported",
+    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts",
+    "file": "functions/api/admin/import-players.ts"
+  },
+  {
+    "event": "fixtures imported",
+    "description": "An admin bulk-imports upcoming home fixtures from the club feed, auto-creating pending booking requests",
+    "file": "functions/api/admin/import-fixtures.ts"
+  },
+  {
+    "event": "subscription level updated",
+    "description": "An admin updates the name, price, or interval of an existing subscription level",
+    "file": "functions/api/admin/subscription-levels/[id].ts"
+  },
+  {
+    "event": "subscription level deleted",
+    "description": "An admin deletes a subscription level from the club",
+    "file": "functions/api/admin/subscription-levels/[id].ts"
+  },
+  {
+    "event": "subscription rate assigned",
+    "description": "An admin maps a registration status (or team + status) to a subscription level, setting the payment rate for that cohort",
+    "file": "functions/api/admin/status-subscription-levels.ts"
+  },
+  {
+    "event": "subscription rate cleared",
+    "description": "An admin removes a status-based subscription rate mapping (club-wide or per-team override)",
+    "file": "functions/api/admin/status-subscription-levels.ts"
+  },
+  {
+    "event": "payment page viewed",
+    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel",
+    "file": "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
+  }
+]
