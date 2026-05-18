@@ -1,5 +1,6 @@
 import { ensureTables } from '../../lib/ensure-tables';
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from '../../lib/api-helpers';
+import { getPostHog } from '../../lib/posthog';
 
 interface PlayerPaymentRow {
   id: string;
@@ -60,6 +61,16 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     .run();
 
   if (!meta.changes) return json({ error: 'Payment not found' }, { status: 404 });
+
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'player payment deactivated',
+      properties: { club_slug: clubSlug, payment_id: body.id },
+    });
+  }
 
   return json({ ok: true });
 };

@@ -1,11 +1,14 @@
 import { Hono } from "hono";
 import { createAuth } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
+import { getPostHog } from "../../lib/posthog";
 
 interface Env {
   DB: D1Database;
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
+  POSTHOG_API_KEY?: string;
+  POSTHOG_HOST?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -23,6 +26,11 @@ app.all("/api/auth/*", async (c) => {
     const auth = createAuth(c.env, { baseURL });
     return auth.handler(c.req.raw);
   } catch (e) {
+    const posthog = getPostHog(c.env);
+    if (posthog) {
+      posthog.captureException(e);
+      await posthog.flush();
+    }
     return c.json({ error: "Auth error", details: String(e) }, 500);
   }
 });

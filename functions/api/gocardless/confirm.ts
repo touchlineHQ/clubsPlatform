@@ -2,6 +2,7 @@ import { ensureTables } from '../../lib/ensure-tables';
 import { randomId, nowMs } from '../../lib/api-helpers';
 import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
+import { getPostHog } from '../../lib/posthog';
 
 async function upsertPaymentRecord(
   db: D1Database,
@@ -188,8 +189,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }),
   });
 
+  const subResText = await subRes.text();
   if (!subRes.ok) {
-    console.error('Subscription creation failed:', await subRes.text());
+    console.error('Subscription creation failed:', subResText);
     // Mandate exists — record it even without a subscription
     try {
       await upsertPaymentRecord(env.DB, {
@@ -200,13 +202,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     } catch (e) {
       console.error('Failed to upsert payment record (mandate_only):', e);
     }
+    const posthog = getPostHog(env);
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: registrationId || 'anonymous',
+        event: 'payment failed',
+        properties: { club_slug: clubSlug, reference, mandate_id: mandateId, reason: 'subscription_creation_failed' },
+      });
+    }
     return Response.redirect(
       `${origin}/#/payment-success?mandate=${mandateId}&warning=subscription_failed&ref=${encodeURIComponent(reference)}`,
       302
     );
   }
 
-  const { subscriptions: sub } = await subRes.json<{ subscriptions: GCSubscription }>();
+  const { subscriptions: sub } = JSON.parse(subResText) as { subscriptions: GCSubscription };
 
   try {
     await upsertPaymentRecord(env.DB, {
@@ -216,6 +226,22 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     });
   } catch (e) {
     console.error('Failed to upsert payment record:', e);
+  }
+
+  const posthog = getPostHog(env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: registrationId || 'anonymous',
+      event: 'payment completed',
+      properties: {
+        club_slug: clubSlug,
+        reference,
+        mandate_id: mandateId,
+        subscription_id: sub.id,
+        amount_in_pence: amountInPence,
+        interval_unit: intervalUnit || 'monthly',
+      },
+    });
   }
 
   return Response.redirect(
