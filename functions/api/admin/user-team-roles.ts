@@ -1,4 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import { getPostHog } from "../../lib/posthog";
 
 type UserTeamRoleRow = {
   id: string;
@@ -99,6 +100,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .run();
   }
 
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'team role assigned',
+      properties: { club_slug: clubSlug, target_user_id: userId, team_slug: teamSlug, team_league: teamLeague, team_name: teamName, role },
+    });
+  }
+
   return json({ ok: true, id }, { status: 201 });
 };
 
@@ -122,6 +133,16 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     .prepare(`DELETE FROM user_team_role WHERE id = ?`)
     .bind(id)
     .run();
+
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'team role removed',
+      properties: { club_slug: clubSlug, assignment_id: id },
+    });
+  }
 
   return json({ ok: true });
 };

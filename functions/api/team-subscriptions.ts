@@ -1,4 +1,5 @@
 import { type Env, json, requireAuth } from "../lib/api-helpers";
+import { getPostHog } from "../lib/posthog";
 
 // POST /api/team-subscriptions
 // Body: { teamSlug, teamLeague, teamName }
@@ -49,6 +50,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     .bind(id, userId, teamSlug, teamLeague, teamName, ts)
     .run();
 
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'team subscription created',
+      properties: { team_slug: teamSlug, team_league: teamLeague, team_name: teamName },
+    });
+  }
+
   return json({ ok: true, id }, { status: 201 });
 };
 
@@ -82,6 +92,15 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     .prepare(`DELETE FROM user_team_role WHERE id = ?`)
     .bind(existing.id)
     .run();
+
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'team subscription deleted',
+      properties: { team_slug: slug, team_league: league },
+    });
+  }
 
   return json({ ok: true });
 };

@@ -1,5 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
+import { getPostHog } from "../lib/posthog";
 
 const clubFilter = `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`;
 
@@ -46,5 +47,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
   await context.env.DB.batch(stmts);
+
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'registration items updated',
+      properties: { club_slug: clubSlug, item_count: (body.items ?? []).length },
+    });
+  }
+
   return json({ ok: true });
 };
