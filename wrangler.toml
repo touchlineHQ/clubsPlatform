@@ -3,15 +3,22 @@ compatibility_date = "2024-09-23"
 pages_build_output_dir = "website/dist"
 compatibility_flags = [ "nodejs_compat" ]
 
-[[d1_databases]]
-binding = "DB"
-database_name = "clubsplatform-auth"
-database_id = "65a7e9d9-3772-4471-af13-fd2e39ab8f90"
-migrations_table = "migrations"
-migrations_dir = "migrations"
-
+# ---------------------------------------------------------------------------
+# Default vars (used by `wrangler pages dev` without --env, and inherited
+# only where not overridden in an env block below). For Cloudflare Pages
+# deployments, the [env.production] / [env.preview] blocks are what get
+# applied — top-level d1 bindings are intentionally NOT defined so that
+# every deploy uses an explicit, environment-scoped database.
+#
+# SECURITY: BETTER_AUTH_SECRET is still here for backwards compatibility;
+# PR 2 will move it to per-env `wrangler pages secret put`. Rotate the value
+# at the same time — anything committed to this file is compromised.
+# ---------------------------------------------------------------------------
 [vars]
 BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
+MULTI_CLUB = "true"
+# GoCardless environment: "sandbox" for testing, "live" for production
+GC_ENVIRONMENT = "sandbox"
 # SECRETS_ENCRYPTION_KEY must be set via Cloudflare dashboard secrets (NOT here) — 64 hex chars (32 bytes)
 # For local dev, add to .dev.vars: SECRETS_ENCRYPTION_KEY=<output of: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
 #
@@ -19,9 +26,46 @@ BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a
 #   node -e "const c=require('crypto');const {privateKey,publicKey}=c.generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'},privateKeyEncoding:{type:'pkcs8',format:'der'}});console.log('SECRETS_TRANSPORT_PRIVATE_KEY='+privateKey.toString('base64'));console.log('SECRETS_TRANSPORT_PUBLIC_KEY='+publicKey.toString('base64'));"
 # SECRETS_TRANSPORT_PRIVATE_KEY → Cloudflare dashboard secrets (never commit); for local dev add to .dev.vars
 # SECRETS_TRANSPORT_PUBLIC_KEY  → not sensitive; add to .dev.vars and set below (or in dashboard)
-# Uncomment to enable multi-club platform mode (clubs managed via DB / data/clubs/index.json)
-MULTI_CLUB = "true"
 # Uncomment to enable pitch booking features (pitch schedule, booking requests)
 # PITCH_BOOKINGS = "true"
-# GoCardless environment: "sandbox" for testing, "live" for production
+
+# ---------------------------------------------------------------------------
+# Production environment — applied to deploys on the production branch
+# (`main`). Bind the live D1 here.
+# ---------------------------------------------------------------------------
+[env.production]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "clubsplatform-auth"
+database_id = "65a7e9d9-3772-4471-af13-fd2e39ab8f90"
+migrations_table = "migrations"
+migrations_dir = "migrations"
+
+[env.production.vars]
+BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
+MULTI_CLUB = "true"
+# Stays on sandbox in PR 1 — flip to "live" in PR 2 once the price-tampering
+# fix and other P0 items have shipped and are verified.
+GC_ENVIRONMENT = "sandbox"
+
+# ---------------------------------------------------------------------------
+# Preview environment — applied to deploys on every non-production branch
+# (PR previews, branch previews). Bind the dedicated preview D1.
+# ---------------------------------------------------------------------------
+[env.preview]
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "clubsplatform-preview"
+database_id = "895c505d-ccc6-49d9-87ba-375ef9492f19"
+migrations_table = "migrations"
+migrations_dir = "migrations"
+
+[env.preview.vars]
+# Use a different BETTER_AUTH_SECRET in preview once secrets are migrated to
+# `wrangler pages secret put --env preview` (PR 2). Keeping the shared value
+# here only for transition.
+BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
+MULTI_CLUB = "true"
 GC_ENVIRONMENT = "sandbox"
