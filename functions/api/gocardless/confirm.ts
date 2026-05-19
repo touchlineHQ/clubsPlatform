@@ -112,7 +112,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // Server-side authoritative values — set in gocardless-link.ts when the
   // billing request was created. URL params for these are ignored.
   const registrationId = br.metadata?.registration_id ?? '';
-  const clubSlug = br.metadata?.club_slug ?? null;
   const reference = br.metadata?.reference ?? urlReference;
 
   if (!registrationId) {
@@ -121,12 +120,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=legacy_link`, 302);
   }
 
-  // Re-derive the payment plan from the DB. Mirrors the join in
-  // functions/[clubSlug]/payments/[paymentType]/[fanId].ts but keyed by
-  // registration id (since that's what's in the metadata).
+  // Re-derive the payment plan AND the club slug from the DB, keyed by
+  // registration id (the only authoritative identifier we get from metadata).
+  // clubSlug must come from the DB, not the URL, so an attacker can't write
+  // a payment row against a club they don't own.
   const pricing = await env.DB
     .prepare(
-      `SELECT sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit
+      `SELECT pr.clubSlug, sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit
          FROM player_registration pr
          LEFT JOIN team_status_subscription_level tssl
                 ON tssl.clubSlug = pr.clubSlug
@@ -143,6 +143,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     )
     .bind(registrationId)
     .first<{
+      clubSlug: string;
       yearlyPriceInPence: number | null;
       intervalCount: number | null;
       intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
@@ -156,6 +157,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   ) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=no_level`, 302);
   }
+
+  const clubSlug = pricing.clubSlug;
 
   const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
   const intervalUnit = pricing.intervalUnit;
