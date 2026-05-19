@@ -164,6 +164,7 @@ describe('GET /api/gocardless/confirm', () => {
   // Default pricing row returned by the DB pricing query in confirm.ts:
   // £100/year over 12 monthly payments → £10/month per payment.
   const defaultPricingRow = {
+    clubSlug: 'test-club',
     yearlyPriceInPence: 12000,
     intervalCount: 12,
     intervalUnit: 'monthly' as const,
@@ -184,7 +185,7 @@ describe('GET /api/gocardless/confirm', () => {
       mandateId = 'MND-1',
       existingSubscriptions = [],
       newSubscription = { id: 'SUB-1', status: 'active' },
-      brMetadata = { registration_id: 'reg_1', club_slug: 'test-club', reference: 'REF-1' },
+      brMetadata = { registration_id: 'reg_1', reference: 'REF-1' },
       capturedSubscriptionBody,
     } = overrides;
 
