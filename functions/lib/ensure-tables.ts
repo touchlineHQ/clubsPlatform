@@ -66,10 +66,13 @@ const PITCH_SEED_STATEMENTS = [
   `INSERT OR IGNORE INTO "club_config" ("id", "slug", "name", "active", "createdAt") VALUES ('club_demo', 'demo', 'Demo FC', 1, unixepoch() * 1000)`,
 ];
 
-// Defensive migrations for columns added after initial deploy
+// Defensive migrations for columns that have no corresponding D1 migration file.
+// DO NOT add columns here that are managed by a D1 migration — doing so causes
+// the D1 migration to fail ("duplicate column name") when Cloudflare Pages preview
+// deployments run ensureTables() against the production database before CI applies
+// the migration. primaryColor and secondaryColor are intentionally absent: they are
+// added by migrations 0009 and 0015 respectively.
 const COLUMN_MIGRATIONS = [
-  `ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`,
-  `ALTER TABLE "club_config" ADD COLUMN "secondaryColor" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "data" TEXT`,
   `ALTER TABLE "club_config" ADD COLUMN "seeded" INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE "team" ADD COLUMN "forConsolidation" INTEGER NOT NULL DEFAULT 0`,
