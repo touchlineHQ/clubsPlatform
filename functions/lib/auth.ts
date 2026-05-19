@@ -50,6 +50,7 @@ export function createAuth(
     baseURL: opts?.baseURL,
     trustedOrigins: [
       opts?.baseURL ?? "https://elbantams.pages.dev",
+      "https://*.clubsplatform.pages.dev",
       "http://localhost:5173",
       "http://localhost:8788",
     ],

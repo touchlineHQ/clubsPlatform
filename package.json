@@ -9,8 +9,9 @@
     "dev": "cd website && npm run dev",
     "build": "cd website && npm run build",
     "preview": "npx wrangler pages dev website/dist",
-    "db:migrate:local": "npx wrangler d1 migrations apply clubsPlatform-auth --local",
-    "db:migrate:prod": "npx wrangler d1 migrations apply clubsPlatform-auth --remote",
+    "db:migrate:local": "npx wrangler d1 migrations apply clubsplatform-auth --local --env production",
+    "db:migrate:preview": "npx wrangler d1 migrations apply clubsplatform-preview --remote --env preview",
+    "db:migrate:prod": "npx wrangler d1 migrations apply clubsplatform-auth --remote --env production",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"

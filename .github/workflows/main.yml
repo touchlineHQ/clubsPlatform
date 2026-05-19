@@ -24,13 +24,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
         working-directory: website
-      - name: Apply DB migrations
+      # Apply to preview first as a canary so a broken migration trips here
+      # before touching production data.
+      - name: Apply DB migrations (preview)
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
-          command: d1 migrations apply clubsplatform-auth --remote
+          command: d1 migrations apply clubsplatform-preview --remote --env preview
+      - name: Apply DB migrations (production)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4"
+          command: d1 migrations apply clubsplatform-auth --remote --env production
       - name: Build
         run: npm run build
         working-directory: website
