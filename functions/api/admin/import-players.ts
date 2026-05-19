@@ -20,6 +20,39 @@ interface ImportResult {
   errors: { fanId: string; reason: string }[];
 }
 
+export const IMPORT_LIMITS = {
+  maxRows: 5000,
+  maxStringLen: 200,
+  maxParentEmails: 10,
+} as const;
+
+function isStringOrMissing(v: unknown, max: number): boolean {
+  if (v === undefined || v === null) return true;
+  return typeof v === 'string' && v.length <= max;
+}
+
+function validateImportRow(row: unknown): string | null {
+  if (!row || typeof row !== 'object') return 'row is not an object';
+  const r = row as Record<string, unknown>;
+  if (typeof r.fanId !== 'string' || !r.fanId.trim()) return 'fanId is required';
+  if (r.fanId.length > IMPORT_LIMITS.maxStringLen) return 'fanId is too long';
+  if (!isStringOrMissing(r.ageGroup, IMPORT_LIMITS.maxStringLen)) return 'ageGroup is invalid';
+  if (!isStringOrMissing(r.teamName, IMPORT_LIMITS.maxStringLen)) return 'teamName is invalid';
+  if (!isStringOrMissing(r.registrationExpiry, IMPORT_LIMITS.maxStringLen)) return 'registrationExpiry is invalid';
+  if (!isStringOrMissing(r.registrationStatus, IMPORT_LIMITS.maxStringLen)) return 'registrationStatus is invalid';
+  if (!isStringOrMissing(r.playerEmail, IMPORT_LIMITS.maxStringLen)) return 'playerEmail is invalid';
+  if (r.parentEmails !== undefined && r.parentEmails !== null) {
+    if (!Array.isArray(r.parentEmails)) return 'parentEmails must be an array';
+    if (r.parentEmails.length > IMPORT_LIMITS.maxParentEmails) return 'too many parent emails';
+    for (const pe of r.parentEmails) {
+      if (typeof pe !== 'string' || pe.length > IMPORT_LIMITS.maxStringLen) {
+        return 'parentEmails contains an invalid value';
+      }
+    }
+  }
+  return null;
+}
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
@@ -34,6 +67,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const body = await context.request.json() as { rows?: unknown };
     if (!Array.isArray(body.rows)) {
       return json({ error: "Expected { rows: [] }" }, { status: 400 });
+    }
+    if (body.rows.length > IMPORT_LIMITS.maxRows) {
+      return json(
+        { error: `Too many rows (max ${IMPORT_LIMITS.maxRows})` },
+        { status: 400 },
+      );
+    }
+    for (let i = 0; i < body.rows.length; i++) {
+      const err = validateImportRow(body.rows[i]);
+      if (err) {
+        return json({ error: `Row ${i}: ${err}` }, { status: 400 });
+      }
     }
     rows = body.rows as ParsedPlayerRow[];
   } catch {

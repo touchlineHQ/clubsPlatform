@@ -289,6 +289,54 @@ describe('import-players POST', () => {
     const res = await importPlayersPost(ctx as any);
     expect(res.status).toBe(401);
   });
+
+  it('returns 400 when a row is missing fanId', async () => {
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/import-players',
+      { rows: [{ teamName: 'U11', parentEmails: [] }] },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await importPlayersPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/fanId/i);
+  });
+
+  it('returns 400 when parentEmails is not an array', async () => {
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/import-players',
+      { rows: [{ fanId: 'FAN001', parentEmails: 'not-an-array' }] },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await importPlayersPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/parentEmails/i);
+  });
+
+  it('returns 400 when rows exceed the max', async () => {
+    const db = makeDb();
+    const rows = Array.from({ length: 5001 }, (_, i) => ({
+      fanId: `F${i}`, teamName: 'U11', parentEmails: [],
+    }));
+    const req = postReq(
+      '/api/admin/import-players',
+      { rows },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await importPlayersPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: string };
+    expect(body.error).toMatch(/too many/i);
+  });
 });
 
 // ─── import-fixtures.ts ───────────────────────────────────────────────────────
