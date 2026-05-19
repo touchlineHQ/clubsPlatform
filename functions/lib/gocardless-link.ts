@@ -111,6 +111,8 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
           reference,
           tracking_info: `team:${teamName}|fan:${fanId}|type:${paymentType}`,
           billing_details: `${amountInPence}p-${intervalUnit}${totalCount ? `-x${totalCount}` : ''}`,
+          registration_id: registrationId,
+          ...(clubSlug ? { club_slug: clubSlug } : {}),
         },
       },
     }),
