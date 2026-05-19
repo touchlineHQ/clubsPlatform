@@ -31,7 +31,7 @@ app.all("/api/auth/*", async (c) => {
       posthog.captureException(e);
       await posthog.flush();
     }
-    return c.json({ error: "Auth error", details: String(e) }, 500);
+    return c.json({ error: "Auth error" }, 500);
   }
 });
 

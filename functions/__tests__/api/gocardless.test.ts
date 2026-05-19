@@ -161,23 +161,35 @@ describe('GET /api/gocardless/confirm', () => {
     return `https://example.com/api/gocardless/confirm?${qs}`;
   }
 
+  // Default pricing row returned by the DB pricing query in confirm.ts:
+  // £100/year over 12 monthly payments → £10/month per payment.
+  const defaultPricingRow = {
+    yearlyPriceInPence: 12000,
+    intervalCount: 12,
+    intervalUnit: 'monthly' as const,
+  };
+
   function makeFetchMock(overrides: {
     brStatus?: string;
     mandateId?: string;
     existingSubscriptions?: any[];
     newSubscription?: any;
+    /** Metadata returned on the billing-request GET. Defaults bind to the URL defaults. */
+    brMetadata?: Record<string, string>;
+    /** Captures the body of the POST /subscriptions call for assertions. */
+    capturedSubscriptionBody?: { value: any };
   } = {}) {
     const {
       brStatus = 'fulfilled',
       mandateId = 'MND-1',
       existingSubscriptions = [],
       newSubscription = { id: 'SUB-1', status: 'active' },
+      brMetadata = { registration_id: 'reg_1', club_slug: 'test-club', reference: 'REF-1' },
+      capturedSubscriptionBody,
     } = overrides;
 
-    let callIndex = 0;
     return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const urlStr = String(typeof url === 'object' && 'url' in url ? (url as Request).url : url);
-      callIndex++;
 
       // First call: GET billing request
       if (urlStr.includes('/billing_requests/BRQ-1') && (!init || !init.method || init.method === 'GET')) {
@@ -186,7 +198,7 @@ describe('GET /api/gocardless/confirm', () => {
             billing_requests: {
               id: 'BRQ-1',
               status: brStatus,
-              metadata: {},
+              metadata: brMetadata,
               links: { mandate_request_mandate: mandateId },
             },
           }),
@@ -201,7 +213,7 @@ describe('GET /api/gocardless/confirm', () => {
             billing_requests: {
               id: 'BRQ-1',
               status: 'fulfilled',
-              metadata: {},
+              metadata: brMetadata,
               links: { mandate_request_mandate: mandateId },
             },
           }),
@@ -217,8 +229,11 @@ describe('GET /api/gocardless/confirm', () => {
         );
       }
 
-      // Create subscription
+      // Create subscription — capture body so price-tampering tests can assert on it
       if (urlStr.includes('/subscriptions') && init?.method === 'POST') {
+        if (capturedSubscriptionBody && typeof init.body === 'string') {
+          capturedSubscriptionBody.value = JSON.parse(init.body).subscriptions;
+        }
         return new Response(
           JSON.stringify({ subscriptions: newSubscription }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -233,7 +248,7 @@ describe('GET /api/gocardless/confirm', () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal('fetch', fetchMock);
 
-    const db = makeDb({ first: null, run: { meta: { changes: 1 } } });
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
     const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
     const ctx = makeContext(
       new Request(makeConfirmUrl()),
@@ -253,7 +268,7 @@ describe('GET /api/gocardless/confirm', () => {
     const fetchMock = makeFetchMock({ brStatus: 'fulfilled' });
     vi.stubGlobal('fetch', fetchMock);
 
-    const db = makeDb({ first: null, run: { meta: { changes: 1 } } });
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
     const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
     const ctx = makeContext(new Request(makeConfirmUrl()), { env });
 
@@ -274,7 +289,7 @@ describe('GET /api/gocardless/confirm', () => {
     const fetchMock = makeFetchMock({ existingSubscriptions: [existingSub] });
     vi.stubGlobal('fetch', fetchMock);
 
-    const db = makeDb({ first: null, run: { meta: { changes: 1 } } });
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
     const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
     const ctx = makeContext(new Request(makeConfirmUrl()), { env });
 
@@ -315,18 +330,71 @@ describe('GET /api/gocardless/confirm', () => {
     expect(res.headers.get('location')).toContain('token_missing');
   });
 
-  it('redirects to payment-cancelled when amount is invalid', async () => {
-    const db = makeDb();
+  // --- P0#3 regression: price-tampering -------------------------------------
+
+  it('ignores tampered URL amount/interval/count and uses DB-derived pricing for the subscription', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // DB says: £100/year over 12 monthly payments → £10 (1000p) per payment
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
     const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
-    const ctx = makeContext(
-      new Request(makeConfirmUrl({ amount: 'not-a-number' })),
-      { env },
-    );
+
+    // Attacker tampers: tries to pay 1p once a year instead
+    const tamperedUrl = makeConfirmUrl({
+      amount: '1',
+      interval_unit: 'yearly',
+      count: '1',
+    });
+    const ctx = makeContext(new Request(tamperedUrl), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-success');
+
+    // The GoCardless subscription was created with the DB-derived values,
+    // not the URL-supplied ones.
+    expect(captured.value).toBeDefined();
+    expect(captured.value.amount).toBe(1000);
+    expect(captured.value.interval_unit).toBe('monthly');
+    expect(captured.value.count).toBe(12);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects legacy links without registration_id in billing-request metadata', async () => {
+    // Billing request created before PR 2's metadata stamping
+    const fetchMock = makeFetchMock({ brMetadata: { reference: 'REF-1' } });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({ first: defaultPricingRow });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
 
     const res = await confirmOnRequestGet(ctx as any);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/payment-cancelled');
-    expect(res.headers.get('location')).toContain('invalid_amount');
+    expect(res.headers.get('location')).toContain('legacy_link');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('redirects to payment-cancelled when the registration has no subscription level', async () => {
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+
+    // No pricing for this registration in the DB
+    const db = makeDb({ first: null });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-cancelled');
+    expect(res.headers.get('location')).toContain('no_level');
+
+    vi.unstubAllGlobals();
   });
 });
 

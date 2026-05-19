@@ -65,26 +65,24 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const origin = url.origin;
 
   const billingRequestId = url.searchParams.get('billing_request_id');
-  const reference = url.searchParams.get('reference');
-  const amountStr = url.searchParams.get('amount');
-  const intervalUnit = url.searchParams.get('interval_unit') as 'monthly' | 'weekly' | 'yearly' | null;
-  const countStr = url.searchParams.get('count');
-  const totalCount = countStr ? parseInt(countStr, 10) : NaN;
-  const subscriptionCount = Number.isInteger(totalCount) && totalCount > 0 ? totalCount : null;
+  const urlReference = url.searchParams.get('reference');
   const description = url.searchParams.get('description');
-  const clubSlug = url.searchParams.get('club_slug');
-  const registrationId = url.searchParams.get('registration_id') ?? '';
 
-  if (!billingRequestId || !reference || !amountStr) {
+  // NOTE: registration_id, club_slug, amount, interval_unit, count are
+  // deliberately NOT trusted from the URL — they're either read from the
+  // billing-request metadata (set server-side at link creation) or
+  // re-derived from the DB. See P0#3 in the go-live review.
+
+  if (!billingRequestId || !urlReference) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=missing_params`, 302);
   }
 
-  const amountInPence = parseInt(amountStr, 10);
-  if (isNaN(amountInPence) || amountInPence <= 0) {
-    return Response.redirect(`${origin}/#/payment-cancelled?reason=invalid_amount`, 302);
-  }
+  // We need the club_slug to look up the GC token, but we can't trust the URL
+  // value. The token lookup tolerates an initial guess from the URL — if it
+  // mismatches the metadata after fetch we redirect to cancelled.
+  const urlClubSlug = url.searchParams.get('club_slug');
 
-  const gcToken = await getSecret(env.DB, env, clubSlug, 'GC_ACCESS_TOKEN');
+  const gcToken = await getSecret(env.DB, env, urlClubSlug, 'GC_ACCESS_TOKEN');
   if (!gcToken) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=token_missing`, 302);
   }
@@ -110,6 +108,58 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   }
 
   let { billing_requests: br } = await brRes.json<{ billing_requests: GCBillingRequest }>();
+
+  // Server-side authoritative values — set in gocardless-link.ts when the
+  // billing request was created. URL params for these are ignored.
+  const registrationId = br.metadata?.registration_id ?? '';
+  const clubSlug = br.metadata?.club_slug ?? null;
+  const reference = br.metadata?.reference ?? urlReference;
+
+  if (!registrationId) {
+    // Legacy link created before metadata stamping (PR 2). The grace period
+    // is intentionally short — by the time these matter, payers have re-clicked.
+    return Response.redirect(`${origin}/#/payment-cancelled?reason=legacy_link`, 302);
+  }
+
+  // Re-derive the payment plan from the DB. Mirrors the join in
+  // functions/[clubSlug]/payments/[paymentType]/[fanId].ts but keyed by
+  // registration id (since that's what's in the metadata).
+  const pricing = await env.DB
+    .prepare(
+      `SELECT sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit
+         FROM player_registration pr
+         LEFT JOIN team_status_subscription_level tssl
+                ON tssl.clubSlug = pr.clubSlug
+               AND tssl.teamName = pr.teamName
+               AND tssl.registrationStatus = pr.registrationStatus
+         LEFT JOIN status_subscription_level ssl
+                ON ssl.clubSlug = pr.clubSlug
+               AND ssl.registrationStatus = pr.registrationStatus
+         LEFT JOIN team_subscription_level tsl
+                ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
+         LEFT JOIN subscription_level sl
+                ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+        WHERE pr.id = ?`
+    )
+    .bind(registrationId)
+    .first<{
+      yearlyPriceInPence: number | null;
+      intervalCount: number | null;
+      intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
+    }>();
+
+  if (
+    !pricing ||
+    pricing.yearlyPriceInPence == null ||
+    pricing.intervalCount == null ||
+    !pricing.intervalUnit
+  ) {
+    return Response.redirect(`${origin}/#/payment-cancelled?reason=no_level`, 302);
+  }
+
+  const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
+  const intervalUnit = pricing.intervalUnit;
+  const subscriptionCount = pricing.intervalCount;
 
   if (br.status !== 'fulfilled') {
     const fulfilRes = await fetch(
@@ -166,7 +216,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         console.error('Failed to upsert payment record (existing sub):', e);
       }
       return Response.redirect(
-        `${origin}/#/payment-success?mandate=${mandateId}&subscription=${match.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit || 'monthly'}&existing=1`,
+        `${origin}/#/payment-success?mandate=${mandateId}&subscription=${match.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}&existing=1`,
         302
       );
     }
@@ -179,9 +229,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       subscriptions: {
         amount: amountInPence,
         currency: 'GBP',
-        interval_unit: intervalUnit || 'monthly',
+        interval_unit: intervalUnit,
         interval: 1,
-        ...(subscriptionCount !== null ? { count: subscriptionCount } : {}),
+        count: subscriptionCount,
         name: description || reference,
         metadata: { reference, customer_ref: reference },
         links: { mandate: mandateId },
@@ -239,13 +289,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         mandate_id: mandateId,
         subscription_id: sub.id,
         amount_in_pence: amountInPence,
-        interval_unit: intervalUnit || 'monthly',
+        interval_unit: intervalUnit,
       },
     });
   }
 
   return Response.redirect(
-    `${origin}/#/payment-success?mandate=${mandateId}&subscription=${sub.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit || 'monthly'}`,
+    `${origin}/#/payment-success?mandate=${mandateId}&subscription=${sub.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}`,
     302
   );
 };

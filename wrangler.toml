@@ -10,14 +10,17 @@ compatibility_flags = [ "nodejs_compat" ]
 # applied — top-level d1 bindings are intentionally NOT defined so that
 # every deploy uses an explicit, environment-scoped database.
 #
-# SECURITY: BETTER_AUTH_SECRET is still here for backwards compatibility;
-# PR 2 will move it to per-env `wrangler pages secret put`. Rotate the value
-# at the same time — anything committed to this file is compromised.
+# SECRETS: BETTER_AUTH_SECRET, SECRETS_ENCRYPTION_KEY, and
+# SECRETS_TRANSPORT_PRIVATE_KEY must be set per environment via
+#   wrangler pages secret put <NAME> --project-name clubsplatform
+#   wrangler pages secret put <NAME> --project-name clubsplatform --env preview
+# with **different** values per env. For local dev add them to a gitignored
+# .dev.vars file.
 # ---------------------------------------------------------------------------
 [vars]
-BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 MULTI_CLUB = "true"
-# GoCardless environment: "sandbox" for testing, "live" for production
+# GoCardless environment: "sandbox" for testing, "live" for production.
+# The flip to "live" in [env.production.vars] is the final manual go-live toggle.
 GC_ENVIRONMENT = "sandbox"
 # SECRETS_ENCRYPTION_KEY must be set via Cloudflare dashboard secrets (NOT here) — 64 hex chars (32 bytes)
 # For local dev, add to .dev.vars: SECRETS_ENCRYPTION_KEY=<output of: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
@@ -43,10 +46,9 @@ migrations_table = "migrations"
 migrations_dir = "migrations"
 
 [env.production.vars]
-BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 MULTI_CLUB = "true"
-# Stays on sandbox in PR 1 — flip to "live" in PR 2 once the price-tampering
-# fix and other P0 items have shipped and are verified.
+# Final manual go-live toggle: flip to "live" via Cloudflare dashboard or by
+# editing this line once all other go-live checks have passed.
 GC_ENVIRONMENT = "sandbox"
 
 # ---------------------------------------------------------------------------
@@ -63,9 +65,5 @@ migrations_table = "migrations"
 migrations_dir = "migrations"
 
 [env.preview.vars]
-# Use a different BETTER_AUTH_SECRET in preview once secrets are migrated to
-# `wrangler pages secret put --env preview` (PR 2). Keeping the shared value
-# here only for transition.
-BETTER_AUTH_SECRET = "62f48b394825b463f73394328543d9c2c7584e861af297828300da636a312d42"
 MULTI_CLUB = "true"
 GC_ENVIRONMENT = "sandbox"
