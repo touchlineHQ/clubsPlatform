@@ -1,5 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
+import { getPostHog } from "../lib/posthog";
 
 type BookingRow = {
   id: string;
@@ -95,6 +96,16 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       .prepare(`DELETE FROM booking WHERE id = ?`)
       .bind(id),
   ]);
+
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'booking deleted',
+      properties: { booking_id: id, club_slug: clubSlug },
+    });
+  }
 
   return json({ ok: true });
 };

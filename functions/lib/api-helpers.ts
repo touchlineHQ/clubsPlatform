@@ -10,7 +10,9 @@ export interface Env {
   GC_ENVIRONMENT?: string;
   SECRETS_ENCRYPTION_KEY: string;
   SECRETS_TRANSPORT_PRIVATE_KEY: string; // base64 PKCS8 DER — Cloudflare secret
-  SECRETS_TRANSPORT_PUBLIC_KEY: string;  // base64 SPKI DER — plain env var
+  SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
+  POSTHOG_API_KEY?: string;
+  POSTHOG_HOST?: string;
 }
 
 export function json(res: unknown, init?: ResponseInit): Response {
@@ -45,10 +47,15 @@ export function getClubSlug(request: Request): string | null {
   return request.headers.get("X-Club-Slug") || null;
 }
 
-export async function requireAdmin(context: EventContext<Env, string, unknown>) {
-  const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
+export async function requireAdmin(
+  context: EventContext<Env, string, unknown>,
+) {
+  const baseURL =
+    context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
-  const session = await auth.api.getSession({ headers: context.request.headers });
+  const session = await auth.api.getSession({
+    headers: context.request.headers,
+  });
   if (!session) {
     return {
       error: json({ error: "Not authenticated" }, { status: 401 }),
@@ -77,10 +84,15 @@ export async function requireAdmin(context: EventContext<Env, string, unknown>) 
   return { session } as const;
 }
 
-export async function requireManagerOrAdmin(context: EventContext<Env, string, unknown>) {
-  const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
+export async function requireManagerOrAdmin(
+  context: EventContext<Env, string, unknown>,
+) {
+  const baseURL =
+    context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
-  const session = await auth.api.getSession({ headers: context.request.headers });
+  const session = await auth.api.getSession({
+    headers: context.request.headers,
+  });
   if (!session) {
     return {
       error: json({ error: "Not authenticated" }, { status: 401 }),
@@ -90,7 +102,10 @@ export async function requireManagerOrAdmin(context: EventContext<Env, string, u
   const role = user.role as string;
   if (role !== "admin" && role !== "manager") {
     return {
-      error: json({ error: "Manager or admin access required" }, { status: 403 }),
+      error: json(
+        { error: "Manager or admin access required" },
+        { status: 403 },
+      ),
     } as const;
   }
 
@@ -108,13 +123,19 @@ export async function requireManagerOrAdmin(context: EventContext<Env, string, u
 }
 
 export async function requireAuth(context: EventContext<Env, string, unknown>) {
-  const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
+  const baseURL =
+    context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
-  const session = await auth.api.getSession({ headers: context.request.headers });
+  const session = await auth.api.getSession({
+    headers: context.request.headers,
+  });
   if (!session) {
     return {
       error: json({ error: "Not authenticated" }, { status: 401 }),
     } as const;
   }
-  return { session, role: (session.user as Record<string, unknown>).role as string } as const;
+  return {
+    session,
+    role: (session.user as Record<string, unknown>).role as string,
+  } as const;
 }

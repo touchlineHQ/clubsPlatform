@@ -1,6 +1,7 @@
 import { ensureTables } from '../../../lib/ensure-tables';
 import type { Env } from '../../../lib/api-helpers';
 import { createGoCardlessLink } from '../../../lib/gocardless-link';
+import { getPostHog } from '../../../lib/posthog';
 
 const ALLOWED_TYPES = new Set(['SUBS']);
 
@@ -81,6 +82,20 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   if (registrations.length === 0) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=player_not_found`, 302);
+  }
+
+  const posthog = getPostHog(env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: fanId,
+      event: 'payment page viewed',
+      properties: {
+        club_slug: clubSlug,
+        payment_type: paymentType,
+        fan_id: fanId,
+        registration_count: registrations.length,
+      },
+    });
   }
 
   // Resolve which registration to use

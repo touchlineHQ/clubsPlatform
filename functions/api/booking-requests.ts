@@ -1,4 +1,5 @@
 import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
+import { getPostHog } from "../lib/posthog";
 
 type BookingRequestRow = {
   id: string;
@@ -181,6 +182,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     .bind(id, clubSlug, userId, teamName, teamSlug, teamLeague, date, timeStart, timeEnd, format, notes, ts, ts)
     .run();
 
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'booking request submitted',
+      properties: { club_slug: clubSlug, booking_request_id: id, team_name: teamName, date, format },
+    });
+  }
+
   return json({ ok: true, id }, { status: 201 });
 };
 
@@ -293,6 +303,24 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
         .bind(ts, id),
     ]);
 
+    const adminId = (result.session.user as Record<string, unknown>).id as string;
+    const posthog = getPostHog(context.env);
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: adminId,
+        event: 'booking request approved',
+        properties: {
+          booking_request_id: id,
+          booking_id: bookingId,
+          club_slug: reqClubSlug?.clubSlug ?? null,
+          team_name: fullRequest.teamName,
+          date: request.date,
+          format: request.format,
+          pitch_id: pitchId,
+        },
+      });
+    }
+
     return json({ ok: true, bookingId });
   }
 
@@ -317,6 +345,16 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       )
       .bind(reason, ts, id)
       .run();
+
+    const adminId = (result.session.user as Record<string, unknown>).id as string;
+    const posthog = getPostHog(context.env);
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: adminId,
+        event: 'booking request declined',
+        properties: { booking_request_id: id, decline_reason: reason },
+      });
+    }
 
     return json({ ok: true });
   }

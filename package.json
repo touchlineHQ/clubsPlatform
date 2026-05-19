@@ -9,15 +9,17 @@
     "dev": "cd website && npm run dev",
     "build": "cd website && npm run build",
     "preview": "npx wrangler pages dev website/dist",
-    "db:migrate:local": "npx wrangler d1 migrations apply clubsPlatform-auth --local",
-    "db:migrate:prod": "npx wrangler d1 migrations apply clubsPlatform-auth --remote",
+    "db:migrate:local": "npx wrangler d1 migrations apply clubsplatform-auth --local --env production",
+    "db:migrate:preview": "npx wrangler d1 migrations apply clubsplatform-preview --remote --env preview",
+    "db:migrate:prod": "npx wrangler d1 migrations apply clubsplatform-auth --remote --env production",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest"
   },
   "dependencies": {
     "better-auth": "^1.5.6",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "posthog-node": "^5.34.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241230.0",

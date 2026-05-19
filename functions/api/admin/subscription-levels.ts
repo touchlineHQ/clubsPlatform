@@ -1,5 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
+import { getPostHog } from "../../lib/posthog";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
 const INTERVAL_UNITS: ReadonlyArray<IntervalUnit> = ["weekly", "monthly", "yearly"];
@@ -104,6 +105,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return json({ error: `A subscription level named "${name}" already exists` }, { status: 409 });
     }
     throw e;
+  }
+
+  const adminId = (auth.session.user as Record<string, unknown>).id as string;
+  const posthog = getPostHog(context.env);
+  if (posthog) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'subscription level created',
+      properties: { club_slug: clubSlug, level_id: id, level_name: name, yearly_price_in_pence: yearlyPriceInPence, interval_count: intervalCount, interval_unit: intervalUnit },
+    });
   }
 
   return json({
