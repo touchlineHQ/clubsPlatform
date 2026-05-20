@@ -433,7 +433,17 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
       </Box>
 
       {/* ───── Scrollable middle ───── */}
-      <Box style={{ flex: 1, overflowY: 'auto', padding: '12px 0 12px', display: 'flex', flexDirection: 'column' }}>
+      <Box
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '12px 0 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'var(--cp-surface-text-ghost) transparent',
+        }}
+      >
         {/* Top group — VIEW filter + MENU nav. flexShrink:0 so it keeps its
             intrinsic height when the bottom group also fills out. */}
         <Box style={{ flexShrink: 0 }}>

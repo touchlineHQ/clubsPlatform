@@ -150,6 +150,6 @@ describe('createGoCardlessLink', () => {
     await createGoCardlessLink({ ...baseInput, db, count: 10 });
 
     const firstCallBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
-    expect(firstCallBody.billing_requests.metadata.billing_details).toContain('x10');
+    expect(firstCallBody.billing_requests.metadata.tracking_info).toContain('x10');
   });
 });
