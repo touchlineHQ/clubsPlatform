@@ -23,6 +23,10 @@ import { onRequestPost } from '../../api/gocardless/create-link';
 import { onRequestGet as confirmOnRequestGet } from '../../api/gocardless/confirm';
 // The [clubSlug]/payments/[paymentType]/[fanId].ts handler uses bracket-named paths
 import { onRequestGet as paymentRedirectOnRequestGet } from '../../[clubSlug]/payments/[paymentType]/[fanId]';
+import {
+  onRequestGet as fanEntryOnRequestGet,
+  onRequestPost as fanEntryOnRequestPost,
+} from '../../[clubSlug]/payments/index';
 import { createGoCardlessLink } from '../../lib/gocardless-link';
 
 const mockCreateGoCardlessLink = vi.mocked(createGoCardlessLink);
@@ -738,5 +742,143 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(html).toContain('href=');
     expect(html).toContain('Set up payment');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
+});
+
+// ─── GET/POST /[clubSlug]/payments (FAN entry) ───────────────────────────────
+
+describe('GET /[clubSlug]/payments', () => {
+  it('returns HTML form with the club name when club exists', async () => {
+    const db = makeDb({ first: { slug: 'test-club', name: 'Test Club FC' } });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments'),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const html = await res.text();
+    expect(html).toContain('Test Club FC');
+    expect(html).toContain('name="fanId"');
+    expect(html).toContain('action="/test-club/payments"');
+    expect(html).toContain('method="POST"');
+  });
+
+  it('redirects to payment-cancelled when club is unknown', async () => {
+    const db = makeDb({ first: null });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/unknown/payments'),
+      { env, params: { clubSlug: 'unknown' } },
+    );
+
+    const res = await fanEntryOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-cancelled');
+    expect(res.headers.get('location')).toContain('unknown_club');
+  });
+
+  it('renders the not_found error message and prefills the FAN', async () => {
+    const db = makeDb({ first: { slug: 'test-club', name: 'Test Club FC' } });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments?error=not_found&fan=BADFAN'),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("couldn&#x27;t find a registration".replace('&#x27;', "'"));
+    expect(html).toContain('BADFAN');
+    expect(html).toContain('value="BADFAN"');
+  });
+});
+
+describe('POST /[clubSlug]/payments', () => {
+  function fanForm(fanId: string): Request {
+    const body = new URLSearchParams({ fanId });
+    return new Request('https://example.com/test-club/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+  }
+
+  it('redirects to /<clubSlug>/payments/SUBS/<fanId> when the FAN exists', async () => {
+    const db = makeDb({
+      first: [{ slug: 'test-club' }, { fanId: 'FAN001' }],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      fanForm('FAN001'),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestPost(ctx as any);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://example.com/test-club/payments/SUBS/FAN001');
+  });
+
+  it('redirects back to the form with error=not_found when the FAN is unknown', async () => {
+    const db = makeDb({
+      first: [{ slug: 'test-club' }, null],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      fanForm('NOPE'),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestPost(ctx as any);
+    expect(res.status).toBe(303);
+    const location = res.headers.get('location') ?? '';
+    expect(location).toContain('/test-club/payments');
+    expect(location).toContain('error=not_found');
+    expect(location).toContain('fan=NOPE');
+  });
+
+  it('redirects back with error=empty when FAN is blank', async () => {
+    const db = makeDb({ first: { slug: 'test-club' } });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      fanForm('   '),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestPost(ctx as any);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toContain('error=empty');
+  });
+
+  it('redirects to payment-cancelled when club is unknown', async () => {
+    const db = makeDb({ first: null });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      fanForm('FAN001'),
+      { env, params: { clubSlug: 'unknown' } },
+    );
+
+    const res = await fanEntryOnRequestPost(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-cancelled');
+    expect(res.headers.get('location')).toContain('unknown_club');
+  });
+
+  it('trims whitespace around the submitted FAN', async () => {
+    const db = makeDb({
+      first: [{ slug: 'test-club' }, { fanId: 'FAN001' }],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      fanForm('  FAN001  '),
+      { env, params: { clubSlug: 'test-club' } },
+    );
+
+    const res = await fanEntryOnRequestPost(ctx as any);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toBe('https://example.com/test-club/payments/SUBS/FAN001');
   });
 });
