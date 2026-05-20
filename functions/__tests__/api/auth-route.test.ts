@@ -47,8 +47,9 @@ describe('onRequest /api/auth/*', () => {
     const res = await onRequest(ctx as never);
     expect(res.status).toBe(400);
     expect(authHandler).not.toHaveBeenCalled();
-    const body = await res.json() as { error: string };
-    expect(body.error).toMatch(/password/i);
+    const body = await res.json() as { message: string; code: string };
+    expect(body.message).toMatch(/password/i);
+    expect(body.code).toBe('VALIDATION_ERROR');
   });
 
   it('rejects a signup with a malformed email before calling the auth handler', async () => {

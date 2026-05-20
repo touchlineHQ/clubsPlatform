@@ -33,11 +33,11 @@ app.all("/api/auth/*", async (c) => {
       try {
         parsed = JSON.parse(bodyText);
       } catch {
-        return c.json({ error: "Invalid JSON body" }, 400);
+        return c.json({ message: "Invalid JSON body", code: "INVALID_JSON" }, 400);
       }
       const validationError = validateSignupBody(parsed as Record<string, unknown>);
       if (validationError) {
-        return c.json({ error: validationError }, 400);
+        return c.json({ message: validationError, code: "VALIDATION_ERROR" }, 400);
       }
       const forwarded = new Request(c.req.raw.url, {
         method: c.req.raw.method,
