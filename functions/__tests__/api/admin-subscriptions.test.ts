@@ -11,6 +11,7 @@ vi.mock('../../lib/auth', () => ({
 import {
   onRequestGet as levelsGet,
   onRequestPost as levelsPost,
+  validateStartDate,
 } from '../../api/admin/subscription-levels';
 
 describe('subscription-levels GET', () => {
@@ -109,6 +110,74 @@ describe('subscription-levels POST', () => {
     const body = await res.json() as any;
     expect(body.error).toMatch(/yearlyPriceInPence/);
   });
+
+  it('returns 400 when startDate is malformed', async () => {
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/subscription-levels',
+      { name: 'Junior Annual', yearlyPriceInPence: 5000, startDate: 'not-a-date' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await levelsPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/startDate/);
+  });
+
+  it('persists a valid startDate', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = postReq(
+      '/api/admin/subscription-levels',
+      { name: 'Junior Annual', yearlyPriceInPence: 5000, startDate: '2030-09-01' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await levelsPost(ctx as any);
+    expect(res.status).toBe(201);
+    const body = await res.json() as any;
+    expect(body.level.startDate).toBe('2030-09-01');
+  });
+
+  it('stores null startDate when omitted', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = postReq(
+      '/api/admin/subscription-levels',
+      { name: 'Junior Annual', yearlyPriceInPence: 5000 },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await levelsPost(ctx as any);
+    expect(res.status).toBe(201);
+    const body = await res.json() as any;
+    expect(body.level.startDate).toBeNull();
+  });
+});
+
+describe('validateStartDate', () => {
+  it('accepts null/undefined/empty', () => {
+    expect(validateStartDate(null)).toEqual({ ok: true, value: null });
+    expect(validateStartDate(undefined)).toEqual({ ok: true, value: null });
+    expect(validateStartDate('')).toEqual({ ok: true, value: null });
+  });
+
+  it('accepts a YYYY-MM-DD date string', () => {
+    expect(validateStartDate('2024-09-01')).toEqual({ ok: true, value: '2024-09-01' });
+  });
+
+  it('rejects malformed strings', () => {
+    expect(validateStartDate('2024/09/01').ok).toBe(false);
+    expect(validateStartDate('24-09-01').ok).toBe(false);
+    expect(validateStartDate('nope').ok).toBe(false);
+  });
+
+  it('rejects non-string input', () => {
+    expect(validateStartDate(12345).ok).toBe(false);
+    expect(validateStartDate(true).ok).toBe(false);
+  });
 });
 
 // ─── subscription-levels/[id].ts ─────────────────────────────────────────────
@@ -158,6 +227,56 @@ describe('subscription-levels/[id] PUT', () => {
     expect(res.status).toBe(404);
     const body = await res.json() as any;
     expect(body.error).toMatch(/not found/);
+  });
+
+  it('updates startDate when provided', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = putReq(
+      '/api/admin/subscription-levels/level_1',
+      { startDate: '2030-09-01' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, {
+      env: { DB: db as any },
+      params: { id: 'level_1' },
+    });
+
+    const res = await levelPut(ctx as any);
+    expect(res.status).toBe(200);
+  });
+
+  it('clears startDate when explicitly set to null', async () => {
+    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const req = putReq(
+      '/api/admin/subscription-levels/level_1',
+      { startDate: null },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, {
+      env: { DB: db as any },
+      params: { id: 'level_1' },
+    });
+
+    const res = await levelPut(ctx as any);
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 400 when startDate is malformed on PUT', async () => {
+    const db = makeDb();
+    const req = putReq(
+      '/api/admin/subscription-levels/level_1',
+      { startDate: 'nope' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, {
+      env: { DB: db as any },
+      params: { id: 'level_1' },
+    });
+
+    const res = await levelPut(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/startDate/);
   });
 
   it('returns 400 when no updatable fields are supplied', async () => {

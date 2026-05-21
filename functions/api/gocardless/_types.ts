@@ -47,5 +47,7 @@ export interface CreateLinkBody {
   intervalUnit: 'monthly' | 'weekly' | 'yearly';
   /** Optional total number of payments (passed through to the GC subscription `count`). */
   count?: number;
+  /** YYYY-MM-DD. Configured first payment date. */
+  startDate?: string | null;
   description?: string;
 }

@@ -3,6 +3,7 @@ import { randomId, nowMs } from '../../lib/api-helpers';
 import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
+import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
 
 async function upsertPaymentRecord(
   db: D1Database,
@@ -126,7 +127,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // a payment row against a club they don't own.
   const pricing = await env.DB
     .prepare(
-      `SELECT pr.clubSlug, sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit
+      `SELECT pr.clubSlug, sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate
          FROM player_registration pr
          LEFT JOIN team_status_subscription_level tssl
                 ON tssl.clubSlug = pr.clubSlug
@@ -147,6 +148,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       yearlyPriceInPence: number | null;
       intervalCount: number | null;
       intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
+      startDate: string | null;
     }>();
 
   if (
@@ -163,6 +165,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
   const intervalUnit = pricing.intervalUnit;
   const subscriptionCount = pricing.intervalCount;
+  const resolvedStartDate = resolveSubscriptionStartDate(pricing.startDate);
 
   if (br.status !== 'fulfilled') {
     const fulfilRes = await fetch(
@@ -238,6 +241,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         name: description || reference,
         metadata: { reference, customer_ref: reference },
         links: { mandate: mandateId },
+        ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },
     }),
   });

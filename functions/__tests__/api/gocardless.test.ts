@@ -6,14 +6,18 @@ vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
 
-vi.mock('../../lib/gocardless-link', () => ({
-  createGoCardlessLink: vi.fn(async () => ({
-    ok: true,
-    authorisationUrl: 'https://gocardless.com/auth/123',
-    reference: 'REF-1',
-    billingRequestId: 'BRQ-1',
-  })),
-}));
+vi.mock('../../lib/gocardless-link', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/gocardless-link')>();
+  return {
+    ...actual,
+    createGoCardlessLink: vi.fn(async () => ({
+      ok: true,
+      authorisationUrl: 'https://gocardless.com/auth/123',
+      reference: 'REF-1',
+      billingRequestId: 'BRQ-1',
+    })),
+  };
+});
 
 vi.mock('../../lib/secrets', () => ({
   getSecret: vi.fn(async () => 'live-token'),
@@ -401,6 +405,45 @@ describe('GET /api/gocardless/confirm', () => {
 
     vi.unstubAllGlobals();
   });
+
+  it('forwards a future startDate as the GoCardless subscription start_date', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // A start date far in the future so resolveSubscriptionStartDate keeps it.
+    const futureDate = `${new Date().getUTCFullYear() + 5}-09-01`;
+    const db = makeDb({
+      first: { ...defaultPricingRow, startDate: futureDate },
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(captured.value.start_date).toBe(futureDate);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('omits start_date when the subscription level has no configured startDate', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({
+      first: { ...defaultPricingRow, startDate: null },
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    await confirmOnRequestGet(ctx as any);
+    expect(captured.value.start_date).toBeUndefined();
+
+    vi.unstubAllGlobals();
+  });
 });
 
 // ─── GET /[clubSlug]/payments/[paymentType]/[fanId] ──────────────────────────
@@ -430,7 +473,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(res.headers.get('location')).toContain('invalid_url');
   });
 
-  it('redirects to payment-success with amount=0 when active payment exists but registration has no pricing', async () => {
+  it('redirects to payment-success without amount when active payment exists, regardless of registration pricing', async () => {
     const unpricedRegistration = {
       ...sampleRegistration,
       levelId: null,
@@ -453,7 +496,8 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     const location = res.headers.get('location') ?? '';
     expect(location).toContain('/payment-success');
     expect(location).toContain('existing=1');
-    expect(location).toContain('amount=0');
+    expect(location).not.toContain('amount=');
+    expect(location).not.toContain('interval_unit=');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 
@@ -508,6 +552,31 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(callArg.paymentType).toBe('SUBS');
     expect(callArg.intervalUnit).toBe('monthly');
     expect(callArg.count).toBe(12);
+  });
+
+  it('forwards startDate from the registration row into createGoCardlessLink', async () => {
+    mockCreateGoCardlessLink.mockResolvedValue({
+      ok: true,
+      authorisationUrl: 'https://gc.com/auth/1',
+      reference: 'R1',
+      billingRequestId: 'B1',
+    });
+
+    const regWithStartDate = { ...sampleRegistration, startDate: '2030-09-01' };
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[regWithStartDate]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    await paymentRedirectOnRequestGet(ctx as any);
+
+    const callArg = mockCreateGoCardlessLink.mock.calls[0][0];
+    expect(callArg.startDate).toBe('2030-09-01');
   });
 
   it('redirects to payment-cancelled when club is not found', async () => {
@@ -701,6 +770,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(location).toContain('ref=REF-SUB-ABCD1234');
     expect(location).not.toContain('mandate=');
     expect(location).not.toContain('subscription=');
+    expect(location).not.toContain('amount=');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 

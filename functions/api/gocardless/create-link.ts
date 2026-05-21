@@ -30,6 +30,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     amountInPence: body.amountInPence,
     intervalUnit: body.intervalUnit ?? 'monthly',
     count: body.count,
+    startDate: body.startDate,
     description: body.description,
     origin: new URL(request.url).origin,
   });
