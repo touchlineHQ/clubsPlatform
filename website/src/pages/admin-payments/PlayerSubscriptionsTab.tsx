@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import {
   ActionIcon, Alert, Badge, Box, Button, Center, Code, Divider, Group,
-  Loader, Paper, Select, SimpleGrid, Stack, Text, TextInput, Tooltip,
+  Loader, NumberInput, Paper, Select, SimpleGrid, Stack, Text, Tooltip,
 } from '@mantine/core';
+import { DatePickerInput } from '@mantine/dates';
 import {
   IconAlertCircle, IconCheck, IconCopy,
   IconExternalLink, IconReceipt,
 } from '@tabler/icons-react';
 import { clubDesign } from '../../theme';
 import {
-  INTERVAL_OPTIONS, type IntervalUnit,
+  formatGBP, INTERVAL_OPTIONS, type IntervalUnit,
   type PlayerPaymentRow, type PlayerRegistrationRow,
 } from './types';
 
@@ -26,9 +27,10 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
 
   const [selectedRegId, setSelectedRegId] = useState<string | null>(null);
-  const [amountGbp, setAmountGbp] = useState('');
+  const [totalGbp, setTotalGbp] = useState<number | string>('');
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('monthly');
-  const [paymentCount, setPaymentCount] = useState<string>('');
+  const [paymentCount, setPaymentCount] = useState<number | string>('');
+  const [startDate, setStartDate] = useState<string | null>(null);
   const [autofilled, setAutofilled] = useState(false);
 
   const [generating, setGenerating] = useState(false);
@@ -69,14 +71,15 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
 
     const reg = registrations.find(r => r.registrationId === regId);
     if (reg && reg.yearlyPriceInPence != null && reg.intervalCount != null && reg.intervalUnit) {
-      const perPence = Math.round(reg.yearlyPriceInPence / Math.max(1, reg.intervalCount));
-      setAmountGbp((perPence / 100).toFixed(2));
+      setTotalGbp(reg.yearlyPriceInPence / 100);
       setIntervalUnit(reg.intervalUnit);
-      setPaymentCount(String(reg.intervalCount));
+      setPaymentCount(reg.intervalCount);
+      setStartDate(reg.startDate ?? null);
       setAutofilled(true);
     } else {
-      setAmountGbp('');
+      setTotalGbp('');
       setPaymentCount('');
+      setStartDate(null);
       setAutofilled(false);
     }
   };
@@ -85,30 +88,33 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
     ? payments.filter(p => p.registrationId === selectedRegId && p.reference.includes('-SUBS'))
     : [];
 
-  const amountValid = () => {
-    const n = parseFloat(amountGbp);
-    return !isNaN(n) && n > 0;
-  };
-  const canGenerate = !!selectedRegId && amountValid();
+  const totalNum = typeof totalGbp === 'string' ? parseFloat(totalGbp) : totalGbp;
+  const countNum = typeof paymentCount === 'string' ? parseInt(paymentCount, 10) : paymentCount;
+  const hasValidTotal = Number.isFinite(totalNum) && totalNum > 0;
+  const hasValidCount = Number.isInteger(countNum) && countNum > 0;
+  const perPaymentPence = hasValidTotal && hasValidCount
+    ? Math.round((totalNum * 100) / countNum)
+    : null;
+  const canGenerate = !!selectedRegId && hasValidTotal && hasValidCount;
 
   const handleGenerate = async () => {
-    if (!canGenerate || !selectedReg) return;
+    if (!canGenerate || !selectedReg || perPaymentPence == null) return;
     setGenerating(true);
     setGenError('');
     setGeneratedLink('');
     setGeneratedRef('');
 
     try {
-      const countNum = paymentCount ? parseInt(paymentCount, 10) : NaN;
       const res = await fetch('/api/gocardless/create-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({
           registrationId: selectedRegId,
           paymentType: 'SUBS',
-          amountInPence: Math.round(parseFloat(amountGbp) * 100),
+          amountInPence: perPaymentPence,
           intervalUnit,
-          ...(Number.isInteger(countNum) && countNum > 0 ? { count: countNum } : {}),
+          count: countNum,
+          ...(startDate ? { startDate } : {}),
         }),
       });
       const data = await res.json() as { authorisation_url?: string; reference?: string; error?: string };
@@ -213,14 +219,29 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
             </Alert>
           )}
 
-          <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
-            <TextInput
-              label="Amount (£)"
-              placeholder="e.g. 25.00"
-              value={amountGbp}
-              onChange={e => { setAmountGbp(e.target.value); setAutofilled(false); }}
+          <SimpleGrid cols={{ base: 1, xs: 2, sm: 2, md: 4 }} spacing="md" verticalSpacing="md">
+            <NumberInput
+              label="Total (£)"
+              description="Total over all payments"
+              placeholder="e.g. 250"
+              value={totalGbp}
+              onChange={v => { setTotalGbp(v); setAutofilled(false); }}
+              min={0}
+              decimalScale={2}
+              fixedDecimalScale={false}
+              thousandSeparator=","
+              prefix="£"
               radius="md"
-              leftSection={<Text size="sm" c="dimmed">£</Text>}
+            />
+            <NumberInput
+              label="Number of payments"
+              description="e.g. 10 instalments"
+              placeholder="e.g. 10"
+              value={paymentCount}
+              onChange={v => { setPaymentCount(v); setAutofilled(false); }}
+              min={1}
+              max={200}
+              radius="md"
             />
             <Select
               label="Interval"
@@ -229,15 +250,27 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
               onChange={v => { setIntervalUnit((v as IntervalUnit) ?? 'monthly'); setAutofilled(false); }}
               radius="md"
             />
-            <TextInput
-              label="Number of payments"
-              description="Leave blank for unlimited"
-              placeholder="e.g. 10"
-              value={paymentCount}
-              onChange={e => { setPaymentCount(e.target.value.replace(/[^0-9]/g, '')); setAutofilled(false); }}
+            <DatePickerInput
+              label="First payment date"
+              description="Defaults to next month if past"
+              placeholder="Pick a date"
+              value={startDate}
+              onChange={v => { setStartDate(v); setAutofilled(false); }}
+              clearable
               radius="md"
+              valueFormat="DD MMM YYYY"
             />
           </SimpleGrid>
+
+          {perPaymentPence != null && (
+            <Alert color="blue" variant="light" radius="md">
+              <Text size="sm">
+                Player pays <strong>{formatGBP(perPaymentPence)}</strong> per{' '}
+                {intervalUnit === 'weekly' ? 'week' : intervalUnit === 'yearly' ? 'year' : 'month'} for{' '}
+                <strong>{countNum}</strong> payment{countNum === 1 ? '' : 's'}.
+              </Text>
+            </Alert>
+          )}
 
           {existingForSelected.length > 0 && (
             <Alert color="orange" variant="light" radius="md">

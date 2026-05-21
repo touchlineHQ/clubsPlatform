@@ -6,14 +6,18 @@ vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
 
-vi.mock('../../lib/gocardless-link', () => ({
-  createGoCardlessLink: vi.fn(async () => ({
-    ok: true,
-    authorisationUrl: 'https://gocardless.com/auth/123',
-    reference: 'REF-1',
-    billingRequestId: 'BRQ-1',
-  })),
-}));
+vi.mock('../../lib/gocardless-link', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/gocardless-link')>();
+  return {
+    ...actual,
+    createGoCardlessLink: vi.fn(async () => ({
+      ok: true,
+      authorisationUrl: 'https://gocardless.com/auth/123',
+      reference: 'REF-1',
+      billingRequestId: 'BRQ-1',
+    })),
+  };
+});
 
 vi.mock('../../lib/secrets', () => ({
   getSecret: vi.fn(async () => 'live-token'),
@@ -430,7 +434,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(res.headers.get('location')).toContain('invalid_url');
   });
 
-  it('redirects to payment-success with amount=0 when active payment exists but registration has no pricing', async () => {
+  it('redirects to payment-success without amount when active payment exists, regardless of registration pricing', async () => {
     const unpricedRegistration = {
       ...sampleRegistration,
       levelId: null,
@@ -453,7 +457,8 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     const location = res.headers.get('location') ?? '';
     expect(location).toContain('/payment-success');
     expect(location).toContain('existing=1');
-    expect(location).toContain('amount=0');
+    expect(location).not.toContain('amount=');
+    expect(location).not.toContain('interval_unit=');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 
@@ -701,6 +706,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(location).toContain('ref=REF-SUB-ABCD1234');
     expect(location).not.toContain('mandate=');
     expect(location).not.toContain('subscription=');
+    expect(location).not.toContain('amount=');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 

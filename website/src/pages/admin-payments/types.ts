@@ -12,6 +12,7 @@ export interface PlayerRegistrationRow {
   yearlyPriceInPence: number | null;
   intervalCount: number | null;
   intervalUnit: IntervalUnit | null;
+  startDate: string | null;
 }
 
 export interface PlayerPaymentRow {
@@ -33,6 +34,7 @@ export interface SubscriptionLevel {
   yearlyPriceInPence: number;
   intervalCount: number;
   intervalUnit: IntervalUnit;
+  startDate: string | null;
 }
 
 export interface TeamRow {

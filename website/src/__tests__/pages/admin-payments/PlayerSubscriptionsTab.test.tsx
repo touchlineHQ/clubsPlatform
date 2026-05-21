@@ -5,7 +5,15 @@ import { renderWithMantine, mockAdmin, mockSingleClub } from '../../test-utils';
 
 vi.mock('@mantine/core', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@mantine/core')>();
-  return { ...mod, Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</> };
+  return {
+    ...mod,
+    Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+    // NumberInput uses react-number-format which has a dual-React issue under
+    // vitest; replace with a plain input to keep the test isolated.
+    NumberInput: ({ label, value, onChange }: { label?: string; value?: unknown; onChange?: (v: unknown) => void }) => (
+      <input aria-label={label ?? ''} value={String(value ?? '')} onChange={e => onChange?.(e.target.value)} />
+    ),
+  };
 });
 
 // jsdom doesn't implement scrollIntoView; stub it to prevent Mantine Combobox timer errors

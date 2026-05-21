@@ -11,8 +11,27 @@ export interface CreateLinkInput {
   amountInPence: number;
   intervalUnit: 'monthly' | 'weekly' | 'yearly';
   count?: number | null;
+  /** YYYY-MM-DD. Configured first payment date for the subscription. */
+  startDate?: string | null;
   description?: string;
   origin: string;
+}
+
+/**
+ * Resolve the GoCardless subscription start_date from a configured start date.
+ * If today is already past the configured date, push to the first of next month
+ * so we don't try to start a subscription in the past.
+ * Returns YYYY-MM-DD or null if no configured date.
+ */
+export function resolveSubscriptionStartDate(
+  configured: string | null | undefined,
+  today: Date = new Date(),
+): string | null {
+  if (!configured || !/^\d{4}-\d{2}-\d{2}$/.test(configured)) return null;
+  const todayIso = today.toISOString().slice(0, 10);
+  if (configured >= todayIso) return configured;
+  const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+  return nextMonth.toISOString().slice(0, 10);
 }
 
 export interface CreateLinkResult {
@@ -132,6 +151,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     registration_id: registrationId,
     ...(totalCount !== null ? { count: String(totalCount) } : {}),
     ...(clubSlug ? { club_slug: clubSlug } : {}),
+    ...(input.startDate ? { start_date: input.startDate } : {}),
   });
   const redirectUri = `${origin}/api/gocardless/confirm?${confirmParams.toString()}`;
   const exitUri = `${origin}/#/payment-cancelled`;

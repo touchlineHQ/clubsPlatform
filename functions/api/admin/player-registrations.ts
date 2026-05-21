@@ -13,6 +13,7 @@ interface PlayerRegistrationRow {
   yearlyPriceInPence: number | null;
   intervalCount: number | null;
   intervalUnit: string | null;
+  startDate: string | null;
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -35,7 +36,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.name                            AS subscriptionLevelName,
          sl.yearlyPriceInPence              AS yearlyPriceInPence,
          sl.intervalCount                   AS intervalCount,
-         sl.intervalUnit                    AS intervalUnit
+         sl.intervalUnit                    AS intervalUnit,
+         sl.startDate                       AS startDate
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id

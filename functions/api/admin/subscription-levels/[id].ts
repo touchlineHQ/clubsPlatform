@@ -1,6 +1,7 @@
 import { ensureTables } from "../../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../../lib/api-helpers";
 import { getPostHog } from "../../../lib/posthog";
+import { validateStartDate } from "../subscription-levels";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
 const INTERVAL_UNITS: ReadonlyArray<IntervalUnit> = ["weekly", "monthly", "yearly"];
@@ -10,6 +11,7 @@ interface UpdateLevelBody {
   yearlyPriceInPence?: number;
   intervalCount?: number;
   intervalUnit?: string;
+  startDate?: string | null;
 }
 
 export const onRequestPut: PagesFunction<Env> = async (context) => {
@@ -64,6 +66,12 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     }
     fields.push(`intervalUnit = ?`);
     binds.push(u);
+  }
+  if (body.startDate !== undefined) {
+    const start = validateStartDate(body.startDate);
+    if (!start.ok) return json({ error: start.error }, { status: 400 });
+    fields.push(`startDate = ?`);
+    binds.push(start.value);
   }
 
   if (fields.length === 0) {

@@ -3,6 +3,7 @@ import {
   ActionIcon, Alert, Badge, Box, Button, Center, Divider, Group, Loader,
   NumberInput, Paper, Select, SimpleGrid, Stack, Table, Text, TextInput, Tooltip,
 } from '@mantine/core';
+import { DatePickerInput } from '@mantine/dates';
 import {
   IconAlertCircle, IconDeviceFloppy, IconPencil, IconPlus,
   IconTrash, IconUsersGroup, IconX,
@@ -37,6 +38,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
   const [yearlyGbp, setYearlyGbp] = useState<number | string>('');
   const [intervalCount, setIntervalCount] = useState<number | string>(10);
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>('monthly');
+  const [startDate, setStartDate] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -75,6 +77,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
     setYearlyGbp('');
     setIntervalCount(10);
     setIntervalUnit('monthly');
+    setStartDate(null);
     setSaveError('');
   };
 
@@ -84,6 +87,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
     setYearlyGbp(lvl.yearlyPriceInPence / 100);
     setIntervalCount(lvl.intervalCount);
     setIntervalUnit(lvl.intervalUnit);
+    setStartDate(lvl.startDate);
     setSaveError('');
   };
 
@@ -102,6 +106,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
         yearlyPriceInPence: Math.round(parsedYearly * 100),
         intervalCount: parsedCount,
         intervalUnit,
+        startDate: startDate ?? null,
       };
       const res = await fetch(
         editingId ? `/api/admin/subscription-levels/${editingId}` : '/api/admin/subscription-levels',
@@ -203,7 +208,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
             {editingId ? 'Edit subscription level' : 'Create a subscription level'}
           </Text>
 
-          <SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 1, xs: 2, sm: 3, lg: 5 }} spacing="md" verticalSpacing="md">
             <TextInput
               label="Name"
               placeholder="e.g. 5 aside, 7 aside"
@@ -239,6 +244,16 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
               value={intervalUnit}
               onChange={v => setIntervalUnit((v as IntervalUnit) ?? 'monthly')}
               radius="md"
+            />
+            <DatePickerInput
+              label="First payment date"
+              description="Defaults to next month if past"
+              placeholder="Pick a date"
+              value={startDate}
+              onChange={setStartDate}
+              clearable
+              radius="md"
+              valueFormat="DD MMM YYYY"
             />
           </SimpleGrid>
 

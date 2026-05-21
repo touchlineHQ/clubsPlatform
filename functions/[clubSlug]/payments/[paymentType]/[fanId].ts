@@ -13,6 +13,7 @@ type RegistrationRow = {
   yearlyPriceInPence: number | null;
   intervalCount: number | null;
   intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
+  startDate: string | null;
 };
 
 /**
@@ -60,7 +61,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               sl.id             AS levelId,
               sl.yearlyPriceInPence,
               sl.intervalCount,
-              sl.intervalUnit
+              sl.intervalUnit,
+              sl.startDate
          FROM player_registration pr
          JOIN player p ON p.id = pr.playerId
          LEFT JOIN team_status_subscription_level tssl
@@ -124,15 +126,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .first<{ reference: string }>();
 
   if (existingPayment?.reference) {
-    const intervalUnit = registration.intervalUnit ?? 'monthly';
-    const perPaymentInPence =
-      registration.yearlyPriceInPence != null && registration.intervalCount != null
-        ? Math.round(registration.yearlyPriceInPence / Math.max(1, registration.intervalCount))
-        : 0;
+    // Intentionally omit amount/interval_unit — the subscription level may have
+    // changed since the player originally signed up, so the original amount is
+    // the source of truth (held by GoCardless) and showing a different number
+    // here would be misleading.
     const successParams = new URLSearchParams({
       ref: existingPayment.reference,
-      amount: String(perPaymentInPence),
-      interval_unit: intervalUnit,
       existing: '1',
     });
     return Response.redirect(`${origin}/#/payment-success?${successParams}`, 302);
@@ -163,6 +162,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     amountInPence: perPaymentInPence,
     intervalUnit: registration.intervalUnit,
     count: registration.intervalCount,
+    startDate: registration.startDate,
     description: `${registration.teamName} subscription — FAN ${registration.fanId}`,
     origin,
   });
