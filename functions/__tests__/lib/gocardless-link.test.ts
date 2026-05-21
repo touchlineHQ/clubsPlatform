@@ -8,7 +8,7 @@ vi.mock('../../lib/secrets', () => ({ getSecret: mockGetSecret }));
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal('fetch', mockFetch);
 
-import { createGoCardlessLink } from '../../lib/gocardless-link';
+import { createGoCardlessLink, resolveSubscriptionStartDate } from '../../lib/gocardless-link';
 
 const baseEnv = {
   DB: {} as D1Database,
@@ -151,5 +151,69 @@ describe('createGoCardlessLink', () => {
 
     const firstCallBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
     expect(firstCallBody.billing_requests.metadata.tracking_info).toContain('x10');
+  });
+
+  it('forwards startDate via the confirm redirect URL', async () => {
+    const db = makeDb({ first: { id: 'reg_1', teamName: 'First XI', fanId: 'FAN001' } }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_requests: { id: 'br_001' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_request_flows: { authorisation_url: 'https://pay.gocardless.com' } }) });
+
+    await createGoCardlessLink({ ...baseInput, db, startDate: '2030-01-15' });
+
+    const flowBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    const redirectUri: string = flowBody.billing_request_flows.redirect_uri;
+    expect(redirectUri).toContain('start_date=2030-01-15');
+  });
+
+  it('omits start_date from the confirm redirect URL when startDate is not provided', async () => {
+    const db = makeDb({ first: { id: 'reg_1', teamName: 'First XI', fanId: 'FAN001' } }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_requests: { id: 'br_001' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_request_flows: { authorisation_url: 'https://pay.gocardless.com' } }) });
+
+    await createGoCardlessLink({ ...baseInput, db });
+
+    const flowBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    const redirectUri: string = flowBody.billing_request_flows.redirect_uri;
+    expect(redirectUri).not.toContain('start_date');
+  });
+});
+
+describe('resolveSubscriptionStartDate', () => {
+  it('returns null when no date is configured', () => {
+    expect(resolveSubscriptionStartDate(null)).toBeNull();
+    expect(resolveSubscriptionStartDate(undefined)).toBeNull();
+    expect(resolveSubscriptionStartDate('')).toBeNull();
+  });
+
+  it('returns null for malformed date strings', () => {
+    expect(resolveSubscriptionStartDate('not-a-date')).toBeNull();
+    expect(resolveSubscriptionStartDate('2024/01/01')).toBeNull();
+    expect(resolveSubscriptionStartDate('24-01-01')).toBeNull();
+  });
+
+  it('returns the configured date when today is before it', () => {
+    const today = new Date('2024-05-10T12:00:00Z');
+    expect(resolveSubscriptionStartDate('2024-09-01', today)).toBe('2024-09-01');
+  });
+
+  it('returns the configured date when today is the same day', () => {
+    const today = new Date('2024-05-10T23:00:00Z');
+    expect(resolveSubscriptionStartDate('2024-05-10', today)).toBe('2024-05-10');
+  });
+
+  it('returns the first of next month when today is past the configured date', () => {
+    const today = new Date('2024-05-15T12:00:00Z');
+    expect(resolveSubscriptionStartDate('2024-05-01', today)).toBe('2024-06-01');
+  });
+
+  it('rolls into the next year when today is in December', () => {
+    const today = new Date('2024-12-20T12:00:00Z');
+    expect(resolveSubscriptionStartDate('2024-12-01', today)).toBe('2025-01-01');
   });
 });

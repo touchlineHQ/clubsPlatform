@@ -231,7 +231,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
             />
             <NumberInput
               label="Number of payments"
-              description="e.g. 10 instalments"
+              placeholder="e.g. 10"
               value={intervalCount}
               onChange={setIntervalCount}
               min={1}
@@ -247,7 +247,6 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
             />
             <DatePickerInput
               label="First payment date"
-              description="Defaults to next month if past"
               placeholder="Pick a date"
               value={startDate}
               onChange={setStartDate}

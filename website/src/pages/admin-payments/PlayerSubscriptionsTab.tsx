@@ -222,7 +222,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
           <SimpleGrid cols={{ base: 1, xs: 2, sm: 2, md: 4 }} spacing="md" verticalSpacing="md">
             <NumberInput
               label="Total (£)"
-              description="Total over all payments"
               placeholder="e.g. 250"
               value={totalGbp}
               onChange={v => { setTotalGbp(v); setAutofilled(false); }}
@@ -235,7 +234,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
             />
             <NumberInput
               label="Number of payments"
-              description="e.g. 10 instalments"
               placeholder="e.g. 10"
               value={paymentCount}
               onChange={v => { setPaymentCount(v); setAutofilled(false); }}
@@ -252,7 +250,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
             />
             <DatePickerInput
               label="First payment date"
-              description="Defaults to next month if past"
               placeholder="Pick a date"
               value={startDate}
               onChange={v => { setStartDate(v); setAutofilled(false); }}
