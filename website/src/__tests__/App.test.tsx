@@ -63,7 +63,7 @@ vi.mock('../pages/CustomizePage', () => ({ CustomizePage: () => <div>Customise</
 vi.mock('../pages/LoginPage', () => ({ LoginPage: () => <div>Login</div> }));
 vi.mock('../pages/SignUpPage', () => ({ SignUpPage: () => <div>SignUp</div> }));
 vi.mock('../pages/AdminUsersPage', () => ({ AdminUsersPage: () => <div>AdminUsers</div> }));
-vi.mock('../pages/MyRegistrationsPage', () => ({ MyRegistrationsPage: () => <div>MyReg</div> }));
+vi.mock('../pages/RegistrationsPage', () => ({ RegistrationsPage: () => <div>Registrations</div> }));
 vi.mock('../pages/PitchBookingPage', () => ({ PitchBookingPage: () => <div>PitchBooking</div> }));
 vi.mock('../pages/BookingAdminPage', () => ({ BookingAdminPage: () => <div>BookingAdmin</div> }));
 vi.mock('../pages/PitchSchedulePage', () => ({ PitchSchedulePage: () => <div>PitchSchedule</div> }));

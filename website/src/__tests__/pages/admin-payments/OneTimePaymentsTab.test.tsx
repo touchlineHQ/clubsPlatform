@@ -51,7 +51,6 @@ describe('OneTimePaymentsTab', () => {
                 registrationId: 'reg-1',
                 fanId: '99001',
                 teamName: 'Under 12s',
-                ageGroup: 'U12',
                 yearlyPriceInPence: null,
                 intervalCount: null,
                 intervalUnit: null,

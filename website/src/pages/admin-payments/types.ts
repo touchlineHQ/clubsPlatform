@@ -4,7 +4,6 @@ export interface PlayerRegistrationRow {
   fanId: string;
   registrationId: string;
   teamName: string;
-  ageGroup: string | null;
   registrationExpiry: string | null;
   registrationStatus: string | null;
   linkedAccounts: string | null;

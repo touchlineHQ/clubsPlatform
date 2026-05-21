@@ -18,7 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/admin/bookings': 'Booking Requests',
   '/bookings': 'Request a Pitch',
   '/schedule': 'Pitch Schedule',
-  '/my-registrations': 'My Registrations',
+  '/registrations': 'Registrations',
 };
 
 /** Pick a friendly title for `pathname`, falling back to the longest prefix

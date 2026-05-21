@@ -12,9 +12,6 @@ vi.mock('../../pages/admin-payments/PlayerSubscriptionsTab', () => ({
 vi.mock('../../pages/admin-payments/OneTimePaymentsTab', () => ({
   OneTimePaymentsTab: () => <div data-testid="onetime-tab">One-time</div>,
 }));
-vi.mock('../../pages/admin-payments/ExportRegistrationsTab', () => ({
-  ExportRegistrationsTab: () => <div data-testid="export-tab">Export</div>,
-}));
 
 const mockFetch = vi.fn();
 beforeEach(() => {

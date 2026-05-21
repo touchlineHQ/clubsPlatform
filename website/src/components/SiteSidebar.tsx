@@ -553,7 +553,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
         {user && belongsToClub && (
           <UnstyledButton
             component={Link}
-            to="/my-registrations"
+            to="/registrations"
             onClick={onNavClick}
             style={{
               display: 'flex',

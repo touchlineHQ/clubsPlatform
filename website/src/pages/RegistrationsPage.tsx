@@ -5,9 +5,11 @@ import {
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
-  IconArrowRight, IconChevronDown, IconChevronUp, IconFileUpload, IconSelector, IconTrash,
+  IconArrowRight, IconChevronDown, IconChevronUp, IconFileSpreadsheet, IconFileUpload,
+  IconSelector, IconTrash,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
+import * as XLSX from 'xlsx';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
@@ -17,7 +19,6 @@ interface RegistrationRow {
   registrationId: string;
   fanId: string;
   teamName: string;
-  ageGroup: string | null;
   registrationExpiry: string | null;
   registrationStatus: string | null;
   relationship: string | null;
@@ -418,7 +419,58 @@ function EmptyState({ isAdmin, scope }: { isAdmin: boolean; scope: 'personal' | 
   );
 }
 
-export function MyRegistrationsPage() {
+function buildPaymentLink(origin: string, clubSlug: string, fanId: string): string {
+  return `${origin}/${clubSlug}/payments/SUBS/${encodeURIComponent(fanId)}`;
+}
+
+function exportRegistrationsToXlsx(
+  rows: RegistrationRow[],
+  clubSlug: string,
+  filters: ClubFilters,
+) {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  const data = rows.map(r => ({
+    'FAN ID':            r.fanId,
+    'Team':              r.teamName,
+    'Status':            r.registrationStatus ?? '',
+    'Expiry':            r.registrationExpiry ?? '',
+    'Linked Accounts':   r.linkedAccounts ?? '',
+    'Subscription Level': r.subscriptionLevelName ?? '',
+    'Subscription Status': getSubscriptionStatus(r).label,
+    'Payment Link':      buildPaymentLink(origin, clubSlug, r.fanId),
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  ws['!cols'] = [
+    { wch: 12 }, // FAN ID
+    { wch: 22 }, // Team
+    { wch: 14 }, // Status
+    { wch: 12 }, // Expiry
+    { wch: 38 }, // Linked Accounts
+    { wch: 22 }, // Subscription Level
+    { wch: 18 }, // Subscription Status
+    { wch: 60 }, // Payment Link
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Registrations');
+
+  const today = new Date().toISOString().slice(0, 10);
+  const filterSuffix = [
+    filters.team         !== ALL ? filters.team         : null,
+    filters.status       !== ALL ? filters.status       : null,
+    filters.subscription !== ALL ? filters.subscription : null,
+  ].filter(Boolean).join('-').replace(/[^A-Za-z0-9-]+/g, '_');
+
+  const fileSlug = clubSlug || 'club';
+  const filename = filterSuffix
+    ? `${fileSlug}-registrations-${filterSuffix}-${today}.xlsx`
+    : `${fileSlug}-registrations-${today}.xlsx`;
+
+  XLSX.writeFile(wb, filename);
+}
+
+export function RegistrationsPage() {
   const { clubSlug } = useClub();
   const [personal, setPersonal] = useState<RegistrationRow[]>([]);
   const [club, setClub] = useState<RegistrationRow[] | null>(null);
@@ -509,15 +561,27 @@ export function MyRegistrationsPage() {
     <Stack gap="sm">
       <Group justify="space-between" align="center" wrap="wrap" gap="sm">
         <ClubFilterBar rows={club} filters={filters} onChange={setFilters} />
-        <Button
-          leftSection={<IconFileUpload size={16} />}
-          onClick={openImport}
-          radius="xl"
-          variant="light"
-          size="xs"
-        >
-          Import Players
-        </Button>
+        <Group gap="xs" wrap="wrap">
+          <Button
+            leftSection={<IconFileUpload size={16} />}
+            onClick={openImport}
+            radius="xl"
+            variant="light"
+            size="xs"
+          >
+            Import Players
+          </Button>
+          <Button
+            leftSection={<IconFileSpreadsheet size={16} />}
+            onClick={() => exportRegistrationsToXlsx(filteredClub ?? club, clubSlug, filters)}
+            radius="xl"
+            variant="light"
+            size="xs"
+            disabled={(filteredClub ?? club).length === 0}
+          >
+            Export to Excel
+          </Button>
+        </Group>
       </Group>
       {club.length === 0 ? (
         <EmptyState isAdmin={isAdmin} scope="club" />

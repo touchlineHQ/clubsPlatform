@@ -285,7 +285,6 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>FAN ID</Table.Th>
-                    <Table.Th>Age</Table.Th>
                     <Table.Th>Team</Table.Th>
                     <Table.Th>Expiry</Table.Th>
                     <Table.Th>Status</Table.Th>
@@ -297,7 +296,6 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
                   {rows.map((r, i) => (
                     <Table.Tr key={i}>
                       <Table.Td>{r.fanId}</Table.Td>
-                      <Table.Td>{r.ageGroup}</Table.Td>
                       <Table.Td>{r.teamName}</Table.Td>
                       <Table.Td>{r.registrationExpiry}</Table.Td>
                       <Table.Td>{r.registrationStatus}</Table.Td>
