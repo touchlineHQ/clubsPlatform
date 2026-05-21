@@ -584,7 +584,8 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     const res = await paymentRedirectOnRequestGet(ctx as any);
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/payment-cancelled');
-    expect(res.headers.get('location')).toContain('link_failed');
+    expect(res.headers.get('location')).toContain('token_missing');
+    expect(res.headers.get('location')).toContain('code=503');
   });
 
   // ── Multi-team cases ──────────────────────────────────────────────────────

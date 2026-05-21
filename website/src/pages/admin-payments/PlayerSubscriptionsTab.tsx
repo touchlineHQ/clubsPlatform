@@ -52,7 +52,7 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
 
   const playerOptions = registrations.map(r => ({
     value: r.registrationId,
-    label: `FAN ${r.fanId} — ${r.teamName}${r.ageGroup ? ` (${r.ageGroup})` : ''}`,
+    label: `FAN ${r.fanId} — ${r.teamName}`,
   }));
 
   const selectedReg = registrations.find(r => r.registrationId === selectedRegId) ?? null;
@@ -169,7 +169,6 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
               <Group gap="sm" wrap="wrap">
                 <Badge color="blue" variant="light">FAN {selectedReg.fanId}</Badge>
                 <Badge color="gray" variant="light">{selectedReg.teamName}</Badge>
-                {selectedReg.ageGroup && <Badge color="gray" variant="outline">{selectedReg.ageGroup}</Badge>}
                 {selectedReg.subscriptionLevelName && (
                   <Badge color="green" variant="light">Level: {selectedReg.subscriptionLevelName}</Badge>
                 )}

@@ -27,7 +27,7 @@ import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
-import { MyRegistrationsPage } from './pages/MyRegistrationsPage';
+import { RegistrationsPage } from './pages/RegistrationsPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
 import { BookingAdminPage } from './pages/BookingAdminPage';
 import { PitchSchedulePage } from './pages/PitchSchedulePage';
@@ -225,11 +225,12 @@ export const App = () => {
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
-            <Route path="/my-registrations" element={
+            <Route path="/registrations" element={
               <ProtectedRoute>
-                <MyRegistrationsPage />
+                <RegistrationsPage />
               </ProtectedRoute>
             } />
+            <Route path="/my-registrations" element={<Navigate to="/registrations" replace />} />
             <Route path="/admin/users" element={
               <ProtectedRoute requireAdmin>
                 <AdminUsersPage liveTeams={data.liveTeams} />
@@ -259,7 +260,7 @@ export const App = () => {
                 <BookingAdminPage clubFeedSlug={data.club.clubFeedSlug} />
               </ProtectedRoute>
             } />
-            <Route path="/admin/import" element={<Navigate to="/my-registrations" replace />} />
+            <Route path="/admin/import" element={<Navigate to="/registrations" replace />} />
             <Route path="/schedule" element={<PitchSchedulePage />} />
             <Route path="/admin/secrets" element={
               <ProtectedRoute requireAdmin>

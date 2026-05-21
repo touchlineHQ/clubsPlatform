@@ -23,13 +23,12 @@ beforeEach(() => {
   mockFetch.mockReset();
 });
 
-import { MyRegistrationsPage } from '../../pages/MyRegistrationsPage';
+import { RegistrationsPage } from '../../pages/RegistrationsPage';
 
 const sampleRow = {
   registrationId: 'reg_1',
   fanId: 'fan_1',
   teamName: 'First XI',
-  ageGroup: 'Senior',
   registrationExpiry: '2025-08-01',
   registrationStatus: 'active',
   relationship: null,
@@ -39,14 +38,14 @@ const sampleRow = {
   paymentStatus: 'active',
 };
 
-describe('MyRegistrationsPage', () => {
+describe('RegistrationsPage', () => {
   it('renders personal registrations returned by API', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({ personal: [sampleRow], club: null, scope: 'user' }),
     });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
       clubValue: mockSingleClub,
     });
@@ -63,7 +62,7 @@ describe('MyRegistrationsPage', () => {
       json: async () => ({ personal: [sampleRow], club: [adminRow], scope: 'admin' }),
     });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockAdmin,
       clubValue: mockSingleClub,
     });
@@ -76,7 +75,7 @@ describe('MyRegistrationsPage', () => {
   it('shows a loader while fetching', () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
       clubValue: mockSingleClub,
     });
@@ -87,13 +86,37 @@ describe('MyRegistrationsPage', () => {
   it('shows an error when fetch fails', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
       clubValue: mockSingleClub,
     });
 
     await waitFor(() => {
       expect(screen.getByText(/failed to load/i)).toBeTruthy();
+    });
+  });
+
+  it('shows Export to Excel button next to Import Players in Club Registrations tab', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy();
     });
   });
 
@@ -104,7 +127,7 @@ describe('MyRegistrationsPage', () => {
       json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
     });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockAdmin,
       clubValue: mockSingleClub,
     });
@@ -127,7 +150,7 @@ describe('MyRegistrationsPage', () => {
       json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
     });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockAdmin,
       clubValue: mockSingleClub,
     });
@@ -153,7 +176,7 @@ describe('MyRegistrationsPage', () => {
       json: async () => ({ personal: [], club: null, scope: 'user' }),
     });
 
-    renderWithMantine(<MyRegistrationsPage />, {
+    renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
       clubValue: mockSingleClub,
     });

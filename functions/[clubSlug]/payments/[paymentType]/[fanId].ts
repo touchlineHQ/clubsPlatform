@@ -169,10 +169,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   if (!result.ok) {
     console.error('Public payment link failed:', result);
-    return Response.redirect(
-      `${origin}/#/payment-cancelled?reason=link_failed&code=${result.status}`,
-      302,
-    );
+    // Map the underlying failure to a specific cancellation reason so the
+    // player (and their club admin) can see what to fix instead of a generic
+    // "link failed". `code` is kept for tail-end diagnostics.
+    const reason =
+      result.status === 503 ? 'token_missing' :
+      result.status === 502 ? 'gocardless_error' :
+      result.status === 404 ? 'player_not_found' :
+      result.status === 400 ? 'invalid_link' :
+      'link_failed';
+    const params = new URLSearchParams({ reason, code: String(result.status) });
+    if (result.detail) params.set('detail', result.detail.slice(0, 200));
+    return Response.redirect(`${origin}/#/payment-cancelled?${params}`, 302);
   }
 
   return Response.redirect(result.authorisationUrl, 302);
