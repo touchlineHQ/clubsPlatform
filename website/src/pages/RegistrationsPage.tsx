@@ -24,8 +24,14 @@ interface RegistrationRow {
   relationship: string | null;
   linkedAccounts: string | null;
   subscriptionLevelId: string | null;
+  overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+}
+
+interface SubscriptionLevel {
+  id: string;
+  name: string;
 }
 
 interface Response {
@@ -34,7 +40,9 @@ interface Response {
   scope: 'admin' | 'user';
 }
 
-type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'sixthCol';
+const DEFAULT_VALUE = '__default__';
+
+type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'subscriptionLevel' | 'sixthCol';
 type SortDir = 'asc' | 'desc';
 
 interface SortState {
@@ -85,6 +93,7 @@ function sortRows(rows: RegistrationRow[], sort: SortState, sixthIsLinkedAccount
       case 'registrationExpiry': return r.registrationExpiry ?? '';
       case 'registrationStatus': return r.registrationStatus ?? '';
       case 'subscription': return getSubscriptionStatus(r).label;
+      case 'subscriptionLevel': return r.subscriptionLevelName ?? '';
       case 'sixthCol': return sixthValue(r);
     }
   };
@@ -166,6 +175,53 @@ function LinkedAccountsCell({ row }: { row: RegistrationRow }) {
   );
 }
 
+interface SubscriptionLevelCellProps {
+  row: RegistrationRow;
+  levels: SubscriptionLevel[];
+  updating: boolean;
+  onChange: (row: RegistrationRow, levelId: string | null) => void;
+}
+
+function SubscriptionLevelCell({ row, levels, updating, onChange }: SubscriptionLevelCellProps) {
+  const data = useMemo(
+    () => [
+      { value: DEFAULT_VALUE, label: 'Use team default' },
+      ...levels.map(l => ({ value: l.id, label: l.name })),
+    ],
+    [levels],
+  );
+
+  const overridden = row.overrideLevelId !== null;
+  const value = row.overrideLevelId ?? DEFAULT_VALUE;
+  const resolvedLabel = row.subscriptionLevelName ?? 'No level set';
+
+  return (
+    <Tooltip
+      label="Override applies to new payment setups only — existing active subscriptions are unchanged."
+      withArrow
+      multiline
+      w={260}
+    >
+      <Box>
+        <Select
+          size="xs"
+          w={170}
+          data={data}
+          value={value}
+          disabled={updating || levels.length === 0}
+          onChange={v => onChange(row, v === DEFAULT_VALUE ? null : v)}
+          aria-label={`Subscription level for ${row.fanId}`}
+          allowDeselect={false}
+          comboboxProps={{ withinPortal: true }}
+        />
+        <Text size="xs" c="dimmed" mt={2}>
+          {overridden ? 'Override' : `Default · ${resolvedLabel}`}
+        </Text>
+      </Box>
+    </Tooltip>
+  );
+}
+
 function RelationshipBadge({ value }: { value: string | null }) {
   if (!value) return <Text size="sm">—</Text>;
   return (
@@ -187,9 +243,14 @@ interface TableProps {
   sixthHeader: 'Linked accounts' | 'Relationship';
   canDelete: boolean;
   onDelete?: (row: RegistrationRow) => void;
+  editableLevels?: {
+    levels: SubscriptionLevel[];
+    updatingId: string | null;
+    onChange: (row: RegistrationRow, levelId: string | null) => void;
+  };
 }
 
-function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TableProps) {
+function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLevels }: TableProps) {
   const [sort, setSort] = useState<SortState>({ key: 'teamName', dir: 'asc' });
   const sixthIsLinkedAccounts = sixthHeader === 'Linked accounts';
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -236,6 +297,17 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
                 <SubscriptionBadge row={r} />
               </Group>
               <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
+              {editableLevels && (
+                <Box>
+                  <Text size="xs" c="dimmed" mb={2}>Level</Text>
+                  <SubscriptionLevelCell
+                    row={r}
+                    levels={editableLevels.levels}
+                    updating={editableLevels.updatingId === r.registrationId}
+                    onChange={editableLevels.onChange}
+                  />
+                </Box>
+              )}
               <Box>
                 <Text size="xs" c="dimmed" mb={2}>{sixthHeader}</Text>
                 {sixthIsLinkedAccounts
@@ -249,15 +321,22 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
     );
   }
 
+  const miw = canDelete
+    ? (editableLevels ? 1060 : 880)
+    : (editableLevels ? 1000 : 820);
+
   return (
     <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
-      <Table striped highlightOnHover fz="sm" miw={canDelete ? 880 : 820}>
+      <Table striped highlightOnHover fz="sm" miw={miw}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th><SortHeader label="FAN ID" sortKey="fanId" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Team" sortKey="teamName" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Expiry" sortKey="registrationExpiry" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Status" sortKey="registrationStatus" {...headerProps} /></Table.Th>
+            {editableLevels && (
+              <Table.Th><SortHeader label="Level" sortKey="subscriptionLevel" {...headerProps} /></Table.Th>
+            )}
             <Table.Th><SortHeader label="Subscription" sortKey="subscription" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label={sixthHeader} sortKey="sixthCol" {...headerProps} /></Table.Th>
             {canDelete && <Table.Th aria-label="Actions" />}
@@ -272,6 +351,16 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete }: TablePro
               <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
               <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
               <Table.Td><StatusBadge value={r.registrationStatus} /></Table.Td>
+              {editableLevels && (
+                <Table.Td>
+                  <SubscriptionLevelCell
+                    row={r}
+                    levels={editableLevels.levels}
+                    updating={editableLevels.updatingId === r.registrationId}
+                    onChange={editableLevels.onChange}
+                  />
+                </Table.Td>
+              )}
               <Table.Td><SubscriptionBadge row={r} /></Table.Td>
               <Table.Td>
                 {sixthIsLinkedAccounts
@@ -482,6 +571,9 @@ export function RegistrationsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [importOpened, { open: openImport, close: closeImport }] = useDisclosure(false);
+  const [levels, setLevels] = useState<SubscriptionLevel[]>([]);
+  const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
+  const [levelError, setLevelError] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -504,12 +596,85 @@ export function RegistrationsPage() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const isAdmin = scope === 'admin';
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/admin/subscription-levels', {
+          headers: { 'X-Club-Slug': clubSlug },
+        });
+        if (!res.ok) return;
+        const data = await res.json() as { levels?: SubscriptionLevel[] };
+        if (!cancelled) setLevels(Array.isArray(data.levels) ? data.levels : []);
+      } catch {
+        // Non-fatal — the Select will just be disabled.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin, clubSlug]);
+
+  const handleLevelChange = useCallback(async (row: RegistrationRow, levelId: string | null) => {
+    setUpdatingLevelId(row.registrationId);
+    setLevelError('');
+    const prevOverride = row.overrideLevelId;
+    const prevResolvedId = row.subscriptionLevelId;
+    const prevResolvedName = row.subscriptionLevelName;
+    const newName = levelId
+      ? (levels.find(l => l.id === levelId)?.name ?? null)
+      : null;
+    // Optimistic update — patch override + resolved fields for this row.
+    setClub(rows => rows ? rows.map(r => r.registrationId === row.registrationId
+      ? {
+          ...r,
+          overrideLevelId: levelId,
+          subscriptionLevelId: levelId ?? r.subscriptionLevelId,
+          subscriptionLevelName: levelId ? newName : r.subscriptionLevelName,
+        }
+      : r,
+    ) : rows);
+    try {
+      const res = await fetch('/api/admin/registration-subscription-levels', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Club-Slug': clubSlug,
+        },
+        body: JSON.stringify({
+          registrationId: row.registrationId,
+          subscriptionLevelId: levelId,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to update subscription level');
+      }
+      // Refresh in the background to pick up the authoritative resolved level
+      // (e.g. when clearing an override and a status/team rule kicks in).
+      refresh();
+    } catch (e) {
+      setLevelError(e instanceof Error ? e.message : 'Failed to update subscription level');
+      // Roll back the optimistic update.
+      setClub(rows => rows ? rows.map(r => r.registrationId === row.registrationId
+        ? {
+            ...r,
+            overrideLevelId: prevOverride,
+            subscriptionLevelId: prevResolvedId,
+            subscriptionLevelName: prevResolvedName,
+          }
+        : r,
+      ) : rows);
+    } finally {
+      setUpdatingLevelId(null);
+    }
+  }, [clubSlug, levels, refresh]);
+
   const handleImported = () => {
     closeImport();
     refresh();
   };
-
-  const isAdmin = scope === 'admin';
 
   const filteredClub = useMemo(
     () => (club ? applyClubFilters(club, filters) : null),
@@ -583,6 +748,7 @@ export function RegistrationsPage() {
           </Button>
         </Group>
       </Group>
+      {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
       {club.length === 0 ? (
         <EmptyState isAdmin={isAdmin} scope="club" />
       ) : filteredClub && filteredClub.length === 0 ? (
@@ -593,6 +759,11 @@ export function RegistrationsPage() {
           sixthHeader="Linked accounts"
           canDelete
           onDelete={setPendingDelete}
+          editableLevels={{
+            levels,
+            updatingId: updatingLevelId,
+            onChange: handleLevelChange,
+          }}
         />
       )}
     </Stack>

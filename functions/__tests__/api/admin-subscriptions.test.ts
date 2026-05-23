@@ -631,3 +631,115 @@ describe('team-subscription-levels POST (assign)', () => {
     expect(body.error).toMatch(/teamName/);
   });
 });
+
+// ─── registration-subscription-levels.ts ─────────────────────────────────────
+
+import {
+  onRequestPost as regLevelsPost,
+} from '../../api/admin/registration-subscription-levels';
+
+describe('registration-subscription-levels POST (assign)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('assigns a subscription level to a registration and returns ok', async () => {
+    // First .first() looks up the registration, second looks up the level.
+    const db = makeDb({
+      first: [{ id: 'reg_1' }, { id: 'level_1' }],
+      run: { meta: { changes: 1 } },
+    });
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { registrationId: 'reg_1', subscriptionLevelId: 'level_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+  });
+
+  it('clears the override when subscriptionLevelId is null', async () => {
+    // Only the registration lookup runs before the DELETE branch.
+    const db = makeDb({
+      first: [{ id: 'reg_1' }],
+      run: { meta: { changes: 1 } },
+    });
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { registrationId: 'reg_1', subscriptionLevelId: null },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.cleared).toBe(true);
+  });
+
+  it('returns 404 when the registration does not belong to this club', async () => {
+    const db = makeDb({ first: null });
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { registrationId: 'reg_missing', subscriptionLevelId: 'level_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/registration not found/);
+  });
+
+  it('returns 404 when the subscription level does not exist for this club', async () => {
+    // First .first() returns the registration, second returns null (level not found).
+    const db = makeDb({ first: [{ id: 'reg_1' }, null] });
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { registrationId: 'reg_1', subscriptionLevelId: 'level_missing' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect(res.status).toBe(404);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/subscription level not found/);
+  });
+
+  it('returns 400 when registrationId is missing', async () => {
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { subscriptionLevelId: 'level_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/registrationId/);
+  });
+
+  it('returns 401 when caller is not an admin', async () => {
+    mockGetSession.mockResolvedValue(null);
+    const db = makeDb();
+    const req = postReq(
+      '/api/admin/registration-subscription-levels',
+      { registrationId: 'reg_1', subscriptionLevelId: 'level_1' },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await regLevelsPost(ctx as any);
+    expect([401, 403]).toContain(res.status);
+  });
+});

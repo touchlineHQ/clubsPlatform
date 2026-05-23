@@ -55,6 +55,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const { results: registrations } = await env.DB
     .prepare(
+      // Resolution precedence (highest → lowest):
+      //   1. registration_subscription_level (per-player override)
+      //   2. team_status_subscription_level  (team + status)
+      //   3. status_subscription_level       (club-wide status)
+      //   4. team_subscription_level         (team default)
+      // Mirrors the COALESCE chains in functions/api/my-registrations.ts,
+      // functions/api/admin/player-registrations.ts, and
+      // functions/api/gocardless/confirm.ts. Keep them in sync.
       `SELECT pr.id            AS registrationId,
               pr.teamName,
               p.fanId,
@@ -65,6 +73,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               sl.startDate
          FROM player_registration pr
          JOIN player p ON p.id = pr.playerId
+         LEFT JOIN registration_subscription_level rsl
+                ON rsl.registrationId = pr.id
          LEFT JOIN team_status_subscription_level tssl
                 ON tssl.clubSlug = pr.clubSlug
                AND tssl.teamName = pr.teamName
@@ -75,7 +85,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          LEFT JOIN team_subscription_level tsl
                 ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
          LEFT JOIN subscription_level sl
-                ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+                ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
         WHERE pr.clubSlug = ? AND p.fanId = ?
         ORDER BY (sl.id IS NULL) ASC, pr.teamName ASC`
     )

@@ -129,6 +129,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .prepare(
       `SELECT pr.clubSlug, sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate
          FROM player_registration pr
+         LEFT JOIN registration_subscription_level rsl
+                ON rsl.registrationId = pr.id
          LEFT JOIN team_status_subscription_level tssl
                 ON tssl.clubSlug = pr.clubSlug
                AND tssl.teamName = pr.teamName
@@ -139,7 +141,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          LEFT JOIN team_subscription_level tsl
                 ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
          LEFT JOIN subscription_level sl
-                ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+                ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
         WHERE pr.id = ?`
     )
     .bind(registrationId)
