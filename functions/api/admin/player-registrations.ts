@@ -9,6 +9,7 @@ interface PlayerRegistrationRow {
   registrationStatus: string | null;
   linkedAccounts: string | null; // "email|relationship,email|relationship"
   subscriptionLevelId: string | null;
+  overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   yearlyPriceInPence: number | null;
   intervalCount: number | null;
@@ -32,7 +33,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          pr.registrationExpiry,
          pr.registrationStatus,
          GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts,
-         COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId) AS subscriptionLevelId,
+         COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId) AS subscriptionLevelId,
+         rsl.subscriptionLevelId            AS overrideLevelId,
          sl.name                            AS subscriptionLevelName,
          sl.yearlyPriceInPence              AS yearlyPriceInPence,
          sl.intervalCount                   AS intervalCount,
@@ -42,6 +44,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
        LEFT JOIN "user" u ON u.id = up.userId
+       LEFT JOIN registration_subscription_level rsl
+              ON rsl.registrationId = pr.id
        LEFT JOIN team_status_subscription_level tssl
               ON tssl.clubSlug = pr.clubSlug
              AND tssl.teamName = pr.teamName
@@ -52,7 +56,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        LEFT JOIN team_subscription_level tsl
               ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
        LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
        WHERE pr.clubSlug = ?
        GROUP BY pr.id
        ORDER BY pr.teamName ASC, p.fanId ASC`

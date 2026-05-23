@@ -10,6 +10,7 @@ interface RegistrationRow {
   relationship: string | null;
   linkedAccounts: string | null;
   subscriptionLevelId: string | null;
+  overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
 }
@@ -57,14 +58,25 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          up.relationship  AS relationship,
          NULL             AS linkedAccounts,
          sl.id            AS subscriptionLevelId,
+         rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
          ${PAYMENT_STATUS_SUBQUERY}
        FROM user_player up
        JOIN player p ON p.id = up.playerId
        JOIN player_registration pr ON pr.playerId = p.id
+       LEFT JOIN registration_subscription_level rsl
+              ON rsl.registrationId = pr.id
+       LEFT JOIN team_status_subscription_level tssl
+              ON tssl.clubSlug = pr.clubSlug
+             AND tssl.teamName = pr.teamName
+             AND tssl.registrationStatus = pr.registrationStatus
+       LEFT JOIN status_subscription_level ssl
+              ON ssl.clubSlug = pr.clubSlug
+             AND ssl.registrationStatus = pr.registrationStatus
        LEFT JOIN team_subscription_level tsl
               ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl ON sl.id = tsl.subscriptionLevelId
+       LEFT JOIN subscription_level sl
+              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
        WHERE up.userId = ? AND pr.clubSlug = ?
        ORDER BY pr.teamName ASC, p.fanId ASC`
     )
@@ -91,15 +103,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          NULL             AS relationship,
          GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts,
          sl.id            AS subscriptionLevelId,
+         rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
          ${PAYMENT_STATUS_SUBQUERY}
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
        LEFT JOIN "user" u ON u.id = up.userId
+       LEFT JOIN registration_subscription_level rsl
+              ON rsl.registrationId = pr.id
+       LEFT JOIN team_status_subscription_level tssl
+              ON tssl.clubSlug = pr.clubSlug
+             AND tssl.teamName = pr.teamName
+             AND tssl.registrationStatus = pr.registrationStatus
+       LEFT JOIN status_subscription_level ssl
+              ON ssl.clubSlug = pr.clubSlug
+             AND ssl.registrationStatus = pr.registrationStatus
        LEFT JOIN team_subscription_level tsl
               ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl ON sl.id = tsl.subscriptionLevelId
+       LEFT JOIN subscription_level sl
+              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
        WHERE pr.clubSlug = ?
        GROUP BY pr.id
        ORDER BY pr.teamName ASC, p.fanId ASC`
