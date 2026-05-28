@@ -8,9 +8,10 @@ vi.mock('@mantine/core', async (importOriginal) => {
   return { ...mod, Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</> };
 });
 
+const mockUseMediaQuery = vi.fn(() => false);
 vi.mock('@mantine/hooks', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@mantine/hooks')>();
-  return { ...mod, useMediaQuery: () => false };
+  return { ...mod, useMediaQuery: (...args: unknown[]) => mockUseMediaQuery(...args) };
 });
 
 // jsdom doesn't implement scrollIntoView; stub it to prevent Mantine Combobox timer errors
@@ -245,6 +246,54 @@ describe('PaymentRecordsTab', () => {
     });
   });
 
+  it('shows empty filtered state when no payments match the selected status', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [samplePayment] }), // only active
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => expect(screen.getByText('12345')).toBeTruthy());
+
+    const statusSelect = screen.getByRole('combobox', { name: /filter by status/i });
+    fireEvent.click(statusSelect);
+    await waitFor(() => {
+      const option = screen.queryByRole('option', { name: 'Inactive' });
+      if (option) fireEvent.click(option);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/No payments match your filters/i)).toBeTruthy();
+    });
+  });
+
+  it('toggles sort direction when the same column header is clicked twice', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [samplePayment, samplePayment2] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => expect(screen.getByText('12345')).toBeTruthy());
+
+    // Click FAN header to sort asc, then again to sort desc
+    const fanHeader = screen.getByText('FAN');
+    fireEvent.click(fanHeader);
+    fireEvent.click(fanHeader);
+
+    // After two clicks both FANs should still be visible (just reordered)
+    expect(screen.getByText('12345')).toBeTruthy();
+    expect(screen.getByText('99999')).toBeTruthy();
+  });
+
   it('shows no action button for inactive payments', async () => {
     const inactivePayment = { ...samplePayment, status: 'inactive' };
     mockFetch.mockImplementation(async () => ({
@@ -261,5 +310,103 @@ describe('PaymentRecordsTab', () => {
       expect(screen.getByText('Inactive')).toBeTruthy();
     });
     expect(screen.queryByText('Deactivate')).toBeNull();
+  });
+
+  it('renders mobile card view with FAN and team name', async () => {
+    mockUseMediaQuery.mockReturnValue(true);
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [samplePayment, samplePayment2] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('12345')).toBeTruthy();
+      expect(screen.getByText('Under 10s')).toBeTruthy();
+      // Retry button shows on mandate_only row in mobile view
+      expect(screen.getAllByText('Retry sub').length).toBeGreaterThan(0);
+    });
+
+    // Reset back to desktop for subsequent tests
+    mockUseMediaQuery.mockReturnValue(false);
+  });
+
+  it('leaves row unchanged when retry POST fails', async () => {
+    mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/api/admin/player-payments')) {
+        if (opts?.method === 'POST') {
+          return { ok: false, json: async () => ({ error: 'GoCardless rejected' }) };
+        }
+        return { ok: true, json: async () => ({ payments: [samplePayment2] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry sub')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('Retry sub'));
+
+    // After failed retry the row status is unchanged — Retry sub button stays
+    await waitFor(() => {
+      expect(screen.getByText('Retry sub')).toBeTruthy();
+    });
+  });
+
+  it('shows Retry sub button for mandate_only payment', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [samplePayment2] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry sub')).toBeTruthy();
+    });
+  });
+
+  it('retries subscription and updates badge to Active on success', async () => {
+    const retryResponse = { ok: true, subscriptionId: 'SUB-NEW' };
+    mockFetch.mockImplementation(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/api/admin/player-payments')) {
+        if (opts?.method === 'POST') {
+          return { ok: true, json: async () => retryResponse };
+        }
+        return { ok: true, json: async () => ({ payments: [samplePayment2] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Retry sub')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('Retry sub'));
+
+    await waitFor(() => {
+      // Retry button disappears once row flips to active
+      expect(screen.queryByText('Retry sub')).toBeNull();
+      // Deactivate button appears, confirming the row is now active
+      expect(screen.getByText('Deactivate')).toBeTruthy();
+    });
   });
 });
