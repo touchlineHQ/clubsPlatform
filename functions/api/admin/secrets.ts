@@ -1,7 +1,7 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { encryptSecret, decryptTransport } from "../../lib/secrets";
 
-const ALLOWED_KEYS = ["GC_ACCESS_TOKEN"] as const;
+const ALLOWED_KEYS = ["GC_ACCESS_TOKEN", "GC_WEBHOOK_SECRET"] as const;
 type AllowedKey = typeof ALLOWED_KEYS[number];
 
 function isAllowedKey(key: string): key is AllowedKey {
