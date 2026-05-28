@@ -86,6 +86,31 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge size="sm" variant="light" color={color} radius="xl" styles={BADGE_STYLES}>{label}</Badge>;
 }
 
+// ─── Retry action ─────────────────────────────────────────────────────────────
+
+interface RetryActionProps {
+  payment: PlayerPaymentRow;
+  retryingId: string | null;
+  onRetry: (id: string) => void;
+}
+
+function RetryAction({ payment, retryingId, onRetry }: RetryActionProps) {
+  if (payment.status !== 'mandate_only') return null;
+  return (
+    <Tooltip label="Mandate set up but subscription not yet created — click to retry" withArrow>
+      <Button
+        size="xs"
+        color="blue"
+        variant="subtle"
+        loading={retryingId === payment.id}
+        onClick={() => onRetry(payment.id)}
+      >
+        Retry sub
+      </Button>
+    </Tooltip>
+  );
+}
+
 // ─── Deactivate action ────────────────────────────────────────────────────────
 
 interface DeactivateActionProps {
@@ -129,6 +154,7 @@ export function PaymentRecordsTab({ clubHeaders }: Props) {
   const [sort, setSort]           = useState<SortState>({ key: 'date', dir: 'desc' });
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [deactivatingId, setDeactivatingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const isMobile = useMediaQuery('(max-width: 768px)');
 
   useEffect(() => {
@@ -162,6 +188,27 @@ export function PaymentRecordsTab({ clubHeaders }: Props) {
     }
   };
 
+  const handleRetry = async (id: string) => {
+    setRetryingId(id);
+    try {
+      const res = await fetch('/api/admin/player-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
+        body: JSON.stringify({ id }),
+      });
+      if (res.ok) {
+        const data = await res.json() as { subscriptionId: string };
+        setPayments(prev =>
+          prev.map(p =>
+            p.id === id ? { ...p, status: 'active', subscriptionId: data.subscriptionId } : p
+          )
+        );
+      }
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
   const teamOptions = useMemo(() => {
     const teams = Array.from(new Set(payments.map(p => p.teamName).filter(Boolean))).sort();
     return [{ value: ALL, label: 'All teams' }, ...teams.map(t => ({ value: t, label: t }))];
@@ -180,6 +227,8 @@ export function PaymentRecordsTab({ clubHeaders }: Props) {
     onConfirm: handleDeactivate,
     onCancel:  () => setConfirmId(null),
   };
+
+  const retryProps = { retryingId, onRetry: handleRetry };
 
   if (loading) {
     return <Center h={120}><Loader size="sm" /></Center>;
@@ -254,7 +303,10 @@ export function PaymentRecordsTab({ clubHeaders }: Props) {
                     </Text>
                   </Tooltip>
                   <Text size="xs" c="dimmed">{new Date(p.createdAt).toLocaleDateString('en-GB')}</Text>
-                  <DeactivateAction payment={p} {...deactivateProps} />
+                  <Group gap="xs">
+                    <RetryAction payment={p} {...retryProps} />
+                    <DeactivateAction payment={p} {...deactivateProps} />
+                  </Group>
                 </Stack>
               </Paper>
             ))}
@@ -297,7 +349,10 @@ export function PaymentRecordsTab({ clubHeaders }: Props) {
                   <Table.Td><StatusBadge status={p.status} /></Table.Td>
                   <Table.Td><Text size="xs" c="dimmed">{new Date(p.createdAt).toLocaleDateString('en-GB')}</Text></Table.Td>
                   <Table.Td style={{ width: 1 }}>
-                    <DeactivateAction payment={p} {...deactivateProps} />
+                    <Group gap="xs" wrap="nowrap">
+                      <RetryAction payment={p} {...retryProps} />
+                      <DeactivateAction payment={p} {...deactivateProps} />
+                    </Group>
                   </Table.Td>
                 </Table.Tr>
               ))}

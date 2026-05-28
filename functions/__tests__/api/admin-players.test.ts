@@ -141,7 +141,7 @@ describe('player-payments PATCH', () => {
   });
 
   it('deactivates a payment and returns ok', async () => {
-    const db = makeDb({ run: { meta: { changes: 1 } } });
+    const db = makeDb({ first: { id: 'pay_1', status: 'active' }, run: { meta: { changes: 1 } } });
     const req = patchReq('/api/admin/player-payments', { id: 'pay_1' }, { 'X-Club-Slug': 'test-club' });
     const ctx = makeContext(req, { env: { DB: db as any } });
 
