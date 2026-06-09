@@ -8,9 +8,6 @@ import { theme } from './theme';
 import { init } from './lib/posthog';
 
 init();
-import { init } from './lib/posthog';
-
-init();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

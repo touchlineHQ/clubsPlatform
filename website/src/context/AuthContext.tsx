@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { UserTeamRole } from '../types';
 import { identify, reset } from '../lib/posthog';
-import { identify, reset } from '../lib/posthog';
 
 export interface AuthUser {
   id: string;
