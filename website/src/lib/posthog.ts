@@ -80,7 +80,7 @@ export async function reloadFeatureFlags(): Promise<void> {
  * Check if a feature flag is enabled.
  */
 export function isFeatureEnabled(key: string, options?: { send_event?: boolean }): boolean {
-  return posthog.isFeatureEnabled(key, options ?? { send_event: false });
+  return posthog.isFeatureEnabled(key, options ?? { send_event: false }) ?? false;
 }
 
 /**

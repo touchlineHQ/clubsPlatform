@@ -22,7 +22,7 @@ import { GalleryPage } from './pages/GalleryPage';
 import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
 import { pageview } from './lib/posthog';
-import { FixturesResultsPage from './pages/FixturesResultsPage';
+import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
 import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
