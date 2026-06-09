@@ -21,7 +21,8 @@ import { NewsPage } from './pages/NewsPage';
 import { GalleryPage } from './pages/GalleryPage';
 import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
-import { FixturesResultsPage } from './pages/FixturesResultsPage';
+import { pageview } from './lib/posthog';
+import { FixturesResultsPage from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
 import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
@@ -40,6 +41,7 @@ function NavigationHandler({ onNavigate }: { onNavigate: () => void }) {
   const { pathname } = useLocation();
   useEffect(() => {
     window.scrollTo(0, 0);
+    pageview(pathname);
     onNavigate();
   }, [pathname, onNavigate]);
   return null;
