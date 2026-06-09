@@ -44,7 +44,7 @@ const futureFeed: TeamFeed = {
   generated: '2026-05-12T00:00:00Z',
   fixtures: [{
     id: 'f1',
-    date: '2026-06-01',
+    date: '2027-06-01',
     time: '15:00',
     home_team: 'Test FC',
     away_team: 'Rival FC',
