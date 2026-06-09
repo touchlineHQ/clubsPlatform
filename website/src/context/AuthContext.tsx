@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { UserTeamRole } from '../types';
+import { identify, reset } from '../lib/posthog';
 
 export interface AuthUser {
   id: string;
@@ -45,11 +46,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!meRes.ok) {
         setUser(null);
         setTeamRoles([]);
+        reset();
         return null;
       }
 
       const data = await meRes.json() as { user: AuthUser };
       setUser(data.user);
+      identify({ distinctId: data.user.id, email: data.user.email, name: data.user.name, role: data.user.role, clubSlug: data.user.clubSlug });
 
       if (teamsRes.ok) {
         const teamData = await teamsRes.json() as { teams: UserTeamRole[] };
@@ -62,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setUser(null);
       setTeamRoles([]);
+      reset();
       return null;
     } finally {
       setLoading(false);
