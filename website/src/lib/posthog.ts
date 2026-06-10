@@ -1,7 +1,7 @@
 import posthog from 'posthog-js';
 
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_API_KEY || 'phc_CfHQ76a3hqCFjLJKDvvFaowTsnRiUAFCubTvbvzUpzaD';
-const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com';
+const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST || 'https://p.touchlinehq.co.uk';
 
 /**
  * Initialize PostHog on the frontend. Call once at app startup.
@@ -20,6 +20,7 @@ export function init(): void {
     capture_pageview: true,
     capture_pageleave: true,
     autocapture: true,
+    defaults: '2026-05-30',
     loaded: (ph) => {
       if (import.meta.env.DEV) {
         ph.opt_out_capturing();
