@@ -1,7 +1,7 @@
 import posthog from 'posthog-js';
 
-const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_API_KEY || '';
-const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST || 'https://us.i.posthog.com';
+const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_API_KEY || 'phc_CfHQ76a3hqCFjLJKDvvFaowTsnRiUAFCubTvbvzUpzaD';
+const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST || 'https://eu.i.posthog.com';
 
 /**
  * Initialize PostHog on the frontend. Call once at app startup.
