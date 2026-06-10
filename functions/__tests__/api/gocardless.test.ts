@@ -427,6 +427,128 @@ describe('GET /api/gocardless/confirm', () => {
     vi.unstubAllGlobals();
   });
 
+  it('cancels duplicate new mandate and reuses prior subscription when a prior payment row exists for a different mandate', async () => {
+    const cancelCalls: string[] = [];
+    const subscriptionPosts: number[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(typeof url === 'object' && 'url' in url ? (url as Request).url : url);
+      if (urlStr.includes('/billing_requests/BRQ-1') && (!init || init.method === 'GET' || !init.method)) {
+        return new Response(JSON.stringify({
+          billing_requests: {
+            id: 'BRQ-1',
+            status: 'fulfilled',
+            metadata: { registration_id: 'reg_1', reference: 'REF-1' },
+            // NEW mandate from second billing request
+            links: { mandate_request_mandate: 'MND-NEW' },
+          },
+        }), { status: 200 });
+      }
+      if (urlStr.includes('/mandates/MND-NEW/actions/cancel')) {
+        cancelCalls.push(urlStr);
+        return new Response(JSON.stringify({ mandates: { id: 'MND-NEW', status: 'cancelled' } }), { status: 200 });
+      }
+      if (urlStr.includes('/subscriptions') && init?.method === 'POST') {
+        subscriptionPosts.push(1);
+        return new Response(JSON.stringify({ subscriptions: { id: 'SUB-SHOULD-NOT-BE-CREATED' } }), { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 1st .first() = pricing lookup; 2nd .first() = prior payment lookup
+    const db = makeDb({
+      first: [
+        defaultPricingRow,
+        { mandateId: 'MND-OLD', subscriptionId: 'SUB-OLD', status: 'active' },
+      ],
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+
+    expect(res.status).toBe(302);
+    const location = res.headers.get('location') ?? '';
+    expect(location).toContain('/payment-success');
+    expect(location).toContain('existing=1');
+    expect(location).toContain('mandate=MND-OLD');
+    expect(location).toContain('subscription=SUB-OLD');
+    // The new mandate from the duplicate billing request was cancelled.
+    expect(cancelCalls.length).toBe(1);
+    // No new GC subscription was created.
+    expect(subscriptionPosts.length).toBe(0);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('does NOT dedupe when the prior payment row uses the same mandate (replayed billing request)', async () => {
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Prior payment matches the SAME mandate the new billing request resolves
+    // to — confirm.ts should fall through to the GC-side per-mandate idempotency.
+    const db = makeDb({
+      first: [
+        defaultPricingRow,
+        { mandateId: 'MND-1', subscriptionId: 'SUB-OLD', status: 'active' },
+      ],
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-success');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('does NOT dedupe when prior payment is mandate_only (no subscription yet) — falls through to retry', async () => {
+    const subscriptionPosts: number[] = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = String(typeof url === 'object' && 'url' in url ? (url as Request).url : url);
+      if (urlStr.includes('/billing_requests/BRQ-1') && (!init || init.method === 'GET' || !init.method)) {
+        return new Response(JSON.stringify({
+          billing_requests: {
+            id: 'BRQ-1',
+            status: 'fulfilled',
+            metadata: { registration_id: 'reg_1', reference: 'REF-1' },
+            links: { mandate_request_mandate: 'MND-NEW' },
+          },
+        }), { status: 200 });
+      }
+      if (urlStr.includes('/subscriptions?mandate=')) {
+        return new Response(JSON.stringify({ subscriptions: [] }), { status: 200 });
+      }
+      if (urlStr.includes('/subscriptions') && init?.method === 'POST') {
+        subscriptionPosts.push(1);
+        return new Response(JSON.stringify({ subscriptions: { id: 'SUB-NEW', status: 'active' } }), { status: 200 });
+      }
+      return new Response('Not found', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({
+      first: [
+        defaultPricingRow,
+        { mandateId: 'MND-OLD', subscriptionId: null, status: 'mandate_only' },
+      ],
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-success');
+    // A new subscription IS created when no prior subscription exists.
+    expect(subscriptionPosts.length).toBe(1);
+
+    vi.unstubAllGlobals();
+  });
+
   it('omits start_date when the subscription level has no configured startDate', async () => {
     const captured = { value: undefined as any };
     const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });

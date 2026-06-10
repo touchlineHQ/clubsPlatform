@@ -54,6 +54,14 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_team_status_sub_level_clubTeam" ON "team_status_subscription_level" ("clubSlug", "teamName")`,
   `CREATE TABLE IF NOT EXISTS "registration_subscription_level" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_subscription_level_levelId" ON "registration_subscription_level" ("subscriptionLevelId")`,
+  `CREATE TABLE IF NOT EXISTS "gc_webhook_event" ("id" TEXT PRIMARY KEY NOT NULL, "resourceType" TEXT NOT NULL, "action" TEXT NOT NULL, "mandateId" TEXT, "subscriptionId" TEXT, "paymentId" TEXT, "rawBody" TEXT NOT NULL, "receivedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_mandateId" ON "gc_webhook_event" ("mandateId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_subscriptionId" ON "gc_webhook_event" ("subscriptionId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_receivedAt" ON "gc_webhook_event" ("receivedAt")`,
+  `CREATE TABLE IF NOT EXISTS "admin_audit_log" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "adminId" TEXT NOT NULL, "action" TEXT NOT NULL, "targetTable" TEXT NOT NULL, "targetId" TEXT NOT NULL, "oldStatus" TEXT, "newStatus" TEXT, "note" TEXT, "createdAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_clubSlug" ON "admin_audit_log" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_targetId" ON "admin_audit_log" ("targetId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_createdAt" ON "admin_audit_log" ("createdAt")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [

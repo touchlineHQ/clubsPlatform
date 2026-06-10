@@ -201,6 +201,62 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     );
   }
 
+  // Cross-mandate dedupe: GC's per-mandate subscription idempotency below only
+  // catches replays against the *same* mandate. If the player completes the
+  // flow twice (timeout, retry hours apart) they end up with two mandates. We
+  // store player_payment.reference as `<reference>-<last-8-of-billing-request>`
+  // — match the logical prefix to detect a prior successful setup against a
+  // different mandate. If found, cancel the new mandate and reuse the existing
+  // subscription so the player isn't double-charged.
+  const priorPayment = await env.DB
+    .prepare(
+      `SELECT mandateId, subscriptionId, status FROM "player_payment"
+         WHERE clubSlug = ?
+           AND registrationId = ?
+           AND reference LIKE ? || '-________'
+           AND status IN ('active', 'mandate_only')
+         ORDER BY updatedAt DESC
+         LIMIT 1`
+    )
+    .bind(clubSlug, registrationId, reference)
+    .first<{ mandateId: string; subscriptionId: string | null; status: string }>();
+
+  if (
+    priorPayment &&
+    priorPayment.subscriptionId &&
+    priorPayment.mandateId !== mandateId
+  ) {
+    // Best-effort cancel of the duplicate new mandate. Failures here are
+    // non-fatal — the player just ends up with an extra cancellable mandate
+    // visible in GoCardless; they won't be charged because we don't create a
+    // subscription against it.
+    await fetch(`${gcBase}/mandates/${mandateId}/actions/cancel`, {
+      method: 'POST',
+      headers: gcHeaders,
+      body: JSON.stringify({}),
+    }).catch((e) => console.error('Failed to cancel duplicate mandate', e));
+
+    const posthog = getPostHog(env);
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: registrationId,
+        event: 'payment duplicate mandate cancelled',
+        properties: {
+          club_slug: clubSlug,
+          reference,
+          new_mandate_id: mandateId,
+          existing_mandate_id: priorPayment.mandateId,
+          existing_subscription_id: priorPayment.subscriptionId,
+        },
+      });
+    }
+
+    return Response.redirect(
+      `${origin}/#/payment-success?mandate=${priorPayment.mandateId}&subscription=${priorPayment.subscriptionId}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}&existing=1`,
+      302
+    );
+  }
+
   // Idempotency: reuse existing non-terminated subscription with same reference
   const listRes = await fetch(`${gcBase}/subscriptions?mandate=${mandateId}`, {
     headers: gcHeaders,

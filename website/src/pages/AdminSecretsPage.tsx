@@ -38,7 +38,7 @@ export function AdminSecretsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const ALLOWED_KEYS = ['GC_ACCESS_TOKEN'];
+  const ALLOWED_KEYS = ['GC_ACCESS_TOKEN', 'GC_WEBHOOK_SECRET'];
 
   const [newKey, setNewKey] = useState<string | null>(null);
   const [newValue, setNewValue] = useState('');
