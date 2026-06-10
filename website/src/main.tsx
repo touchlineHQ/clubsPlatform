@@ -21,9 +21,9 @@ function ErrorFallback() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <PostHogProvider
-      apiKey="phc_CfHQ76a3hqCFjLJKDvvFaowTsnRiUAFCubTvbvzUpzaD"
+      apiKey={import.meta.env.VITE_POSTHOG_API_KEY}
       options={{
-        api_host: 'https://p.touchlinehq.co.uk',
+        api_host: import.meta.env.VITE_POSTHOG_HOST,
       }}
     >
       <PostHogErrorBoundary fallback={<ErrorFallback />}>
