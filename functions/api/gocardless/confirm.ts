@@ -3,6 +3,7 @@ import { randomId, nowMs } from '../../lib/api-helpers';
 import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
+import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
 import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
 
 async function upsertPaymentRecord(
@@ -79,7 +80,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   }
 
   // We need the club_slug to look up the GC token, but we can't trust the URL
-  // value. The token lookup tolerates an initial guess from the URL — if it
+  // params. The token lookup tolerates an initial guess from the URL — if it
   // mismatches the metadata after fetch we redirect to cancelled.
   const urlClubSlug = url.searchParams.get('club_slug');
 
@@ -238,8 +239,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
     const posthog = getPostHog(env);
     if (posthog) {
-      await posthog.captureImmediate({
-        distinctId: registrationId,
+      const fanId = await resolveFanIdFromRegistration(env.DB, registrationId);
+      // Fire-and-forget: don't block response on PostHog
+      posthog.captureImmediate({
+        distinctId: fanId || registrationId,
         event: 'payment duplicate mandate cancelled',
         properties: {
           club_slug: clubSlug,
@@ -248,7 +251,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           existing_mandate_id: priorPayment.mandateId,
           existing_subscription_id: priorPayment.subscriptionId,
         },
-      });
+      }).catch(err => console.error('PostHog capture failed', err));
     }
 
     return Response.redirect(
@@ -319,11 +322,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }
     const posthog = getPostHog(env);
     if (posthog) {
-      await posthog.captureImmediate({
-        distinctId: registrationId || 'anonymous',
+      const fanId = await resolveFanIdFromRegistration(env.DB, registrationId);
+      // Fire-and-forget: don't block response on PostHog
+      posthog.captureImmediate({
+        distinctId: fanId || registrationId,
         event: 'payment failed',
         properties: { club_slug: clubSlug, reference, mandate_id: mandateId, reason: 'subscription_creation_failed' },
-      });
+      }).catch(err => console.error('PostHog capture failed', err));
     }
     return Response.redirect(
       `${origin}/#/payment-success?mandate=${mandateId}&warning=subscription_failed&ref=${encodeURIComponent(reference)}`,
@@ -345,8 +350,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const posthog = getPostHog(env);
   if (posthog) {
-    await posthog.captureImmediate({
-      distinctId: registrationId || 'anonymous',
+    const fanId = await resolveFanIdFromRegistration(env.DB, registrationId);
+    // Fire-and-forget: don't block response on PostHog
+    posthog.captureImmediate({
+      distinctId: fanId || registrationId,
       event: 'payment completed',
       properties: {
         club_slug: clubSlug,
@@ -356,7 +363,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         amount_in_pence: amountInPence,
         interval_unit: intervalUnit,
       },
-    });
+    }).catch(err => console.error('PostHog capture failed', err));
   }
 
   return Response.redirect(

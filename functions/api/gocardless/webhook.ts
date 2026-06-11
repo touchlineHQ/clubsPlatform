@@ -2,6 +2,7 @@ import { ensureTables } from '../../lib/ensure-tables';
 import { nowMs } from '../../lib/api-helpers';
 import { decryptSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
+import { resolveFanIdFromGCResource } from '../../lib/posthog-identity';
 import type { Env } from './_types';
 
 interface GCWebhookEvent {
@@ -126,6 +127,9 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
 
   const posthog = getPostHog(env);
 
+  // Resolve fanId for PostHog identity stitching (frontend uses fanId as distinctId)
+  const fanId = await resolveFanIdFromGCResource(env.DB, mandateId, subscriptionId);
+
   const recordEvent = async () => {
     await env.DB
       .prepare(
@@ -160,8 +164,9 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
         .run();
     }
     if (posthog) {
-      await posthog.captureImmediate({
-        distinctId: mandateId,
+      // Fire-and-forget: don't block webhook response on PostHog
+      posthog.captureImmediate({
+        distinctId: fanId || mandateId,
         event: `gc mandate ${ev.action}`,
         properties: {
           mandate_id: mandateId,
@@ -169,7 +174,7 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
           cause: ev.details?.cause,
           description: ev.details?.description,
         },
-      });
+      }).catch(err => console.error('PostHog capture failed', err));
     }
     await recordEvent();
     return;
@@ -189,8 +194,9 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
         .run();
     }
     if (posthog) {
-      await posthog.captureImmediate({
-        distinctId: subscriptionId,
+      // Fire-and-forget: don't block webhook response on PostHog
+      posthog.captureImmediate({
+        distinctId: fanId || subscriptionId,
         event: `gc subscription ${ev.action}`,
         properties: {
           subscription_id: subscriptionId,
@@ -198,7 +204,7 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
           cause: ev.details?.cause,
           description: ev.details?.description,
         },
-      });
+      }).catch(err => console.error('PostHog capture failed', err));
     }
     await recordEvent();
     return;
@@ -208,8 +214,9 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
     // Single payment events don't change mandate/subscription status — a single
     // failed collection is recoverable. We log for visibility only.
     if (posthog) {
-      await posthog.captureImmediate({
-        distinctId: paymentId,
+      // Fire-and-forget: don't block webhook response on PostHog
+      posthog.captureImmediate({
+        distinctId: fanId || paymentId,
         event: `gc payment ${ev.action}`,
         properties: {
           payment_id: paymentId,
@@ -219,7 +226,7 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
           cause: ev.details?.cause,
           description: ev.details?.description,
         },
-      });
+      }).catch(err => console.error('PostHog capture failed', err));
     }
     await recordEvent();
     return;
