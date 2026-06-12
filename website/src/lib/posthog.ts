@@ -32,10 +32,12 @@ export function init(): void {
 
 /**
  * Track a page view manually — call on every route change.
+ * Always uses the full absolute URL (window.location.href) to ensure
+ * PostHog receives a valid URL, not a relative path.
  */
-export function pageview(path?: string): void {
+export function pageview(): void {
   posthog.capture('$pageview', {
-    $current_url: path || window.location.href,
+    $current_url: window.location.href,
   });
 }
 
