@@ -43,7 +43,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!clubFeedSlug) return json({ error: "clubFeedSlug is required" }, { status: 400 });
 
   const feedRes = await fetch(
-    `https://raw.githubusercontent.com/touchlineHQ/fulltimeFeeds/main/feeds/clubs/${clubFeedSlug}.json`
+    `https://fixtures.touchlinehq.co.uk/feeds/clubs/${clubFeedSlug}.json`
   );
   if (!feedRes.ok) return json({ error: "Failed to fetch club fixture feed" }, { status: 502 });
 

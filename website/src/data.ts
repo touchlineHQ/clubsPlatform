@@ -1,10 +1,10 @@
 import type { AppData, Club, ClubEntry, ClubFeed, CommitteeData, GalleryItem, LiveTeam, MatchdayItem, NewsItem, RegistrationItem, VisibleItems, TeamFeed, TeamsData } from './types';
 
 const CLUBS_BASE = '/data/clubs/';
-const FEEDS_BASE = 'https://raw.githubusercontent.com/touchlineHQ/fulltimeFeeds/main/feeds/';
-const CALENDARS_BASE = 'https://raw.githubusercontent.com/touchlineHQ/fulltimeFeeds/main/calendars/';
+const FEEDS_BASE = 'https://fixtures.touchlinehq.co.uk/feeds/';
+const CALENDARS_BASE = 'https://fixtures.touchlinehq.co.uk/calendars/';
 const INDEX_URL = `${FEEDS_BASE}index.json`;
-const CLUBS_API_URL = 'https://api.github.com/repos/touchlineHQ/fulltimeFeeds/contents/feeds/clubs';
+const CLUBS_API_URL = 'https://fixtures.touchlinehq.co.uk/feeds/index.json';
 
 export interface FeedTeamEntry {
   name: string;
@@ -12,15 +12,24 @@ export interface FeedTeamEntry {
   league: string;
 }
 
-/** Fetch the list of available club feed slugs from the clubs directory. */
+interface IndexPayload {
+  clubs: FeedTeamEntry[];
+  // If there are other root keys in your index.json (like leagues), you can add them here
+}
+
+/** Fetch the list of available club feed slugs from the centralized R2 index. */
 export async function loadClubSlugs(): Promise<string[]> {
   try {
     const res = await fetch(CLUBS_API_URL);
     if (!res.ok) return [];
-    const files = await res.json() as { name: string }[];
-    return files
-      .filter(f => f.name.endsWith('.json'))
-      .map(f => f.name.replace('.json', ''))
+    
+    const data = await res.json() as IndexPayload;
+    
+    // Safety check in case the clubs key is missing or empty
+    if (!data || !Array.isArray(data.clubs)) return [];
+    
+    return data.clubs
+      .map(club => club.slug)
       .sort();
   } catch {
     return [];
