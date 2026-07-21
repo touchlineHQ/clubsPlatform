@@ -19,10 +19,23 @@ beforeEach(() => {
 // ─── loadClubSlugs ────────────────────────────────────────────────────────────
 
 describe('loadClubSlugs', () => {
-  it('returns sorted slugs stripped of .json extension on success', async () => {
+  it('returns sorted slugs on success', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => [{ name: 'east-leake.json' }, { name: 'riverside.json' }],
+      json: async () => ({
+        clubs: [
+          {
+            slug: 'east-leake',
+            name: 'East Leake',
+            league: 'Something'
+          },
+          {
+            slug: 'riverside',
+            name: 'Riverside',
+            league: 'Something Else'
+          }
+        ]
+      }),
     });
 
     const result = await loadClubSlugs();
