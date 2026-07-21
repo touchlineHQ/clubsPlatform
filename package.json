@@ -22,7 +22,7 @@
     "posthog-node": "^5.34.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241230.0",
+    "@cloudflare/workers-types": "^5.20260721.1",
     "@mantine/core": "^9.0.0",
     "@mantine/dates": "^9.0.0",
     "@mantine/hooks": "^9.0.0",
@@ -36,7 +36,7 @@
     "jsdom": "^25.0.0",
     "react-router-dom": "^7.13.2",
     "vitest": "^2.0.0",
-    "wrangler": "^4.0.0",
+    "wrangler": "^4.112.0",
     "xlsx": "^0.18.5"
   }
 }
