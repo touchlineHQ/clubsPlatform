@@ -190,9 +190,13 @@ describe('onRequestPost — marking as paid', () => {
 
     expect(res.status).toBe(200);
     expect(body.paymentId).toBe('pay_old');
-    // Reusing the row is what keeps UNIQUE(clubSlug, reference) satisfied.
+    const lookup = findSql(db, 'AND registrationId = ?');
+    expect(lookup).toBeDefined();
+    expect(lookup!.bindings).toEqual(['test-club', 'reg_1']);
     expect(findSql(db, 'INSERT INTO "player_payment"')).toBeUndefined();
-    expect(findSql(db, `SET status = 'manual'`)).toBeDefined();
+    const update = findSql(db, `SET reference = ?, status = 'manual'`);
+    expect(update).toBeDefined();
+    expect(update!.bindings[0]).toBe(MANUAL_REFERENCE);
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ targetId: 'pay_old', oldStatus: 'inactive', newStatus: 'manual' }),

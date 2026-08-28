@@ -658,6 +658,7 @@ export function RegistrationsPage() {
   const [manualNote, setManualNote] = useState('');
   const [manualBusyId, setManualBusyId] = useState<string | null>(null);
   const [manualError, setManualError] = useState('');
+  const [unmarkPaidError, setUnmarkPaidError] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -799,7 +800,7 @@ export function RegistrationsPage() {
 
   const handleUnmarkPaid = useCallback(async (row: RegistrationRow) => {
     setManualBusyId(row.registrationId);
-    setLevelError('');
+    setUnmarkPaidError('');
     try {
       const res = await fetch(
         `/api/admin/manual-payment?registrationId=${encodeURIComponent(row.registrationId)}`,
@@ -811,7 +812,7 @@ export function RegistrationsPage() {
       }
       await refresh();
     } catch (e) {
-      setLevelError(e instanceof Error ? e.message : 'Failed to remove the manual override');
+      setUnmarkPaidError(e instanceof Error ? e.message : 'Failed to remove the manual override');
     } finally {
       setManualBusyId(null);
     }
@@ -895,6 +896,7 @@ export function RegistrationsPage() {
         </Group>
       </Group>
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
+      {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
       {club.length === 0 ? (
         <EmptyState isAdmin={isAdmin} scope="club" />
       ) : filteredClub && filteredClub.length === 0 ? (

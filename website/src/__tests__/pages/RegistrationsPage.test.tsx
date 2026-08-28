@@ -306,6 +306,21 @@ describe('RegistrationsPage', () => {
         );
       });
     });
+
+    it('shows an undo failure in the club content', async () => {
+      await renderClubTab([manualRow]);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: 'Could not undo this payment' }),
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Undo paid/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Could not undo this payment')).toBeTruthy();
+      });
+    });
   });
 
   it('shows "No registrations linked to your account yet" when personal is empty and scope is user', async () => {

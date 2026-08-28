@@ -118,8 +118,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const now = nowMs();
 
   const existing = await context.env.DB
-    .prepare(`SELECT id, status FROM "player_payment" WHERE clubSlug = ? AND reference = ?`)
-    .bind(clubSlug, reference)
+    .prepare(`SELECT id, status FROM "player_payment" WHERE clubSlug = ? AND registrationId = ?`)
+    .bind(clubSlug, body.registrationId)
     .first<{ id: string; status: string }>();
 
   if (existing?.status === 'manual') {
@@ -130,13 +130,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let oldStatus: string | null;
 
   if (existing) {
-    // Re-marking after an undo — reuse the row rather than colliding with
-    // UNIQUE(clubSlug, reference).
+    // Re-marking after an undo — reuse the registration's existing row.
     paymentId = existing.id;
     oldStatus = existing.status;
     await context.env.DB
-      .prepare(`UPDATE "player_payment" SET status = 'manual', updatedAt = ? WHERE id = ?`)
-      .bind(now, paymentId)
+      .prepare(`UPDATE "player_payment" SET reference = ?, status = 'manual', updatedAt = ? WHERE id = ?`)
+      .bind(reference, now, paymentId)
       .run();
   } else {
     paymentId = randomId('pay');
