@@ -187,6 +187,10 @@ describe('GET /api/gocardless/confirm', () => {
     brMetadata?: Record<string, string>;
     /** Captures the body of the POST /subscriptions call for assertions. */
     capturedSubscriptionBody?: { value: any };
+    /** Mandate returned by GET /mandates/{id}. */
+    mandate?: Record<string, any>;
+    /** Non-200 status for GET /mandates/{id}, to exercise the fail-soft path. */
+    mandateStatus?: number;
   } = {}) {
     const {
       brStatus = 'fulfilled',
@@ -195,6 +199,8 @@ describe('GET /api/gocardless/confirm', () => {
       newSubscription = { id: 'SUB-1', status: 'active' },
       brMetadata = { registration_id: 'reg_1', reference: 'REF-1' },
       capturedSubscriptionBody,
+      mandate,
+      mandateStatus,
     } = overrides;
 
     return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -224,6 +230,29 @@ describe('GET /api/gocardless/confirm', () => {
               status: 'fulfilled',
               metadata: brMetadata,
               links: { mandate_request_mandate: mandateId },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      // Mandate lookup for start_date clamping. Must not intercept the
+      // POST /mandates/{id}/actions/cancel call made by the duplicate-mandate path.
+      if (
+        urlStr.includes('/mandates/') &&
+        !urlStr.includes('/actions/') &&
+        (!init || !init.method || init.method === 'GET')
+      ) {
+        if (mandateStatus && mandateStatus !== 200) {
+          return new Response('mandate error', { status: mandateStatus });
+        }
+        return new Response(
+          JSON.stringify({
+            mandates: {
+              id: mandateId,
+              status: 'pending_submission',
+              next_possible_charge_date: null,
+              ...mandate,
             },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -402,6 +431,112 @@ describe('GET /api/gocardless/confirm', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/payment-cancelled');
     expect(res.headers.get('location')).toContain('no_level');
+
+    vi.unstubAllGlobals();
+  });
+
+  // --- start_date must respect the mandate's Bacs lead time -----------------
+
+  it('clamps start_date forward to the mandate next_possible_charge_date', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({
+      capturedSubscriptionBody: captured,
+      mandate: { next_possible_charge_date: '2099-09-04' },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({
+      first: { ...defaultPricingRow, startDate: '2099-09-01' },
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-success');
+    expect(captured.value.start_date).toBe('2099-09-04');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps the configured start_date when the mandate is chargeable earlier', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({
+      capturedSubscriptionBody: captured,
+      mandate: { next_possible_charge_date: '2099-08-01' },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({
+      first: { ...defaultPricingRow, startDate: '2099-09-01' },
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    await confirmOnRequestGet(ctx as any);
+
+    expect(captured.value.start_date).toBe('2099-09-01');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('still creates the subscription when the mandate lookup fails', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured, mandateStatus: 500 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({
+      first: { ...defaultPricingRow, startDate: '2099-09-01' },
+      run: { meta: { changes: 1 } },
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    const res = await confirmOnRequestGet(ctx as any);
+
+    // Fail-soft: proceed with the unclamped date rather than aborting the payer's flow.
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toContain('/payment-success');
+    expect(captured.value.start_date).toBe('2099-09-01');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('skips the mandate lookup entirely when no start date is configured', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    await confirmOnRequestGet(ctx as any);
+
+    expect(captured.value.start_date).toBeUndefined();
+    const mandateGets = fetchMock.mock.calls.filter(([url]: any[]) =>
+      String(url).includes('/mandates/'),
+    );
+    expect(mandateGets).toHaveLength(0);
+
+    vi.unstubAllGlobals();
+  });
+
+  it('caps the subscription at the configured number of payments', async () => {
+    const captured = { value: undefined as any };
+    const fetchMock = makeFetchMock({ capturedSubscriptionBody: captured });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    await confirmOnRequestGet(ctx as any);
+
+    expect(captured.value.count).toBe(12);
 
     vi.unstubAllGlobals();
   });

@@ -1,5 +1,5 @@
 import type { Env } from '../api/gocardless/_types';
-import type { GCBillingRequest, GCBillingRequestFlow } from '../api/gocardless/_types';
+import type { GCBillingRequest, GCBillingRequestFlow, GCMandate } from '../api/gocardless/_types';
 import { getSecret } from './secrets';
 
 export interface CreateLinkInput {
@@ -21,17 +21,62 @@ export interface CreateLinkInput {
  * Resolve the GoCardless subscription start_date from a configured start date.
  * If today is already past the configured date, push to the first of next month
  * so we don't try to start a subscription in the past.
- * Returns YYYY-MM-DD or null if no configured date.
+ *
+ * `earliestChargeable` is the mandate's next_possible_charge_date. Bacs mandates
+ * carry a submission lead time (roughly 3-5 working days, longer while still
+ * pending_submission) and GoCardless rejects anything earlier with "start_date
+ * must be on or after mandate's next_possible_charge_date". Clamping is applied
+ * to whichever branch above produced the date — the first-of-next-month fallback
+ * needs it just as much, since on the 30th that date is a day away.
+ *
+ * ISO YYYY-MM-DD strings compare lexicographically the same way they compare
+ * chronologically, so plain string comparison is correct throughout.
+ *
+ * Returns YYYY-MM-DD, or null if no date is configured — callers omit
+ * start_date entirely in that case and let GoCardless pick the earliest itself.
  */
 export function resolveSubscriptionStartDate(
   configured: string | null | undefined,
   today: Date = new Date(),
+  earliestChargeable: string | null = null,
 ): string | null {
   if (!configured || !/^\d{4}-\d{2}-\d{2}$/.test(configured)) return null;
   const todayIso = today.toISOString().slice(0, 10);
-  if (configured >= todayIso) return configured;
-  const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
-  return nextMonth.toISOString().slice(0, 10);
+  let resolved = configured;
+  if (configured < todayIso) {
+    const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+    resolved = nextMonth.toISOString().slice(0, 10);
+  }
+  if (earliestChargeable && /^\d{4}-\d{2}-\d{2}$/.test(earliestChargeable)) {
+    return earliestChargeable > resolved ? earliestChargeable : resolved;
+  }
+  return resolved;
+}
+
+/**
+ * Read a mandate's earliest chargeable date, for clamping a subscription's
+ * start_date. Returns null when the mandate can't be read or has no such date
+ * (cancelled, failed, expired) — both mean the same thing to every caller:
+ * don't clamp. Never throws; confirm.ts has no try/catch around the payer flow,
+ * so a rejection here would turn a redirect into a 500.
+ */
+export async function fetchNextPossibleChargeDate(
+  gcBase: string,
+  gcHeaders: Record<string, string>,
+  mandateId: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch(`${gcBase}/mandates/${mandateId}`, { headers: gcHeaders });
+    if (!res.ok) {
+      console.error('Mandate lookup failed', { mandateId, status: res.status });
+      return null;
+    }
+    const { mandates } = await res.json<{ mandates: GCMandate }>();
+    return mandates?.next_possible_charge_date ?? null;
+  } catch (e) {
+    console.error('Mandate lookup threw', { mandateId, error: e });
+    return null;
+  }
 }
 
 export interface CreateLinkResult {

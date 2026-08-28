@@ -8,7 +8,11 @@ vi.mock('../../lib/secrets', () => ({ getSecret: mockGetSecret }));
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal('fetch', mockFetch);
 
-import { createGoCardlessLink, resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import {
+  createGoCardlessLink,
+  resolveSubscriptionStartDate,
+  fetchNextPossibleChargeDate,
+} from '../../lib/gocardless-link';
 
 const baseEnv = {
   DB: {} as D1Database,
@@ -215,5 +219,79 @@ describe('resolveSubscriptionStartDate', () => {
   it('rolls into the next year when today is in December', () => {
     const today = new Date('2024-12-20T12:00:00Z');
     expect(resolveSubscriptionStartDate('2024-12-01', today)).toBe('2025-01-01');
+  });
+});
+
+describe('resolveSubscriptionStartDate — mandate clamping', () => {
+  const today = new Date('2024-05-10T12:00:00Z');
+
+  it('ignores the mandate date when no start date is configured', () => {
+    expect(resolveSubscriptionStartDate(null, today, '2024-09-04')).toBeNull();
+  });
+
+  it('returns the configured date when the mandate has no chargeable date', () => {
+    expect(resolveSubscriptionStartDate('2024-09-01', today, null)).toBe('2024-09-01');
+  });
+
+  it('returns the configured date when the mandate date is malformed', () => {
+    expect(resolveSubscriptionStartDate('2024-09-01', today, 'not-a-date')).toBe('2024-09-01');
+  });
+
+  it('clamps forward when the mandate cannot be charged until later', () => {
+    expect(resolveSubscriptionStartDate('2024-09-01', today, '2024-09-04')).toBe('2024-09-04');
+  });
+
+  it('keeps the configured date when the mandate is chargeable earlier', () => {
+    expect(resolveSubscriptionStartDate('2024-09-01', today, '2024-08-01')).toBe('2024-09-01');
+  });
+
+  it('keeps the configured date when the two are equal', () => {
+    expect(resolveSubscriptionStartDate('2024-09-04', today, '2024-09-04')).toBe('2024-09-04');
+  });
+
+  it('compares correctly across a year boundary', () => {
+    expect(resolveSubscriptionStartDate('2024-12-31', today, '2025-01-05')).toBe('2025-01-05');
+  });
+
+  it('clamps the past-date fallback, which is otherwise only a day away', () => {
+    // Configured date has passed, so the fallback is the first of next month —
+    // one calendar day out, and inside the Bacs lead time.
+    const endOfMonth = new Date('2025-05-30T12:00:00Z');
+    expect(resolveSubscriptionStartDate('2025-05-01', endOfMonth, null)).toBe('2025-06-01');
+    expect(resolveSubscriptionStartDate('2025-05-01', endOfMonth, '2025-06-05')).toBe('2025-06-05');
+  });
+});
+
+describe('fetchNextPossibleChargeDate', () => {
+  const HEADERS = { Authorization: 'Bearer tok' };
+  const GC_BASE = 'https://api-sandbox.gocardless.com';
+
+  function mandateResponse(next_possible_charge_date: string | null) {
+    return new Response(
+      JSON.stringify({ mandates: { id: 'MND-1', status: 'pending_submission', next_possible_charge_date } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it('returns the mandate earliest chargeable date', async () => {
+    mockFetch.mockResolvedValueOnce(mandateResponse('2024-09-04'));
+
+    await expect(fetchNextPossibleChargeDate(GC_BASE, HEADERS, 'MND-1')).resolves.toBe('2024-09-04');
+    expect(mockFetch).toHaveBeenCalledWith(`${GC_BASE}/mandates/MND-1`, { headers: HEADERS });
+  });
+
+  it('returns null when the mandate has no chargeable date', async () => {
+    mockFetch.mockResolvedValueOnce(mandateResponse(null));
+    await expect(fetchNextPossibleChargeDate(GC_BASE, HEADERS, 'MND-1')).resolves.toBeNull();
+  });
+
+  it('returns null on a non-2xx response', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    await expect(fetchNextPossibleChargeDate(GC_BASE, HEADERS, 'MND-1')).resolves.toBeNull();
+  });
+
+  it('returns null without throwing when the request itself fails', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('network down'));
+    await expect(fetchNextPossibleChargeDate(GC_BASE, HEADERS, 'MND-1')).resolves.toBeNull();
   });
 });

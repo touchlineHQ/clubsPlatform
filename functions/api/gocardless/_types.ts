@@ -27,6 +27,17 @@ export interface GCBillingRequestFlow {
   exit_uri: string;
 }
 
+export interface GCMandate {
+  id: string;
+  status: string;
+  /**
+   * YYYY-MM-DD. Earliest date a payment against this mandate can be charged,
+   * accounting for Bacs submission lead time. Null for mandates that can never
+   * be charged again (cancelled, failed, expired).
+   */
+  next_possible_charge_date: string | null;
+}
+
 export interface GCSubscription {
   id: string;
   status: string;

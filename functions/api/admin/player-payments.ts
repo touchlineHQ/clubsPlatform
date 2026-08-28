@@ -3,8 +3,20 @@ import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../.
 import { getPostHog } from '../../lib/posthog';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
-import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import {
+  resolveSubscriptionStartDate,
+  fetchNextPossibleChargeDate,
+} from '../../lib/gocardless-link';
+import { stripReferenceSuffix } from '../../lib/payment-reference';
 import type { GCSubscription } from '../gocardless/_types';
+
+/**
+ * Subscription statuses meaning "will never collect", so it is safe to create a
+ * replacement. Deliberately excludes 'finished': that means every payment of a
+ * count-limited plan was collected, so the payer has already paid in full and
+ * creating a replacement would charge them the whole plan again.
+ */
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(['cancelled', 'customer_approval_denied']);
 
 interface PlayerPaymentRow {
   id: string;
@@ -162,6 +174,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     'Content-Type': 'application/json',
   };
 
+  // player_payment.reference carries an 8-char billing-request suffix, but
+  // confirm.ts writes the *logical* reference into subscription metadata. Match
+  // both: the logical form for subscriptions created by the payer-facing flow,
+  // the suffixed form for those created by earlier runs of this handler.
+  const dbRef = payment.reference;
+  const logicalRef = stripReferenceSuffix(dbRef);
+  const refCandidates = new Set([dbRef, logicalRef]);
+
   // Idempotency: check GC for an existing live subscription before creating one
   const listRes = await fetch(`${gcBase}/subscriptions?mandate=${payment.mandateId}`, {
     headers: gcHeaders,
@@ -169,21 +189,31 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (listRes.ok) {
     const { subscriptions: existing } = await listRes.json<{ subscriptions: GCSubscription[] }>();
-    const match = existing.find(
-      (s) =>
-        s.metadata?.reference === payment.reference &&
-        s.status !== 'cancelled' &&
-        s.status !== 'customer_approval_denied'
-    );
+    const live = existing.filter((s) => !TERMINAL_SUBSCRIPTION_STATUSES.has(s.status));
+
+    // This mandate was created by a single billing request for a single payment
+    // row, so any live subscription on it belongs to this payment and creating a
+    // second one would double-charge the payer. Prefer a reference match for an
+    // accurate audit trail, but fall back to "any live subscription on this
+    // mandate" — the reference format has already drifted once.
+    const match =
+      live.find((s) => s.metadata?.reference && refCandidates.has(s.metadata.reference)) ?? live[0];
+
     if (match) {
+      const matchedByReference =
+        !!match.metadata?.reference && refCandidates.has(match.metadata.reference);
+      // A finished subscription collected every payment of its plan, so the row
+      // is done rather than live — same mapping the webhook applies.
+      const reconciledStatus = match.status === 'finished' ? 'inactive' : 'active';
+
       // Subscription already exists — reconcile the DB row and return success
       await context.env.DB
         .prepare(
           `UPDATE "player_payment"
-              SET subscriptionId = ?, status = 'active', updatedAt = ?
+              SET subscriptionId = ?, status = ?, updatedAt = ?
             WHERE id = ?`
         )
-        .bind(match.id, nowMs(), payment.id)
+        .bind(match.id, reconciledStatus, nowMs(), payment.id)
         .run();
 
       await writeAuditLog(context.env.DB, {
@@ -193,16 +223,36 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         targetTable: 'player_payment',
         targetId: payment.id,
         oldStatus: 'mandate_only',
-        newStatus: 'active',
-        note: `Existing subscription ${match.id} found on GC; DB reconciled.`,
+        newStatus: reconciledStatus,
+        note: matchedByReference
+          ? `Existing subscription ${match.id} (${match.status}) found on GC; DB reconciled.`
+          : `Existing subscription ${match.id} (${match.status}) found on mandate `
+            + `${payment.mandateId} with reference "${match.metadata?.reference ?? '(none)'}" `
+            + `(expected "${logicalRef}"); DB reconciled rather than creating a duplicate.`,
       });
 
-      return json({ ok: true, subscriptionId: match.id, reconciled: true });
+      return json({
+        ok: true,
+        subscriptionId: match.id,
+        reconciled: true,
+        matchedByReference,
+        status: reconciledStatus,
+      });
     }
   }
 
   const amountInPence = Math.round(payment.yearlyPriceInPence / Math.max(1, payment.intervalCount));
-  const resolvedStartDate = resolveSubscriptionStartDate(payment.startDate);
+
+  // Skipped entirely when no start date is configured — GoCardless then picks
+  // the earliest chargeable date itself.
+  const nextPossible = payment.startDate
+    ? await fetchNextPossibleChargeDate(gcBase, gcHeaders, payment.mandateId)
+    : null;
+  const resolvedStartDate = resolveSubscriptionStartDate(
+    payment.startDate,
+    new Date(),
+    nextPossible,
+  );
 
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
@@ -213,8 +263,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         currency: 'GBP',
         interval_unit: payment.intervalUnit,
         interval: 1,
-        name: payment.reference,
-        metadata: { reference: payment.reference, customer_ref: payment.reference },
+        // Without this the subscription is open-ended and collects forever.
+        count: payment.intervalCount,
+        name: logicalRef,
+        metadata: { reference: logicalRef, customer_ref: logicalRef },
         links: { mandate: payment.mandateId },
         ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },
@@ -246,7 +298,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     targetId: payment.id,
     oldStatus: 'mandate_only',
     newStatus: 'active',
-    note: `New subscription ${sub.id} created on GC.`,
+    note: `New subscription ${sub.id} created on GC`
+      + `${resolvedStartDate ? `, first collection ${resolvedStartDate}` : ''}.`,
   });
 
   const posthog = getPostHog(context.env);
@@ -263,5 +316,5 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     });
   }
 
-  return json({ ok: true, subscriptionId: sub.id });
+  return json({ ok: true, subscriptionId: sub.id, startDate: resolvedStartDate });
 };

@@ -4,7 +4,11 @@ import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
 import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
-import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import {
+  resolveSubscriptionStartDate,
+  fetchNextPossibleChargeDate,
+} from '../../lib/gocardless-link';
+import { buildDbReference } from '../../lib/payment-reference';
 
 async function upsertPaymentRecord(
   db: D1Database,
@@ -30,7 +34,7 @@ async function upsertPaymentRecord(
   // Append the last 8 chars of the billing request ID so each distinct payment
   // attempt creates its own row rather than overwriting the previous one.
   // Same billing request replayed → same dbReference → idempotent UPDATE.
-  const dbReference = `${reference}-${billingRequestId.slice(-8)}`;
+  const dbReference = buildDbReference(reference, billingRequestId);
   const now = nowMs();
   await db
     .prepare(
@@ -168,7 +172,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
   const intervalUnit = pricing.intervalUnit;
   const subscriptionCount = pricing.intervalCount;
-  const resolvedStartDate = resolveSubscriptionStartDate(pricing.startDate);
 
   if (br.status !== 'fulfilled') {
     const fulfilRes = await fetch(
@@ -288,6 +291,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       );
     }
   }
+
+  // Resolved here rather than earlier so the mandate lookup is never spent on a
+  // path that returns before creating a subscription, and skipped entirely when
+  // no start date is configured.
+  const nextPossible = pricing.startDate
+    ? await fetchNextPossibleChargeDate(gcBase, gcHeaders, mandateId)
+    : null;
+  const resolvedStartDate = resolveSubscriptionStartDate(
+    pricing.startDate,
+    new Date(),
+    nextPossible,
+  );
 
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
