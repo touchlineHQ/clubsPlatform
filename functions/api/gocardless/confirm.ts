@@ -4,7 +4,8 @@ import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
 import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
-import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import { gcApiBase, gcApiHeaders, resolveStartDateForMandate } from '../../lib/gocardless-mandate';
+import { buildDbReference, REFERENCE_SUFFIX_LIKE } from '../../lib/payment-reference';
 
 async function upsertPaymentRecord(
   db: D1Database,
@@ -30,7 +31,7 @@ async function upsertPaymentRecord(
   // Append the last 8 chars of the billing request ID so each distinct payment
   // attempt creates its own row rather than overwriting the previous one.
   // Same billing request replayed → same dbReference → idempotent UPDATE.
-  const dbReference = `${reference}-${billingRequestId.slice(-8)}`;
+  const dbReference = buildDbReference(reference, billingRequestId);
   const now = nowMs();
   await db
     .prepare(
@@ -89,17 +90,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=token_missing`, 302);
   }
 
-  const gcBase =
-    env.GC_ENVIRONMENT === 'live'
-      ? 'https://api.gocardless.com'
-      : 'https://api-sandbox.gocardless.com';
-
-  const gcHeaders = {
-    Authorization: `Bearer ${gcToken}`,
-    'GoCardless-Version': '2015-07-06',
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-  };
+  const gcBase = gcApiBase(env);
+  const gcHeaders = gcApiHeaders(gcToken);
 
   const brRes = await fetch(`${gcBase}/billing_requests/${billingRequestId}`, {
     headers: gcHeaders,
@@ -168,7 +160,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
   const intervalUnit = pricing.intervalUnit;
   const subscriptionCount = pricing.intervalCount;
-  const resolvedStartDate = resolveSubscriptionStartDate(pricing.startDate);
 
   if (br.status !== 'fulfilled') {
     const fulfilRes = await fetch(
@@ -214,7 +205,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT mandateId, subscriptionId, status FROM "player_payment"
          WHERE clubSlug = ?
            AND registrationId = ?
-           AND reference LIKE ? || '-________'
+           AND reference LIKE ? || '${REFERENCE_SUFFIX_LIKE}'
            AND status IN ('active', 'mandate_only')
          ORDER BY updatedAt DESC
          LIMIT 1`
@@ -289,6 +280,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }
   }
 
+  // Resolved here rather than earlier so the mandate lookup is never spent on a
+  // path that returns before creating a subscription.
+  const startDateInfo = await resolveStartDateForMandate({
+    configuredStartDate: pricing.startDate,
+    mandateId,
+    gcBase,
+    gcHeaders,
+  });
+
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
     headers: gcHeaders,
@@ -302,7 +302,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         name: description || reference,
         metadata: { reference, customer_ref: reference },
         links: { mandate: mandateId },
-        ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
+        ...(startDateInfo.startDate ? { start_date: startDateInfo.startDate } : {}),
       },
     }),
   });
@@ -327,7 +327,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       posthog.captureImmediate({
         distinctId: fanId || registrationId,
         event: 'payment failed',
-        properties: { club_slug: clubSlug, reference, mandate_id: mandateId, reason: 'subscription_creation_failed' },
+        properties: {
+          club_slug: clubSlug,
+          reference,
+          mandate_id: mandateId,
+          reason: 'subscription_creation_failed',
+          start_date: startDateInfo.startDate,
+          configured_start_date: pricing.startDate,
+          start_date_clamped: startDateInfo.clamped,
+          next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
+          mandate_lookup_failed: startDateInfo.lookupFailed,
+        },
       }).catch(err => console.error('PostHog capture failed', err));
     }
     return Response.redirect(
@@ -362,6 +372,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         subscription_id: sub.id,
         amount_in_pence: amountInPence,
         interval_unit: intervalUnit,
+        count: subscriptionCount,
+        start_date: startDateInfo.startDate,
+        configured_start_date: pricing.startDate,
+        start_date_clamped: startDateInfo.clamped,
+        next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
+        mandate_lookup_failed: startDateInfo.lookupFailed,
       },
     }).catch(err => console.error('PostHog capture failed', err));
   }
