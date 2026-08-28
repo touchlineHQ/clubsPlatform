@@ -126,10 +126,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return selectionPage(env.DB, clubSlug, fanId, registrations, origin, paymentType);
   }
 
+  // 'manual' is an admin override for a player who pays outside GoCardless —
+  // they are paid up, so never send them into the mandate flow.
   const existingPayment = await env.DB
     .prepare(
       `SELECT reference FROM "player_payment"
-        WHERE registrationId = ? AND status = 'active'
+        WHERE registrationId = ? AND status IN ('active', 'manual')
         LIMIT 1`
     )
     .bind(registration.registrationId)
@@ -217,7 +219,7 @@ async function selectionPage(
 
   const activeRegistrationIds = new Set(
     existingPayments
-      .filter(p => p.status === 'active')
+      .filter(p => p.status === 'active' || p.status === 'manual')
       .map(p => p.registrationId)
   );
 

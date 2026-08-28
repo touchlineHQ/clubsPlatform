@@ -64,6 +64,7 @@ interface PaymentFilters { team: string; status: string; }
 const STATUS_OPTIONS = [
   { value: ALL,          label: 'All statuses' },
   { value: 'active',     label: 'Active' },
+  { value: 'manual',     label: 'Manually paid' },
   { value: 'mandate_only', label: 'Mandate only' },
   { value: 'inactive',   label: 'Inactive' },
 ];
@@ -80,9 +81,16 @@ function applyFilters(rows: PlayerPaymentRow[], filters: PaymentFilters): Player
 
 const BADGE_STYLES = { label: { textBoxTrim: 'none', textBoxEdge: 'auto' } } as const;
 
+// 'manual' is an admin override for a player paying outside GoCardless —
+// see functions/api/admin/manual-payment.ts.
+const STATUS_BADGES: Record<string, { color: string; label: string }> = {
+  active:   { color: 'green', label: 'Active' },
+  manual:   { color: 'teal',  label: 'Manually paid' },
+  inactive: { color: 'red',   label: 'Inactive' },
+};
+
 function StatusBadge({ status }: { status: string }) {
-  const color  = status === 'active' ? 'green' : status === 'inactive' ? 'red' : 'orange';
-  const label  = status === 'active' ? 'Active' : status === 'inactive' ? 'Inactive' : 'Mandate only';
+  const { color, label } = STATUS_BADGES[status] ?? { color: 'orange', label: 'Mandate only' };
   return <Badge size="sm" variant="light" color={color} radius="xl" styles={BADGE_STYLES}>{label}</Badge>;
 }
 
