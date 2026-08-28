@@ -3,8 +3,15 @@ import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../.
 import { getPostHog } from '../../lib/posthog';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
-import { resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import { gcApiBase, gcApiHeaders, resolveStartDateForMandate } from '../../lib/gocardless-mandate';
+import { stripReferenceSuffix } from '../../lib/payment-reference';
 import type { GCSubscription } from '../gocardless/_types';
+
+/**
+ * Subscription statuses meaning "no longer collecting", so it is safe to
+ * create a replacement. Matches the check in gocardless/confirm.ts.
+ */
+const TERMINAL_SUBSCRIPTION_STATUSES = new Set(['cancelled', 'customer_approval_denied']);
 
 interface PlayerPaymentRow {
   id: string;
@@ -151,16 +158,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const gcToken = await getSecret(context.env.DB, context.env, clubSlug, 'GC_ACCESS_TOKEN');
   if (!gcToken) return json({ error: 'GoCardless token not configured' }, { status: 503 });
 
-  const gcBase = context.env.GC_ENVIRONMENT === 'live'
-    ? 'https://api.gocardless.com'
-    : 'https://api-sandbox.gocardless.com';
+  const gcBase = gcApiBase(context.env);
+  const gcHeaders = gcApiHeaders(gcToken);
 
-  const gcHeaders = {
-    Authorization: `Bearer ${gcToken}`,
-    'GoCardless-Version': '2015-07-06',
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-  };
+  // player_payment.reference carries an 8-char billing-request suffix, but
+  // confirm.ts writes the *logical* reference into subscription metadata. Match
+  // both: the logical form for subscriptions created by the payer-facing flow,
+  // the suffixed form for those created by earlier runs of this handler.
+  const dbRef = payment.reference;
+  const logicalRef = stripReferenceSuffix(dbRef);
+  const refCandidates = new Set([dbRef, logicalRef]);
 
   // Idempotency: check GC for an existing live subscription before creating one
   const listRes = await fetch(`${gcBase}/subscriptions?mandate=${payment.mandateId}`, {
@@ -169,13 +176,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (listRes.ok) {
     const { subscriptions: existing } = await listRes.json<{ subscriptions: GCSubscription[] }>();
-    const match = existing.find(
-      (s) =>
-        s.metadata?.reference === payment.reference &&
-        s.status !== 'cancelled' &&
-        s.status !== 'customer_approval_denied'
-    );
+    const live = existing.filter((s) => !TERMINAL_SUBSCRIPTION_STATUSES.has(s.status));
+
+    // This mandate was created by a single billing request for a single payment
+    // row, so any live subscription on it belongs to this payment and creating a
+    // second one would double-charge the payer. Prefer a reference match for an
+    // accurate audit trail, but fall back to "any live subscription on this
+    // mandate" — the reference format has already drifted once.
+    const match =
+      live.find((s) => s.metadata?.reference && refCandidates.has(s.metadata.reference)) ?? live[0];
+
     if (match) {
+      const matchedByReference =
+        !!match.metadata?.reference && refCandidates.has(match.metadata.reference);
       // Subscription already exists — reconcile the DB row and return success
       await context.env.DB
         .prepare(
@@ -194,15 +207,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         targetId: payment.id,
         oldStatus: 'mandate_only',
         newStatus: 'active',
-        note: `Existing subscription ${match.id} found on GC; DB reconciled.`,
+        note: matchedByReference
+          ? `Existing subscription ${match.id} found on GC; DB reconciled.`
+          : `Existing subscription ${match.id} found on mandate ${payment.mandateId} with `
+            + `reference "${match.metadata?.reference ?? '(none)'}" (expected "${logicalRef}"); `
+            + `DB reconciled rather than creating a duplicate.`,
       });
 
-      return json({ ok: true, subscriptionId: match.id, reconciled: true });
+      return json({ ok: true, subscriptionId: match.id, reconciled: true, matchedByReference });
     }
   }
 
   const amountInPence = Math.round(payment.yearlyPriceInPence / Math.max(1, payment.intervalCount));
-  const resolvedStartDate = resolveSubscriptionStartDate(payment.startDate);
+
+  const startDateInfo = await resolveStartDateForMandate({
+    configuredStartDate: payment.startDate,
+    mandateId: payment.mandateId,
+    gcBase,
+    gcHeaders,
+  });
 
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
@@ -213,10 +236,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         currency: 'GBP',
         interval_unit: payment.intervalUnit,
         interval: 1,
-        name: payment.reference,
-        metadata: { reference: payment.reference, customer_ref: payment.reference },
+        // Without this the subscription is open-ended and collects forever.
+        count: payment.intervalCount,
+        name: logicalRef,
+        metadata: { reference: logicalRef, customer_ref: logicalRef },
         links: { mandate: payment.mandateId },
-        ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
+        ...(startDateInfo.startDate ? { start_date: startDateInfo.startDate } : {}),
       },
     }),
   });
@@ -246,7 +271,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     targetId: payment.id,
     oldStatus: 'mandate_only',
     newStatus: 'active',
-    note: `New subscription ${sub.id} created on GC.`,
+    note: startDateInfo.clamped
+      ? `New subscription ${sub.id} created on GC. First collection `
+        + `${startDateInfo.startDate} (configured ${payment.startDate}; clamped forward to the `
+        + `mandate's earliest chargeable date ${startDateInfo.nextPossibleChargeDate}).`
+      : `New subscription ${sub.id} created on GC.`,
   });
 
   const posthog = getPostHog(context.env);
@@ -259,9 +288,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         payment_id: payment.id,
         mandate_id: payment.mandateId,
         subscription_id: sub.id,
+        count: payment.intervalCount,
+        start_date: startDateInfo.startDate,
+        configured_start_date: payment.startDate,
+        start_date_clamped: startDateInfo.clamped,
+        next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
+        mandate_lookup_failed: startDateInfo.lookupFailed,
       },
     });
   }
 
-  return json({ ok: true, subscriptionId: sub.id });
+  return json({
+    ok: true,
+    subscriptionId: sub.id,
+    startDate: startDateInfo.startDate,
+    configuredStartDate: payment.startDate,
+    startDateClamped: startDateInfo.clamped,
+    mandateLookupFailed: startDateInfo.lookupFailed,
+  });
 };
