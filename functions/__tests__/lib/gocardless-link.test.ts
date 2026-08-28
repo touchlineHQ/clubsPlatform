@@ -8,7 +8,11 @@ vi.mock('../../lib/secrets', () => ({ getSecret: mockGetSecret }));
 const mockFetch = vi.hoisted(() => vi.fn());
 vi.stubGlobal('fetch', mockFetch);
 
-import { createGoCardlessLink, resolveSubscriptionStartDate } from '../../lib/gocardless-link';
+import {
+  createGoCardlessLink,
+  resolveSubscriptionStartDate,
+  clampStartDateToMandate,
+} from '../../lib/gocardless-link';
 
 const baseEnv = {
   DB: {} as D1Database,
@@ -215,5 +219,38 @@ describe('resolveSubscriptionStartDate', () => {
   it('rolls into the next year when today is in December', () => {
     const today = new Date('2024-12-20T12:00:00Z');
     expect(resolveSubscriptionStartDate('2024-12-01', today)).toBe('2025-01-01');
+  });
+});
+
+describe('clampStartDateToMandate', () => {
+  it('returns null when there is no resolved date, so start_date stays omitted', () => {
+    expect(clampStartDateToMandate(null, '2024-09-04')).toBeNull();
+  });
+
+  it('returns the resolved date when the mandate has no next_possible_charge_date', () => {
+    expect(clampStartDateToMandate('2024-09-01', null)).toBe('2024-09-01');
+    expect(clampStartDateToMandate('2024-09-01', undefined)).toBe('2024-09-01');
+  });
+
+  it('returns the resolved date when next_possible_charge_date is malformed', () => {
+    expect(clampStartDateToMandate('2024-09-01', 'not-a-date')).toBe('2024-09-01');
+    expect(clampStartDateToMandate('2024-09-01', '2024/09/04')).toBe('2024-09-01');
+  });
+
+  it('clamps forward when the mandate cannot be charged until later', () => {
+    expect(clampStartDateToMandate('2024-09-01', '2024-09-04')).toBe('2024-09-04');
+  });
+
+  it('keeps the resolved date when the mandate is chargeable earlier', () => {
+    expect(clampStartDateToMandate('2024-09-01', '2024-08-01')).toBe('2024-09-01');
+  });
+
+  it('keeps the resolved date when the two are equal', () => {
+    expect(clampStartDateToMandate('2024-09-04', '2024-09-04')).toBe('2024-09-04');
+  });
+
+  it('compares correctly across a year boundary', () => {
+    expect(clampStartDateToMandate('2024-12-31', '2025-01-05')).toBe('2025-01-05');
+    expect(clampStartDateToMandate('2025-01-05', '2024-12-31')).toBe('2025-01-05');
   });
 });

@@ -34,6 +34,32 @@ export function resolveSubscriptionStartDate(
   return nextMonth.toISOString().slice(0, 10);
 }
 
+/**
+ * Clamp a resolved start date forward to the mandate's earliest chargeable date.
+ *
+ * Bacs mandates carry a submission lead time (roughly 3-5 working days, longer
+ * while the mandate is still pending_submission). GoCardless exposes it as
+ * `mandates.next_possible_charge_date` and rejects anything earlier with
+ * "start_date must be on or after mandate's next_possible_charge_date".
+ *
+ * ISO YYYY-MM-DD strings compare lexicographically the same way they compare
+ * chronologically, so a plain string comparison is correct here.
+ *
+ * Returns null if and only if `resolved` is null, so callers keep omitting
+ * start_date entirely when no date is configured — GoCardless then picks the
+ * earliest valid date itself, which is already the behaviour we want.
+ */
+export function clampStartDateToMandate(
+  resolved: string | null,
+  nextPossibleChargeDate: string | null | undefined,
+): string | null {
+  if (!resolved) return null;
+  if (!nextPossibleChargeDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextPossibleChargeDate)) {
+    return resolved;
+  }
+  return nextPossibleChargeDate > resolved ? nextPossibleChargeDate : resolved;
+}
+
 export interface CreateLinkResult {
   ok: true;
   authorisationUrl: string;

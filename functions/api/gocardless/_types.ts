@@ -27,6 +27,31 @@ export interface GCBillingRequestFlow {
   exit_uri: string;
 }
 
+export interface GCMandate {
+  id: string;
+  /**
+   * pending_customer_approval | pending_submission | submitted | active |
+   * failed | cancelled | expired | consumed | blocked.
+   * Kept as a plain string (like the interfaces above) so an unrecognised
+   * status from GoCardless doesn't fail type-checking.
+   */
+  status: string;
+  scheme?: string;
+  reference?: string | null;
+  /**
+   * YYYY-MM-DD. The earliest date a payment against this mandate can be
+   * charged, accounting for Bacs submission lead time. Null for mandates that
+   * can never be charged again (cancelled, failed, expired).
+   */
+  next_possible_charge_date: string | null;
+  metadata?: Record<string, string>;
+  links?: {
+    customer?: string;
+    customer_bank_account?: string;
+    creditor?: string;
+  };
+}
+
 export interface GCSubscription {
   id: string;
   status: string;
