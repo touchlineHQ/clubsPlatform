@@ -105,6 +105,13 @@ async function attachManualAttribution(
   });
 }
 
+/**
+ * GET handler — fetches registrations for the authenticated user.
+ *
+ * Returns personal registrations (linked to the user) and, for admins, all club
+ * registrations with manual payment attribution when applicable. Manual payment
+ * status is collapsed to 'active' for personal queries and kept distinct for admins.
+ */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);
   if ("error" in result) return result.error;
@@ -223,6 +230,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   });
 };
 
+/**
+ * DELETE handler — removes a player registration.
+ *
+ * Admin-only endpoint. Deletes the registration record from the database. Returns
+ * 404 if the registration doesn't exist or doesn't belong to the club.
+ */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const auth = await requireAdmin(context);
   if ("error" in auth) return auth.error;

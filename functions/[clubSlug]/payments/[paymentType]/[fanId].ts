@@ -198,6 +198,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return Response.redirect(result.authorisationUrl, 302);
 };
 
+/**
+ * Renders an HTML page for multi-team players to choose which registration to pay for.
+ *
+ * Shows each team with its subscription pricing and badges active payments. Disabled
+ * cards are shown for registrations without a level or that already have an active
+ * payment.
+ */
 async function selectionPage(
   db: D1Database,
   clubSlug: string,
@@ -315,10 +322,16 @@ async function selectionPage(
   });
 }
 
+/**
+ * Escapes a string for safe insertion into HTML text content.
+ */
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/**
+ * Escapes a string for safe insertion into HTML attribute values.
+ */
 function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }

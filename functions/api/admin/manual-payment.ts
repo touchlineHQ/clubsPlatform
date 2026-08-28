@@ -40,6 +40,10 @@ function manualReference(teamName: string, fanId: string): string {
   return `MANUAL-${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-SUBS`;
 }
 
+/**
+ * Load a registration's basic details for creating a manual payment reference.
+ * Returns null if the registration doesn't exist or doesn't belong to the club.
+ */
 async function loadRegistration(
   db: D1Database,
   registrationId: string,
@@ -56,7 +60,13 @@ async function loadRegistration(
     .first<RegistrationRow>();
 }
 
-// POST — mark a registration's subs as paid
+/**
+ * POST handler — marks a registration's subscription as manually paid.
+ *
+ * Creates or updates a player_payment row with status 'manual' for players who pay
+ * outside GoCardless. Returns 409 if a live GoCardless payment already exists or
+ * if the registration is already marked as paid.
+ */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
@@ -176,7 +186,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   });
 };
 
-// DELETE — undo a manual override
+/**
+ * DELETE handler — removes a manual payment override.
+ *
+ * Sets the manual payment status to 'inactive'. Only affects payments with status
+ * 'manual', so it can never deactivate a GoCardless payment. Returns 404 if no
+ * manual payment is found for the registration.
+ */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 

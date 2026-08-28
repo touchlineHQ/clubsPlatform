@@ -31,6 +31,12 @@ interface PlayerPaymentRow {
   updatedAt: number;
 }
 
+/**
+ * GET handler — fetches all player payment records for the club.
+ *
+ * Admin-only endpoint. Returns payment details including mandate, subscription,
+ * and status information ordered by creation date descending.
+ */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
@@ -57,7 +63,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return json({ payments: rows.results });
 };
 
-// PATCH — deactivate a payment
+/**
+ * PATCH handler — deactivates a player payment record.
+ *
+ * Admin-only endpoint. Sets the payment status to 'inactive' and writes an audit log
+ * entry. Returns 409 if the payment is already inactive.
+ */
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
@@ -105,7 +116,15 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   return json({ ok: true });
 };
 
-// POST — retry subscription creation for a mandate_only payment
+/**
+ * POST handler — retries GoCardless subscription creation for a mandate_only payment.
+ *
+ * Admin-only endpoint. For payments stuck at mandate_only (mandate created but
+ * subscription failed), this creates the subscription at GoCardless. First checks
+ * for existing subscriptions to avoid duplicates, then creates a new one if needed.
+ * Returns 409 if the payment is not in mandate_only status, or 422 if no
+ * subscription level is configured.
+ */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
