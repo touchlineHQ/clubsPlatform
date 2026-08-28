@@ -4,8 +4,11 @@ import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
 import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
-import { gcApiBase, gcApiHeaders, resolveStartDateForMandate } from '../../lib/gocardless-mandate';
-import { buildDbReference, REFERENCE_SUFFIX_LIKE } from '../../lib/payment-reference';
+import {
+  resolveSubscriptionStartDate,
+  fetchNextPossibleChargeDate,
+} from '../../lib/gocardless-link';
+import { buildDbReference } from '../../lib/payment-reference';
 
 async function upsertPaymentRecord(
   db: D1Database,
@@ -90,8 +93,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=token_missing`, 302);
   }
 
-  const gcBase = gcApiBase(env);
-  const gcHeaders = gcApiHeaders(gcToken);
+  const gcBase =
+    env.GC_ENVIRONMENT === 'live'
+      ? 'https://api.gocardless.com'
+      : 'https://api-sandbox.gocardless.com';
+
+  const gcHeaders = {
+    Authorization: `Bearer ${gcToken}`,
+    'GoCardless-Version': '2015-07-06',
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
 
   const brRes = await fetch(`${gcBase}/billing_requests/${billingRequestId}`, {
     headers: gcHeaders,
@@ -205,7 +217,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       `SELECT mandateId, subscriptionId, status FROM "player_payment"
          WHERE clubSlug = ?
            AND registrationId = ?
-           AND reference LIKE ? || '${REFERENCE_SUFFIX_LIKE}'
+           AND reference LIKE ? || '-________'
            AND status IN ('active', 'mandate_only')
          ORDER BY updatedAt DESC
          LIMIT 1`
@@ -281,13 +293,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   }
 
   // Resolved here rather than earlier so the mandate lookup is never spent on a
-  // path that returns before creating a subscription.
-  const startDateInfo = await resolveStartDateForMandate({
-    configuredStartDate: pricing.startDate,
-    mandateId,
-    gcBase,
-    gcHeaders,
-  });
+  // path that returns before creating a subscription, and skipped entirely when
+  // no start date is configured.
+  const nextPossible = pricing.startDate
+    ? await fetchNextPossibleChargeDate(gcBase, gcHeaders, mandateId)
+    : null;
+  const resolvedStartDate = resolveSubscriptionStartDate(
+    pricing.startDate,
+    new Date(),
+    nextPossible,
+  );
 
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
@@ -302,7 +317,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         name: description || reference,
         metadata: { reference, customer_ref: reference },
         links: { mandate: mandateId },
-        ...(startDateInfo.startDate ? { start_date: startDateInfo.startDate } : {}),
+        ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },
     }),
   });
@@ -327,17 +342,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       posthog.captureImmediate({
         distinctId: fanId || registrationId,
         event: 'payment failed',
-        properties: {
-          club_slug: clubSlug,
-          reference,
-          mandate_id: mandateId,
-          reason: 'subscription_creation_failed',
-          start_date: startDateInfo.startDate,
-          configured_start_date: pricing.startDate,
-          start_date_clamped: startDateInfo.clamped,
-          next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
-          mandate_lookup_failed: startDateInfo.lookupFailed,
-        },
+        properties: { club_slug: clubSlug, reference, mandate_id: mandateId, reason: 'subscription_creation_failed' },
       }).catch(err => console.error('PostHog capture failed', err));
     }
     return Response.redirect(
@@ -372,12 +377,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         subscription_id: sub.id,
         amount_in_pence: amountInPence,
         interval_unit: intervalUnit,
-        count: subscriptionCount,
-        start_date: startDateInfo.startDate,
-        configured_start_date: pricing.startDate,
-        start_date_clamped: startDateInfo.clamped,
-        next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
-        mandate_lookup_failed: startDateInfo.lookupFailed,
       },
     }).catch(err => console.error('PostHog capture failed', err));
   }

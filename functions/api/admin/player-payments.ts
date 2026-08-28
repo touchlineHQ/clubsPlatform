@@ -3,13 +3,18 @@ import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../.
 import { getPostHog } from '../../lib/posthog';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
-import { gcApiBase, gcApiHeaders, resolveStartDateForMandate } from '../../lib/gocardless-mandate';
+import {
+  resolveSubscriptionStartDate,
+  fetchNextPossibleChargeDate,
+} from '../../lib/gocardless-link';
 import { stripReferenceSuffix } from '../../lib/payment-reference';
 import type { GCSubscription } from '../gocardless/_types';
 
 /**
- * Subscription statuses meaning "no longer collecting", so it is safe to
- * create a replacement. Matches the check in gocardless/confirm.ts.
+ * Subscription statuses meaning "will never collect", so it is safe to create a
+ * replacement. Deliberately excludes 'finished': that means every payment of a
+ * count-limited plan was collected, so the payer has already paid in full and
+ * creating a replacement would charge them the whole plan again.
  */
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(['cancelled', 'customer_approval_denied']);
 
@@ -158,8 +163,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const gcToken = await getSecret(context.env.DB, context.env, clubSlug, 'GC_ACCESS_TOKEN');
   if (!gcToken) return json({ error: 'GoCardless token not configured' }, { status: 503 });
 
-  const gcBase = gcApiBase(context.env);
-  const gcHeaders = gcApiHeaders(gcToken);
+  const gcBase = context.env.GC_ENVIRONMENT === 'live'
+    ? 'https://api.gocardless.com'
+    : 'https://api-sandbox.gocardless.com';
+
+  const gcHeaders = {
+    Authorization: `Bearer ${gcToken}`,
+    'GoCardless-Version': '2015-07-06',
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
 
   // player_payment.reference carries an 8-char billing-request suffix, but
   // confirm.ts writes the *logical* reference into subscription metadata. Match
@@ -189,14 +202,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (match) {
       const matchedByReference =
         !!match.metadata?.reference && refCandidates.has(match.metadata.reference);
+      // A finished subscription collected every payment of its plan, so the row
+      // is done rather than live — same mapping the webhook applies.
+      const reconciledStatus = match.status === 'finished' ? 'inactive' : 'active';
+
       // Subscription already exists — reconcile the DB row and return success
       await context.env.DB
         .prepare(
           `UPDATE "player_payment"
-              SET subscriptionId = ?, status = 'active', updatedAt = ?
+              SET subscriptionId = ?, status = ?, updatedAt = ?
             WHERE id = ?`
         )
-        .bind(match.id, nowMs(), payment.id)
+        .bind(match.id, reconciledStatus, nowMs(), payment.id)
         .run();
 
       await writeAuditLog(context.env.DB, {
@@ -206,26 +223,36 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         targetTable: 'player_payment',
         targetId: payment.id,
         oldStatus: 'mandate_only',
-        newStatus: 'active',
+        newStatus: reconciledStatus,
         note: matchedByReference
-          ? `Existing subscription ${match.id} found on GC; DB reconciled.`
-          : `Existing subscription ${match.id} found on mandate ${payment.mandateId} with `
-            + `reference "${match.metadata?.reference ?? '(none)'}" (expected "${logicalRef}"); `
-            + `DB reconciled rather than creating a duplicate.`,
+          ? `Existing subscription ${match.id} (${match.status}) found on GC; DB reconciled.`
+          : `Existing subscription ${match.id} (${match.status}) found on mandate `
+            + `${payment.mandateId} with reference "${match.metadata?.reference ?? '(none)'}" `
+            + `(expected "${logicalRef}"); DB reconciled rather than creating a duplicate.`,
       });
 
-      return json({ ok: true, subscriptionId: match.id, reconciled: true, matchedByReference });
+      return json({
+        ok: true,
+        subscriptionId: match.id,
+        reconciled: true,
+        matchedByReference,
+        status: reconciledStatus,
+      });
     }
   }
 
   const amountInPence = Math.round(payment.yearlyPriceInPence / Math.max(1, payment.intervalCount));
 
-  const startDateInfo = await resolveStartDateForMandate({
-    configuredStartDate: payment.startDate,
-    mandateId: payment.mandateId,
-    gcBase,
-    gcHeaders,
-  });
+  // Skipped entirely when no start date is configured — GoCardless then picks
+  // the earliest chargeable date itself.
+  const nextPossible = payment.startDate
+    ? await fetchNextPossibleChargeDate(gcBase, gcHeaders, payment.mandateId)
+    : null;
+  const resolvedStartDate = resolveSubscriptionStartDate(
+    payment.startDate,
+    new Date(),
+    nextPossible,
+  );
 
   const subRes = await fetch(`${gcBase}/subscriptions`, {
     method: 'POST',
@@ -241,7 +268,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         name: logicalRef,
         metadata: { reference: logicalRef, customer_ref: logicalRef },
         links: { mandate: payment.mandateId },
-        ...(startDateInfo.startDate ? { start_date: startDateInfo.startDate } : {}),
+        ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },
     }),
   });
@@ -271,11 +298,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     targetId: payment.id,
     oldStatus: 'mandate_only',
     newStatus: 'active',
-    note: startDateInfo.clamped
-      ? `New subscription ${sub.id} created on GC. First collection `
-        + `${startDateInfo.startDate} (configured ${payment.startDate}; clamped forward to the `
-        + `mandate's earliest chargeable date ${startDateInfo.nextPossibleChargeDate}).`
-      : `New subscription ${sub.id} created on GC.`,
+    note: `New subscription ${sub.id} created on GC`
+      + `${resolvedStartDate ? `, first collection ${resolvedStartDate}` : ''}.`,
   });
 
   const posthog = getPostHog(context.env);
@@ -288,22 +312,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         payment_id: payment.id,
         mandate_id: payment.mandateId,
         subscription_id: sub.id,
-        count: payment.intervalCount,
-        start_date: startDateInfo.startDate,
-        configured_start_date: payment.startDate,
-        start_date_clamped: startDateInfo.clamped,
-        next_possible_charge_date: startDateInfo.nextPossibleChargeDate,
-        mandate_lookup_failed: startDateInfo.lookupFailed,
       },
     });
   }
 
-  return json({
-    ok: true,
-    subscriptionId: sub.id,
-    startDate: startDateInfo.startDate,
-    configuredStartDate: payment.startDate,
-    startDateClamped: startDateInfo.clamped,
-    mandateLookupFailed: startDateInfo.lookupFailed,
-  });
+  return json({ ok: true, subscriptionId: sub.id, startDate: resolvedStartDate });
 };

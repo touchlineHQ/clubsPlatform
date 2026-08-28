@@ -272,6 +272,24 @@ describe('POST /api/admin/player-payments — duplicate protection', () => {
     vi.unstubAllGlobals();
   });
 
+  it('reconciles a finished subscription as inactive without re-charging the player', async () => {
+    const fetchMock = makeGcFetchMock({
+      subscriptions: [
+        { id: 'SUB-DONE', status: 'finished', metadata: { reference: LOGICAL_REFERENCE } },
+      ],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({ first: paymentRow(), run: { meta: { changes: 1 } } });
+    const body = (await (await onRequestPost(retryCtx(db) as never)).json()) as any;
+
+    // The plan was collected in full, so a replacement would charge it all again.
+    expect(countCreateCalls(fetchMock)).toBe(0);
+    expect(body).toMatchObject({ subscriptionId: 'SUB-DONE', reconciled: true, status: 'inactive' });
+
+    vi.unstubAllGlobals();
+  });
+
   it('creates a subscription when the only one on the mandate is cancelled', async () => {
     const fetchMock = makeGcFetchMock({
       subscriptions: [
@@ -309,11 +327,7 @@ describe('POST /api/admin/player-payments — start date', () => {
     const body = (await res.json()) as any;
 
     expect(captured.value.start_date).toBe('2099-09-04');
-    expect(body).toMatchObject({
-      startDate: '2099-09-04',
-      configuredStartDate: '2099-09-01',
-      startDateClamped: true,
-    });
+    expect(body.startDate).toBe('2099-09-04');
 
     vi.unstubAllGlobals();
   });
@@ -331,7 +345,7 @@ describe('POST /api/admin/player-payments — start date', () => {
 
     expect(res.status).toBe(200);
     expect(captured.value.start_date).toBe('2099-09-01');
-    expect(body).toMatchObject({ startDateClamped: false, mandateLookupFailed: true });
+    expect(body.startDate).toBe('2099-09-01');
 
     vi.unstubAllGlobals();
   });
