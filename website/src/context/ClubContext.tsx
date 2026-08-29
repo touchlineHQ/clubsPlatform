@@ -13,6 +13,7 @@ export const ClubContext = createContext<ClubContextValue>({
   clubs: [],
 });
 
+/** Hook to access the current club context. */
 export function useClub() {
   return useContext(ClubContext);
 }

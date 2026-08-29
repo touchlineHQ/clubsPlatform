@@ -96,6 +96,10 @@ const ALL_SQL = [...TABLE_STATEMENTS, ...PITCH_SEED_STATEMENTS].join(';\n');
 
 let ensureTablesPromise: Promise<void> | null = null;
 
+/**
+ * Ensure all database tables exist by running CREATE TABLE IF NOT EXISTS statements.
+ * Uses a singleton promise to prevent concurrent initialization.
+ */
 export const ensureTables = (db: D1Database): Promise<void> => {
   if (!ensureTablesPromise) {
     ensureTablesPromise = (async () => {

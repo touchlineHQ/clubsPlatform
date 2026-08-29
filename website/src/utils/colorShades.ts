@@ -17,10 +17,12 @@ const NAMED_COLOR_HEX: Record<string, string> = {
 
 const HEX_RE = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
+/** Check if a string is a valid hex color code. */
 export function isHexColor(value: string | null | undefined): boolean {
   return !!value && HEX_RE.test(value.trim());
 }
 
+/** Convert a named color or hex shorthand to a full 6-digit hex color. Returns null for invalid input. */
 export function normalizeToHex(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim().toLowerCase();
@@ -31,6 +33,7 @@ export function normalizeToHex(value: string | null | undefined): string | null 
   return `#${hex}`;
 }
 
+/** Convert a hex color to an RGB tuple [r, g, b]. */
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '');
   return [
@@ -40,11 +43,13 @@ function hexToRgb(hex: string): [number, number, number] {
   ];
 }
 
+/** Convert RGB values to a hex color string. */
 function rgbToHex(r: number, g: number, b: number): string {
   const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(n)));
   return `#${[r, g, b].map(n => clamp(n).toString(16).padStart(2, '0')).join('')}`;
 }
 
+/** Convert RGB values to an HSL tuple [h, s, l]. */
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   const rN = r / 255, gN = g / 255, bN = b / 255;
   const max = Math.max(rN, gN, bN), min = Math.min(rN, gN, bN);
@@ -61,6 +66,7 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   return [h * 360, s, l];
 }
 
+/** Convert HSL values to an RGB tuple [r, g, b]. */
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const hN = (h % 360 + 360) % 360 / 360;
   if (s === 0) {
@@ -118,6 +124,7 @@ export function hexLuminance(input: string): number {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 }
 
+/** Convert a hex color to an rgba() string with the given alpha. */
 function rgbaText(hex: string, alpha: number): string {
   const [r, g, b] = hexToRgb(hex);
   return `rgba(${r},${g},${b},${alpha})`;

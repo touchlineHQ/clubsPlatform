@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 
 const enc = new TextEncoder();
 
+/** Hash a password using PBKDF2 with a random salt. */
 export async function hashPwd(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey(
@@ -17,6 +18,7 @@ export async function hashPwd(password: string): Promise<string> {
   return "pbkdf2$" + btoa(String.fromCharCode(...out));
 }
 
+/** Verify a password against a PBKDF2 hash in constant time. */
 export async function verifyPwd({ hash, password }: { hash: string; password: string }): Promise<boolean> {
   if (!hash.startsWith("pbkdf2$")) return false;
   try {
@@ -40,6 +42,10 @@ export async function verifyPwd({ hash, password }: { hash: string; password: st
   }
 }
 
+/**
+ * Create and configure a Better Auth instance with the database and credentials.
+ * Automatically promotes the first user to admin.
+ */
 export function createAuth(
   env: { DB: D1Database; BETTER_AUTH_SECRET: string },
   opts?: { baseURL?: string }

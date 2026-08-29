@@ -196,6 +196,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return Response.redirect(result.authorisationUrl, 302);
 };
 
+/** Generate an HTML page showing multiple teams for a player to choose from when setting up a subscription. */
 async function selectionPage(
   db: D1Database,
   clubSlug: string,
@@ -313,10 +314,12 @@ async function selectionPage(
   });
 }
 
+/** Escape HTML special characters. */
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Escape HTML attribute special characters. */
 function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }

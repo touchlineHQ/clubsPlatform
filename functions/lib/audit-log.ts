@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { randomId, nowMs } from './api-helpers';
 
+/** Write an admin action to the audit log. */
 export async function writeAuditLog(
   db: D1Database,
   {

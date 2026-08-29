@@ -104,6 +104,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   );
 };
 
+/** Generate the HTML form page for FAN entry. */
 function formPage(
   clubName: string,
   clubSlug: string,
@@ -203,10 +204,12 @@ function formPage(
 </html>`;
 }
 
+/** Escape HTML special characters. */
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Escape HTML attribute special characters. */
 function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }

@@ -1,6 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { Env } from "./api-helpers";
 
+/** Convert a hex string to a Uint8Array. */
 function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) throw new Error("Invalid hex string");
   const bytes = new Uint8Array(hex.length / 2);
@@ -10,12 +11,14 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+/** Convert bytes to a base64url-encoded string. */
 function bytesToBase64url(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
 
+/** Convert a base64url-encoded string to bytes. */
 function base64urlToBytes(b64: string): Uint8Array {
   const padded = b64.replace(/-/g, "+").replace(/_/g, "/");
   const pad = (4 - (padded.length % 4)) % 4;
@@ -25,6 +28,7 @@ function base64urlToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+/** Convert a base64-encoded string to bytes. */
 function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -32,11 +36,13 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+/** Import the AES-GCM encryption key from the environment. */
 async function importKey(env: Env): Promise<CryptoKey> {
   const raw = hexToBytes(env.SECRETS_ENCRYPTION_KEY);
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
+/** Encrypt a secret using AES-GCM and return the encrypted value and initialization vector. */
 export async function encryptSecret(
   env: Env,
   plaintext: string,
@@ -54,6 +60,7 @@ export async function encryptSecret(
   };
 }
 
+/** Decrypt a secret using AES-GCM with the provided encrypted value and initialization vector. */
 export async function decryptSecret(
   env: Env,
   encryptedValue: string,
@@ -68,6 +75,7 @@ export async function decryptSecret(
   return new TextDecoder().decode(plaintext);
 }
 
+/** Decrypt a secret that was encrypted with the RSA transport public key. */
 export async function decryptTransport(env: Env, encryptedValue: string): Promise<string> {
   const privateKey = await crypto.subtle.importKey(
     "pkcs8",
