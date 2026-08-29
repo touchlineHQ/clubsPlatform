@@ -47,12 +47,53 @@ Set in `wrangler.toml` under `[vars]`:
 | `SECRETS_ENCRYPTION_KEY` | AES-256-GCM key for at-rest secret encryption (64 hex chars) | required for secrets |
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
 | `SECRETS_TRANSPORT_PUBLIC_KEY` | RSA-2048 SPKI public key sent to the browser | required for secrets |
+| `POSTHOG_HOST` | PostHog ingest host used by the Pages Functions | analytics disabled if unset |
 
 For local-only overrides without editing `wrangler.toml`, create a `.dev.vars` file (gitignored by Wrangler):
 
 ```
 BETTER_AUTH_URL=http://localhost:8788
 ```
+
+### Analytics (PostHog)
+
+Analytics span three separate places, which is easy to get wrong:
+
+| Value | Where it is set | Notes |
+|-------|-----------------|-------|
+| `POSTHOG_API_KEY` | Pages **secret**, per environment | Backend (`functions/`). See below — it cannot be set in the dashboard UI. |
+| `POSTHOG_HOST` | `wrangler.toml`, in **both** env blocks | Backend (`functions/`). |
+| `VITE_POSTHOG_API_KEY` | GitHub Actions repository **variable** | Frontend. Injected at build time in `.github/workflows/main.yml`. |
+| `VITE_POSTHOG_HOST` | GitHub Actions repository **variable** | Frontend. |
+
+Two things about this project make the obvious approach fail:
+
+**The dashboard's Functions environment variables are read-only.** Because a
+`wrangler.toml` is present, Cloudflare treats it as [the source of truth]
+(https://developers.cloudflare.com/pages/functions/wrangler-configuration/#source-of-truth)
+for this Pages project — you can see those fields in the dashboard but not
+edit them. So `POSTHOG_API_KEY` has to be set as a secret, which
+`wrangler.toml` does not govern:
+
+```sh
+npx wrangler pages secret put POSTHOG_API_KEY --project-name clubsplatform
+npx wrangler pages secret put POSTHOG_API_KEY --project-name clubsplatform --env preview
+```
+
+`getPostHog()` returns `null` unless **both** `POSTHOG_API_KEY` and
+`POSTHOG_HOST` are present, and every call site is guarded by `if (posthog)`.
+A missing value therefore disables backend analytics silently — no error, no
+log. If backend events stop arriving, check these first.
+
+**The dashboard's build environment variables never run.** Deployment is a
+direct upload (`wrangler pages deploy website/dist`) from GitHub Actions, not
+a Cloudflare Git integration, so *Build settings → environment variables* is
+not part of the build at all. The `VITE_*` values must be set as repository
+variables and passed through the workflow's build step.
+
+Note that `vars` is non-inheritable for Pages: because both `[env.production]`
+and `[env.preview]` override it, a variable added only to the top-level
+`[vars]` block will not reach either deployment. Add it to both env blocks.
 
 ## API Secrets
 
