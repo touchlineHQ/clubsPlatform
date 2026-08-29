@@ -1,5 +1,5 @@
 import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
-import { getPostHog } from "../lib/posthog";
+import { getPostHog, clubGroups } from "../lib/posthog";
 
 type BookingRequestRow = {
   id: string;
@@ -187,6 +187,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: userId,
       event: 'booking request submitted',
+      ...clubGroups(getClubSlug(context.request)),
       properties: { club_slug: clubSlug, booking_request_id: id, team_name: teamName, date, format },
     });
   }
@@ -309,6 +310,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       await posthog.captureImmediate({
         distinctId: adminId,
         event: 'booking request approved',
+        ...clubGroups(getClubSlug(context.request)),
         properties: {
           booking_request_id: id,
           booking_id: bookingId,
@@ -352,6 +354,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       await posthog.captureImmediate({
         distinctId: adminId,
         event: 'booking request declined',
+        ...clubGroups(getClubSlug(context.request)),
         properties: { booking_request_id: id, decline_reason: reason },
       });
     }

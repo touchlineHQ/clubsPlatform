@@ -1,5 +1,5 @@
-import { type Env, json, requireAdmin } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface LiveFixture {
   id: string;
@@ -98,6 +98,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: session.user.id,
       event: 'fixtures imported',
+      // club_feed_slug below is the fixtures-feed identifier, not the club's
+      // own slug — the group needs the latter.
+      ...clubGroups(getClubSlug(context.request)),
       properties: {
         club_feed_slug: clubFeedSlug,
         fixtures_created: created,

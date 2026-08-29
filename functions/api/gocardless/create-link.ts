@@ -2,7 +2,7 @@ import { ensureTables } from '../../lib/ensure-tables';
 import { type Env, json, getClubSlug, requireManagerOrAdmin } from '../../lib/api-helpers';
 import { createGoCardlessLink } from '../../lib/gocardless-link';
 import type { CreateLinkBody } from './_types';
-import { getPostHog } from '../../lib/posthog';
+import { getPostHog, clubGroups } from '../../lib/posthog';
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
@@ -45,6 +45,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: userId,
       event: 'payment link created',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         registration_id: body.registrationId,

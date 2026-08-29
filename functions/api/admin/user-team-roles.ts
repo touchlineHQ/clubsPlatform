@@ -1,5 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 type UserTeamRoleRow = {
   id: string;
@@ -106,6 +106,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'team role assigned',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, target_user_id: userId, team_slug: teamSlug, team_league: teamLeague, team_name: teamName, role },
     });
   }
@@ -140,6 +141,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'team role removed',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, assignment_id: id },
     });
   }

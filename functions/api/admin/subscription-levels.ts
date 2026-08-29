@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
 const INTERVAL_UNITS: ReadonlyArray<IntervalUnit> = ["weekly", "monthly", "yearly"];
@@ -130,6 +130,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'subscription level created',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, level_id: id, level_name: name, yearly_price_in_pence: yearlyPriceInPence, interval_count: intervalCount, interval_unit: intervalUnit },
     });
   }

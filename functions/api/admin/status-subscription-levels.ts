@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface ClubRateRow {
   registrationStatus: string;
@@ -126,6 +126,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         await posthog.captureImmediate({
           distinctId: adminId,
           event: 'subscription rate cleared',
+          ...clubGroups(clubSlug),
           properties: { club_slug: clubSlug, team_name: teamName, registration_status: registrationStatus, scope: 'team' },
         });
       }
@@ -163,6 +164,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         await posthog.captureImmediate({
           distinctId: adminId,
           event: 'subscription rate cleared',
+          ...clubGroups(clubSlug),
           properties: { club_slug: clubSlug, registration_status: registrationStatus, scope: 'club' },
         });
       }
@@ -192,6 +194,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'subscription rate assigned',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         registration_status: registrationStatus,
