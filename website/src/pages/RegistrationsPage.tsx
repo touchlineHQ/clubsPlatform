@@ -14,7 +14,7 @@ import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
-import { captureError } from '../lib/posthog';
+import { captureError, captureEvent } from '../lib/posthog';
 
 interface RegistrationRow {
   registrationId: string;
@@ -740,7 +740,15 @@ export function RegistrationsPage() {
           </Button>
           <Button
             leftSection={<IconFileSpreadsheet size={16} />}
-            onClick={() => exportRegistrationsToXlsx(filteredClub ?? club, clubSlug, filters)}
+            onClick={() => {
+              const rows = filteredClub ?? club;
+              captureEvent('registrations exported', {
+                club_slug: clubSlug,
+                row_count: rows.length,
+                filtered: rows.length !== club.length,
+              });
+              exportRegistrationsToXlsx(rows, clubSlug, filters);
+            }}
             radius="xl"
             variant="light"
             size="xs"

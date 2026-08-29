@@ -109,6 +109,23 @@ export function captureError(error: unknown, context: Record<string, unknown> = 
 }
 
 /**
+ * Record a product event.
+ *
+ * Names follow the convention already used server-side: lowercase, space
+ * separated, noun then past-tense verb ("club registered", "players imported").
+ * Every name must also appear in .posthog-events.json — a test enforces that,
+ * so the registry cannot drift the way it already had.
+ */
+export function captureEvent(event: string, properties: Record<string, unknown> = {}): void {
+  if (!active) return;
+
+  posthog.capture(event, {
+    route: currentRoute(),
+    ...properties,
+  });
+}
+
+/**
  * Identify the current user and link them to their club group.
  */
 export function identify(opts: {
