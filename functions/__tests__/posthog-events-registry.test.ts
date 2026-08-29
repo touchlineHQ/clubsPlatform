@@ -65,7 +65,7 @@ describe('.posthog-events.json', () => {
   it('follows the lowercase, space-separated naming convention', () => {
     // Wildcards are allowed only as a trailing segment, for template-literal
     // names like `gc mandate ${ev.action}` whose suffix comes from GoCardless.
-    const badly = registryNames.filter((n) => !/^[a-z0-9]+( [a-z0-9*]+)*$/.test(n));
+    const badly = registryNames.filter((n) => !/^[a-z0-9]+(?: [a-z0-9]+)*(?: \*)?$/.test(n));
     expect(
       badly,
       `These names break the convention used by the rest of the events:\n  ${badly.join('\n  ')}`,
