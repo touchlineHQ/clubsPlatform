@@ -42,6 +42,27 @@ describe('loadClubSlugs', () => {
     expect(result).toEqual(['east-leake', 'riverside']);
   });
 
+  // A club running teams in several leagues is listed once per league, so its
+  // slug repeats in the index. Mantine's Autocomplete throws on duplicate
+  // option values, which took the whole Customise page down.
+  it('dedupes slugs that appear in more than one league', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        clubs: [
+          { slug: 'teversal', name: 'Teversal', league: 'saturday' },
+          { slug: 'east-leake', name: 'East Leake', league: 'saturday' },
+          { slug: 'teversal', name: 'Teversal', league: 'sunday' },
+          { slug: 'teversal', name: 'Teversal', league: 'midweek' },
+        ],
+      }),
+    });
+
+    const result = await loadClubSlugs();
+    expect(result).toEqual(['east-leake', 'teversal']);
+    expect(new Set(result).size).toBe(result.length);
+  });
+
   it('returns empty array when fetch fails', async () => {
     mockFetch.mockResolvedValue({ ok: false });
 
