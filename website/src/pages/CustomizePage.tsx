@@ -62,8 +62,6 @@ export function CustomizePage({
   };
 
   const applyPreview = async () => {
-    captureEvent('preview applied', { club_slug: clubSlug });
-
     const slugsChanged =
       localData.club.clubFeedSlug !== originalData.club.clubFeedSlug ||
       JSON.stringify(localData.teams.sections.map(s => s.teams.map(t => t.slug))) !==
@@ -82,6 +80,8 @@ export function CustomizePage({
     } else {
       onApplyPreview(localData);
     }
+
+    captureEvent('preview applied', { club_slug: clubSlug });
   };
 
   return (

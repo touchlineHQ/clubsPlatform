@@ -742,12 +742,12 @@ export function RegistrationsPage() {
             leftSection={<IconFileSpreadsheet size={16} />}
             onClick={() => {
               const rows = filteredClub ?? club;
+              exportRegistrationsToXlsx(rows, clubSlug, filters);
               captureEvent('registrations exported', {
                 club_slug: clubSlug,
                 row_count: rows.length,
                 filtered: rows.length !== club.length,
               });
-              exportRegistrationsToXlsx(rows, clubSlug, filters);
             }}
             radius="xl"
             variant="light"
