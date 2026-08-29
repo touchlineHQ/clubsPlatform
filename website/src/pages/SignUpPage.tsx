@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert, Box } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { signUp } from '../auth-client';
+import { captureEvent } from '../lib/posthog';
 import { useAuth } from '../context/AuthContext';
 import { clubDesign } from '../theme';
 
@@ -28,12 +29,15 @@ export function SignUpPage() {
     try {
       const result = await signUp.email({ name, email, password });
       if (result.error) {
+        captureEvent('signup failed', { reason: 'rejected' });
         setError(result.error.message ?? 'Registration failed');
       } else {
+        captureEvent('signup succeeded');
         await refresh();
         navigate(redirectTo, { replace: true });
       }
     } catch {
+      captureEvent('signup failed', { reason: 'error' });
       setError('Registration failed — please try again');
     } finally {
       setLoading(false);

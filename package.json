@@ -14,7 +14,8 @@
     "db:migrate:prod": "npx wrangler d1 migrations apply clubsplatform-auth --remote --env production",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
     "better-auth": "^1.5.6",

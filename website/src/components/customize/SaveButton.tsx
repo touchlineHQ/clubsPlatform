@@ -3,7 +3,7 @@ import { Button, Text, Group } from '@mantine/core';
 import { IconDeviceFloppy, IconCheck, IconX } from '@tabler/icons-react';
 import type { AppData, Club } from '../../types';
 import { useClub } from '../../context/ClubContext';
-import { captureError } from '../../lib/posthog';
+import { captureError, captureEvent } from '../../lib/posthog';
 
 interface Props {
   data: AppData;
@@ -38,11 +38,13 @@ export function SaveButton({ data, onSaved }: Props) {
         req('POST', '/api/gallery', { items: data.gallery }),
         req('POST', '/api/matchday', { items: data.matchday }),
       ]);
+      captureEvent('customisation saved', { club_slug: clubSlug });
       setResult('success');
       onSaved?.(data.club);
       window.location.reload();
     } catch (e) {
       captureError(e, { op: 'customisation.save', club_slug: clubSlug });
+      captureEvent('customisation save failed', { club_slug: clubSlug });
       setResult('error');
     } finally {
       setSaving(false);

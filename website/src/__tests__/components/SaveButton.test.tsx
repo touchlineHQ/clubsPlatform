@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { SaveButton } from '../../components/customize/SaveButton';
 import { renderWithMantine, mockSingleClub } from '../test-utils';
-import { captureError } from '../../lib/posthog';
+import { captureError, captureEvent } from '../../lib/posthog';
 import type { AppData } from '../../types';
 
-vi.mock('../../lib/posthog', () => ({ captureError: vi.fn() }));
+vi.mock('../../lib/posthog', () => ({ captureError: vi.fn(), captureEvent: vi.fn() }));
 
 const mockFetch = vi.fn();
 
@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
   mockFetch.mockReset();
   vi.mocked(captureError).mockClear();
+  vi.mocked(captureEvent).mockClear();
 
   Object.defineProperty(window, 'location', {
     writable: true,
@@ -113,5 +114,26 @@ describe('SaveButton', () => {
 
     await waitFor(() => expect(screen.getByText('Saved!')).toBeTruthy());
     expect(captureError).not.toHaveBeenCalled();
+  });
+
+  it("records 'customisation saved' on success", async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+
+    renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+
+    await waitFor(() =>
+      expect(captureEvent).toHaveBeenCalledWith('customisation saved', expect.any(Object)));
+  });
+
+  it("records 'customisation save failed' on failure", async () => {
+    mockFetch.mockResolvedValue({ ok: false, json: async () => ({ error: 'bad' }) });
+
+    renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+
+    await waitFor(() =>
+      expect(captureEvent).toHaveBeenCalledWith('customisation save failed', expect.any(Object)));
+    expect(captureEvent).not.toHaveBeenCalledWith('customisation saved', expect.anything());
   });
 });

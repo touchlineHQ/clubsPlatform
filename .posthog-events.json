@@ -1,37 +1,263 @@
 [
   {
-    "event": "players imported",
-    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts",
-    "file": "functions/api/admin/import-players.ts"
+    "event": "booking deleted",
+    "description": "An admin deletes a confirmed pitch booking.",
+    "files": [
+      "functions/api/bookings.ts"
+    ]
+  },
+  {
+    "event": "booking request approved",
+    "description": "An admin approves a pitch booking request, creating a confirmed booking.",
+    "files": [
+      "functions/api/booking-requests.ts"
+    ]
+  },
+  {
+    "event": "booking request declined",
+    "description": "An admin declines a pitch booking request.",
+    "files": [
+      "functions/api/booking-requests.ts"
+    ]
+  },
+  {
+    "event": "booking request submitted",
+    "description": "A manager or admin submits a request to book a pitch.",
+    "files": [
+      "functions/api/booking-requests.ts"
+    ]
+  },
+  {
+    "event": "club registered",
+    "description": "A new club is registered on the platform; the signing-up user becomes its admin.",
+    "files": [
+      "functions/api/clubs/register.ts"
+    ]
+  },
+  {
+    "event": "customisation save failed",
+    "description": "A save from the Site Admin page failed. Paired with a $exception carrying the cause.",
+    "files": [
+      "website/src/components/customize/SaveButton.tsx"
+    ]
+  },
+  {
+    "event": "customisation saved",
+    "description": "An admin successfully saved the club's content from the Site Admin page.",
+    "files": [
+      "website/src/components/customize/SaveButton.tsx"
+    ]
   },
   {
     "event": "fixtures imported",
-    "description": "An admin bulk-imports upcoming home fixtures from the club feed, auto-creating pending booking requests",
-    "file": "functions/api/admin/import-fixtures.ts"
+    "description": "An admin bulk-imports upcoming home fixtures from the club feed, auto-creating pending booking requests.",
+    "files": [
+      "functions/api/admin/import-fixtures.ts"
+    ]
   },
   {
-    "event": "subscription level updated",
-    "description": "An admin updates the name, price, or interval of an existing subscription level",
-    "file": "functions/api/admin/subscription-levels/[id].ts"
+    "event": "gc mandate *",
+    "description": "A GoCardless mandate webhook. The suffix is the GoCardless action (created, submitted, active, cancelled, expired, failed, reinstated, consumed).",
+    "files": [
+      "functions/api/gocardless/webhook.ts"
+    ]
   },
   {
-    "event": "subscription level deleted",
-    "description": "An admin deletes a subscription level from the club",
-    "file": "functions/api/admin/subscription-levels/[id].ts"
+    "event": "gc payment *",
+    "description": "A GoCardless payment webhook. The suffix is the GoCardless action (created, submitted, confirmed, paid_out, failed, cancelled, surcharge_fee_debited).",
+    "files": [
+      "functions/api/gocardless/webhook.ts"
+    ]
   },
   {
-    "event": "subscription rate assigned",
-    "description": "An admin maps a registration status (or team + status) to a subscription level, setting the payment rate for that cohort",
-    "file": "functions/api/admin/status-subscription-levels.ts"
+    "event": "gc subscription *",
+    "description": "A GoCardless subscription webhook. The suffix is the GoCardless action (created, payment_created, customer_approval_granted, cancelled, finished).",
+    "files": [
+      "functions/api/gocardless/webhook.ts"
+    ]
   },
   {
-    "event": "subscription rate cleared",
-    "description": "An admin removes a status-based subscription rate mapping (club-wide or per-team override)",
-    "file": "functions/api/admin/status-subscription-levels.ts"
+    "event": "login failed",
+    "description": "A sign-in attempt did not succeed. The reason property distinguishes rejected credentials, a wrong-club account, and a thrown error.",
+    "files": [
+      "website/src/pages/LoginPage.tsx"
+    ]
+  },
+  {
+    "event": "login succeeded",
+    "description": "A user signed in successfully.",
+    "files": [
+      "website/src/pages/LoginPage.tsx"
+    ]
+  },
+  {
+    "event": "payment completed",
+    "description": "A player's GoCardless payment is confirmed and a subscription created.",
+    "files": [
+      "functions/api/gocardless/confirm.ts"
+    ]
+  },
+  {
+    "event": "payment duplicate mandate cancelled",
+    "description": "A duplicate GoCardless mandate was detected and cancelled during payment setup.",
+    "files": [
+      "functions/api/gocardless/confirm.ts"
+    ]
+  },
+  {
+    "event": "payment failed",
+    "description": "A GoCardless payment or subscription creation failed during the confirm step.",
+    "files": [
+      "functions/api/gocardless/confirm.ts"
+    ]
+  },
+  {
+    "event": "payment fan entry submitted",
+    "description": "A player submitted their FAN on the public payment entry page.",
+    "files": [
+      "functions/[clubSlug]/payments/index.ts"
+    ]
+  },
+  {
+    "event": "payment link created",
+    "description": "An admin creates a GoCardless payment link for a player.",
+    "files": [
+      "functions/api/gocardless/create-link.ts"
+    ]
   },
   {
     "event": "payment page viewed",
-    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel",
-    "file": "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
+    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel.",
+    "files": [
+      "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
+    ]
+  },
+  {
+    "event": "player payment deactivated",
+    "description": "An admin marks a player's payment as inactive.",
+    "files": [
+      "functions/api/admin/player-payments.ts"
+    ]
+  },
+  {
+    "event": "player payment subscription retried",
+    "description": "An admin retries creating a GoCardless subscription for an existing mandate.",
+    "files": [
+      "functions/api/admin/player-payments.ts"
+    ]
+  },
+  {
+    "event": "players imported",
+    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts.",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
+    "event": "preview applied",
+    "description": "An admin previews unsaved customisation changes on the live site.",
+    "files": [
+      "website/src/pages/CustomizePage.tsx"
+    ]
+  },
+  {
+    "event": "registration items updated",
+    "description": "An admin updates the club's registration page items.",
+    "files": [
+      "functions/api/registration.ts"
+    ]
+  },
+  {
+    "event": "registrations exported",
+    "description": "An admin exports the registrations table to a spreadsheet.",
+    "files": [
+      "website/src/pages/RegistrationsPage.tsx"
+    ]
+  },
+  {
+    "event": "signup failed",
+    "description": "An account creation attempt did not succeed. The reason property distinguishes a rejected request from a thrown error.",
+    "files": [
+      "website/src/pages/SignUpPage.tsx"
+    ]
+  },
+  {
+    "event": "signup succeeded",
+    "description": "A new user account was created.",
+    "files": [
+      "website/src/pages/SignUpPage.tsx"
+    ]
+  },
+  {
+    "event": "subscription level created",
+    "description": "An admin creates a new subscription level for a club.",
+    "files": [
+      "functions/api/admin/subscription-levels.ts"
+    ]
+  },
+  {
+    "event": "subscription level deleted",
+    "description": "An admin deletes a subscription level from the club.",
+    "files": [
+      "functions/api/admin/subscription-levels/[id].ts"
+    ]
+  },
+  {
+    "event": "subscription level updated",
+    "description": "An admin updates the name, price, or interval of an existing subscription level.",
+    "files": [
+      "functions/api/admin/subscription-levels/[id].ts"
+    ]
+  },
+  {
+    "event": "subscription rate assigned",
+    "description": "An admin maps a registration status (or team + status) to a subscription level, setting the payment rate for that cohort.",
+    "files": [
+      "functions/api/admin/registration-subscription-levels.ts",
+      "functions/api/admin/status-subscription-levels.ts"
+    ]
+  },
+  {
+    "event": "subscription rate cleared",
+    "description": "An admin removes a status-based subscription rate mapping (club-wide or per-team override).",
+    "files": [
+      "functions/api/admin/registration-subscription-levels.ts",
+      "functions/api/admin/status-subscription-levels.ts"
+    ]
+  },
+  {
+    "event": "team role assigned",
+    "description": "An admin assigns a coach, manager, or subscriber role on a team.",
+    "files": [
+      "functions/api/admin/user-team-roles.ts"
+    ]
+  },
+  {
+    "event": "team role removed",
+    "description": "An admin removes a user's team role assignment.",
+    "files": [
+      "functions/api/admin/user-team-roles.ts"
+    ]
+  },
+  {
+    "event": "team subscription created",
+    "description": "A user subscribes to follow a team.",
+    "files": [
+      "functions/api/team-subscriptions.ts"
+    ]
+  },
+  {
+    "event": "team subscription deleted",
+    "description": "A user unsubscribes from following a team.",
+    "files": [
+      "functions/api/team-subscriptions.ts"
+    ]
+  },
+  {
+    "event": "user role updated",
+    "description": "An admin updates another user's platform role.",
+    "files": [
+      "functions/api/admin/users.ts"
+    ]
   }
 ]

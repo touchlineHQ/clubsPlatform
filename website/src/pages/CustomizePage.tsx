@@ -16,6 +16,7 @@ import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
 import { useClub } from '../context/ClubContext';
+import { captureEvent } from '../lib/posthog';
 import { PageHeader } from '../components/club/PageHeader';
 
 interface Props {
@@ -61,6 +62,8 @@ export function CustomizePage({
   };
 
   const applyPreview = async () => {
+    captureEvent('preview applied', { club_slug: clubSlug });
+
     const slugsChanged =
       localData.club.clubFeedSlug !== originalData.club.clubFeedSlug ||
       JSON.stringify(localData.teams.sections.map(s => s.teams.map(t => t.slug))) !==
