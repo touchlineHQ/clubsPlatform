@@ -14,6 +14,7 @@ import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
+import { captureError } from '../lib/posthog';
 
 interface RegistrationRow {
   registrationId: string;
@@ -587,7 +588,8 @@ export function RegistrationsPage() {
       setPersonal(data.personal);
       setClub(data.club);
       setScope(data.scope);
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'registrations.refresh' });
       setError('Failed to load registrations');
     } finally {
       setLoading(false);

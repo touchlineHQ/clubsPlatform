@@ -3,6 +3,7 @@ import { Button, Text, Group } from '@mantine/core';
 import { IconDeviceFloppy, IconCheck, IconX } from '@tabler/icons-react';
 import type { AppData, Club } from '../../types';
 import { useClub } from '../../context/ClubContext';
+import { captureError } from '../../lib/posthog';
 
 interface Props {
   data: AppData;
@@ -40,7 +41,8 @@ export function SaveButton({ data, onSaved }: Props) {
       setResult('success');
       onSaved?.(data.club);
       window.location.reload();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'customisation.save', club_slug: clubSlug });
       setResult('error');
     } finally {
       setSaving(false);
@@ -67,7 +69,7 @@ export function SaveButton({ data, onSaved }: Props) {
       {result === 'error' && (
         <Group gap={4}>
           <IconX size={14} color="red" />
-          <Text size="xs" c="red">Failed to save — check console for details</Text>
+          <Text size="xs" c="red">Couldn't save your changes. Nothing was lost — try again in a moment.</Text>
         </Group>
       )}
     </Group>
