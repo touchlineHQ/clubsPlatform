@@ -51,8 +51,26 @@ app.all("/api/auth/*", async (c) => {
   } catch (e) {
     const posthog = getPostHog(c.env);
     if (posthog) {
-      posthog.captureException(e);
-      await posthog.flush();
+      // Attribute to the user where we can. Auth failures often happen before
+      // or during session establishment, so this is frequently null — but
+      // previously every auth exception landed on a randomly generated person
+      // and could not be tied to the account it happened to.
+      let distinctId: string | undefined;
+      try {
+        const baseURL = c.env.BETTER_AUTH_URL ?? new URL(c.req.url).origin;
+        const session = await createAuth(c.env, { baseURL }).api.getSession({
+          headers: c.req.raw.headers,
+        });
+        distinctId = session?.user?.id;
+      } catch {
+        // Already handling an error; never mask it with a lookup failure.
+      }
+
+      await posthog.captureExceptionImmediate(e, distinctId, {
+        path: new URL(c.req.url).pathname,
+        method: c.req.method,
+        source: "auth-handler",
+      });
     }
     return c.json({ error: "Auth error" }, 500);
   }
