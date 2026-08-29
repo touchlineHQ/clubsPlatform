@@ -3,6 +3,7 @@ import { D1Database } from "@cloudflare/workers-types";
 type AnyRow = Record<string, unknown>;
 type AssetFetcher = { fetch(req: Request | string): Promise<Response> };
 
+/** Fetch and parse a JSON file from the assets binding, returning null on error or HTML. */
 async function fetchJson(assets: AssetFetcher, url: string): Promise<AnyRow | null> {
   try {
     const res = await assets.fetch(url);

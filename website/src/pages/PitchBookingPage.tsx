@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import type { LiveTeam } from '../types';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { captureError } from '../lib/posthog';
 
 interface Pitch {
   id: string;
@@ -94,8 +95,8 @@ export function PitchBookingPage({ liveTeams }: Props) {
         const data = await res.json() as { pitches: Pitch[] };
         setPitches(data.pitches);
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      captureError(e, { op: 'pitchBooking.fetchPitches' });
     }
   };
 
@@ -158,8 +159,8 @@ export function PitchBookingPage({ liveTeams }: Props) {
           setTeamLeague(parts[2]);
         }
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      captureError(e, { op: 'pitchBooking.fetchTeams' });
     }
   };
 
@@ -172,8 +173,8 @@ export function PitchBookingPage({ liveTeams }: Props) {
         const sorted = [...data.requests].sort((a, b) => b.createdAt - a.createdAt);
         setRequests(sorted);
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      captureError(e, { op: 'pitchBooking.fetchRequests' });
     }
   };
 
@@ -230,7 +231,8 @@ export function PitchBookingPage({ liveTeams }: Props) {
       setNotes('');
       await fetchRequests();
       setActiveTab('my-requests');
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'pitchBooking.submit' });
       setError('Failed to submit request. Please try again.');
     } finally {
       setSubmitting(false);

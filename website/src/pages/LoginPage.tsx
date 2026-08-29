@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert, Box } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { signIn, signOut } from '../auth-client';
+import { captureEvent } from '../lib/posthog';
 import { useAuth } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
 import { clubDesign } from '../theme';
@@ -30,6 +31,7 @@ export function LoginPage() {
     try {
       const result = await signIn.email({ email, password });
       if (result.error) {
+        captureEvent('login failed', { reason: 'rejected' });
         setError(result.error.message ?? 'Login failed');
       } else {
         const loggedInUser = await refresh();
@@ -39,13 +41,16 @@ export function LoginPage() {
         if (isMultiClub && loggedInUser && loggedInUser.clubSlug !== null && loggedInUser.clubSlug !== currentClubSlug) {
           await signOut();
           await refresh();
+          captureEvent('login failed', { reason: 'wrong_club' });
           setError('This account is not registered with this club. Please log in on the correct club page.');
           return;
         }
 
+        captureEvent('login succeeded');
         navigate(redirectTo, { replace: true });
       }
     } catch {
+      captureEvent('login failed', { reason: 'error' });
       setError('Login failed — please try again');
     } finally {
       setLoading(false);

@@ -7,6 +7,7 @@ import {
 import { IconClock, IconCalendarEvent, IconRefresh } from '@tabler/icons-react';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { captureError } from '../lib/posthog';
 
 interface Pitch {
   id: string;
@@ -105,7 +106,8 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
         const data = await pitchRes.json() as { pitches: Pitch[] };
         setPitches(data.pitches);
       }
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'bookingAdmin.fetchAll' });
       setError('Failed to load data');
     }
   };
@@ -161,7 +163,8 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
       setSelectedRequest(null);
       setSuccessMsg('Booking approved successfully.');
       await fetchAll();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'bookingAdmin.approve' });
       setError('Failed to approve request. Please try again.');
     } finally {
       setProcessing(false);
@@ -190,7 +193,8 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
       setSelectedRequest(null);
       setSuccessMsg('Booking request declined.');
       await fetchAll();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'bookingAdmin.decline' });
       setError('Failed to decline request. Please try again.');
     } finally {
       setProcessing(false);
@@ -214,7 +218,8 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
       }
       setSuccessMsg(`Import complete — ${data.created} created, ${data.skipped} skipped.`);
       await fetchAll();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'bookingAdmin.importFixtures' });
       setError('Failed to import fixtures');
     } finally {
       setImporting(false);
@@ -230,7 +235,8 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
         return;
       }
       await fetchAll();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'bookingAdmin.deleteBooking' });
       setError('Failed to delete booking');
     }
   };

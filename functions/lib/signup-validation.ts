@@ -42,6 +42,7 @@ export function validateSignupBody(body: SignupBody): string | null {
   return null;
 }
 
+/** Check if a request is a sign-up request based on method and pathname. */
 export function isSignupRequest(method: string, pathname: string): boolean {
   return method === 'POST' && /\/api\/auth\/sign-up(\/|$)/.test(pathname);
 }
