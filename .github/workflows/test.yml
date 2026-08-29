@@ -1,9 +1,9 @@
 name: Test
 
+# Push-to-main is covered by the `test` job in main.yml, which the deploy job
+# depends on. Running it here too would duplicate the work and race the deploy.
 on:
   pull_request:
-  push:
-    branches: [main]
 
 jobs:
   test:
@@ -16,6 +16,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
 
       - name: Install root dependencies
         run: npm ci
