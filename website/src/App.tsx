@@ -41,6 +41,10 @@ function NavigationHandler({ onNavigate }: { onNavigate: () => void }) {
   const { pathname } = useLocation();
   useEffect(() => {
     window.scrollTo(0, 0);
+    // The single source of pageviews: posthog-js has capture_pageview off,
+    // because under HashRouter it can only see the club prefix. `pathname` is
+    // the in-app route and becomes $pathname; $current_url is filled in from
+    // window.location.href.
     pageview(pathname);
     onNavigate();
   }, [pathname, onNavigate]);
