@@ -130,6 +130,12 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
   // Resolve fanId for PostHog identity stitching (frontend uses fanId as distinctId)
   const fanId = await resolveFanIdFromGCResource(env.DB, mandateId, subscriptionId);
 
+  // No club group on these events: a GoCardless callback carries no club
+  // context, and resolving one would mean returning clubSlug alongside fanId
+  // from resolveFanIdFromGCResource. The payer-facing funnel (payment page
+  // viewed → link created → payment completed) is grouped at every step, so
+  // these downstream mirrors are the least valuable place to add that lookup.
+
   const recordEvent = async () => {
     await env.DB
       .prepare(

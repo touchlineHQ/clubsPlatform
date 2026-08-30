@@ -1,5 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface UserRow {
   id: string;
@@ -54,6 +54,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'user role updated',
+      ...clubGroups(getClubSlug(context.request)),
       properties: { target_user_id: userId, new_role: role },
     });
   }

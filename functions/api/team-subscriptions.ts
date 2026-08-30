@@ -1,5 +1,5 @@
-import { type Env, json, requireAuth } from "../lib/api-helpers";
-import { getPostHog } from "../lib/posthog";
+import { type Env, json, requireAuth, getClubSlug } from "../lib/api-helpers";
+import { getPostHog, clubGroups } from "../lib/posthog";
 
 // POST /api/team-subscriptions
 // Body: { teamSlug, teamLeague, teamName }
@@ -55,6 +55,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: userId,
       event: 'team subscription created',
+      ...clubGroups(getClubSlug(context.request)),
       properties: { team_slug: teamSlug, team_league: teamLeague, team_name: teamName },
     });
   }
@@ -98,6 +99,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: userId,
       event: 'team subscription deleted',
+      ...clubGroups(getClubSlug(context.request)),
       properties: { team_slug: slug, team_league: league },
     });
   }

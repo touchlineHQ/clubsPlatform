@@ -1,6 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
-import { getPostHog } from "../lib/posthog";
+import { getPostHog, clubGroups } from "../lib/posthog";
 
 const clubFilter = `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`;
 
@@ -54,6 +54,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'registration items updated',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, item_count: (body.items ?? []).length },
     });
   }
