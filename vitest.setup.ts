@@ -21,6 +21,13 @@ if (typeof window !== 'undefined') {
     }),
   });
 
+  // jsdom doesn't implement scrollIntoView. Mantine's Combobox calls it on a
+  // timer when a dropdown opens, which surfaces as an unhandled error after the
+  // test itself has already passed.
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
+
   if (!('ResizeObserver' in window)) {
     (window as unknown as Record<string, unknown>).ResizeObserver = class ResizeObserver {
       observe() {}
