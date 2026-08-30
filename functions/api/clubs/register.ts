@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
@@ -36,6 +37,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let slug = slugify(clubName);
   if (!slug) {
     return json({ error: "Club name could not be converted to a valid slug" }, { status: 400 });
+  }
+
+  if (!(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
   }
 
   // Ensure slug uniqueness — append a suffix if taken

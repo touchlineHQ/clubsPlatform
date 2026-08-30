@@ -38,7 +38,7 @@ describe('clubs POST (create club in multi-club mode)', () => {
     const ctx = makeContext(req, {
       env: {
         MULTI_CLUB: '1',
-        DB: makeDb({ first: null, run: { meta: { changes: 1 } } }),
+        DB: makeDb({ all: [[{ name: 'published' }]], first: null, run: { meta: { changes: 1 } } }),
       },
     });
     const res = await clubsPost(ctx as any);
@@ -47,6 +47,8 @@ describe('clubs POST (create club in multi-club mode)', () => {
     expect(body.ok).toBe(true);
     expect(typeof body.id).toBe('string');
     expect(body.slug).toBe('my-club');
+    const insert = prepared(ctx.env.DB).find(({ sql }) => /INSERT INTO club_config/.test(sql));
+    expect(insert?.sql).toMatch(/published.*1, 0/);
   });
 
   it('returns 409 when the slug is already taken', async () => {
@@ -54,7 +56,7 @@ describe('clubs POST (create club in multi-club mode)', () => {
     const ctx = makeContext(req, {
       env: {
         MULTI_CLUB: '1',
-        DB: makeDb({ first: { id: 'club_existing' } }),
+        DB: makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_existing' } }),
       },
     });
     const res = await clubsPost(ctx as any);
@@ -114,6 +116,17 @@ describe('clubs POST (create club in multi-club mode)', () => {
     const res = await clubsPost(ctx as any);
     expect(res.status).toBe(401);
   });
+
+  it('returns 503 without creating a club when migration 0021 is not applied', async () => {
+    const db = makeDb({ all: [[{ name: 'id' }]] });
+    const req = postReq('/api/clubs', { slug: 'my-club', name: 'My Club FC' });
+    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
+
+    const res = await clubsPost(ctx as any);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual(expect.objectContaining({ error: expect.stringMatching(/temporarily unavailable/) }));
+    expect(prepared(db).some(({ sql }) => /INSERT INTO club_config/.test(sql))).toBe(false);
+  });
 });
 
 describe('clubs PATCH (update club)', () => {
@@ -138,6 +151,8 @@ describe('clubs PATCH (update club)', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(true);
+    const lookup = prepared(ctx.env.DB).find(({ sql }) => /SELECT id/.test(sql));
+    expect(lookup?.sql).not.toMatch(/published/);
   });
 
   it('returns 404 when club is not found', async () => {
@@ -204,7 +219,7 @@ describe('clubs PATCH (update club)', () => {
   // ─── Go live / make private ────────────────────────────────────────────────
 
   it('takes a private club live and logs it', async () => {
-    const db = makeDb({ first: { id: 'club_1', published: 0 }, run: { meta: { changes: 1 } } });
+    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 0 }, run: { meta: { changes: 1 } } });
     const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
     const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
 
@@ -228,7 +243,7 @@ describe('clubs PATCH (update club)', () => {
   });
 
   it('takes a live club private and logs it', async () => {
-    const db = makeDb({ first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
+    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
     const req = patchReq('/api/clubs', { published: false }, { 'X-Club-Slug': 'test-club' });
     const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
 
@@ -244,7 +259,7 @@ describe('clubs PATCH (update club)', () => {
   });
 
   it('does not log when published is unchanged', async () => {
-    const db = makeDb({ first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
+    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
     const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
     const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
 
@@ -269,6 +284,16 @@ describe('clubs PATCH (update club)', () => {
     const res = await clubsPatch(ctx as any);
     expect(res.status).toBe(403);
     expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 without updating when publishing and migration 0021 is not applied', async () => {
+    const db = makeDb({ all: [[{ name: 'id' }]] });
+    const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
+
+    const res = await clubsPatch(ctx as any);
+    expect(res.status).toBe(503);
+    expect(prepared(db).some(({ sql }) => /UPDATE club_config SET/.test(sql))).toBe(false);
   });
 });
 
@@ -336,8 +361,8 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     const ctx = makeContext(req, {
       env: {
         MULTI_CLUB: '1',
-        // First .all() returns empty set (no slug conflicts), two .run() calls follow
-        DB: makeDb({ all: [[]], run: { meta: { changes: 1 } } }),
+        // Schema check succeeds, then the slug lookup finds no conflicts.
+        DB: makeDb({ all: [[{ name: 'published' }], []], run: { meta: { changes: 1 } } }),
       },
     });
     const res = await registerPost(ctx as any);
@@ -346,6 +371,8 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     expect(body.ok).toBe(true);
     expect(typeof body.slug).toBe('string');
     expect(body.slug).toMatch(/riverside-fc/);
+    const insert = prepared(ctx.env.DB).find(({ sql }) => /INSERT INTO club_config/.test(sql));
+    expect(insert?.sql).toMatch(/published.*1, 0/);
   });
 
   it('appends a numeric suffix when slug is already taken', async () => {
@@ -354,7 +381,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
       env: {
         MULTI_CLUB: '1',
         // .all() returns a row with the base slug already taken
-        DB: makeDb({ all: [[{ slug: 'riverside-fc' }]], run: { meta: { changes: 1 } } }),
+        DB: makeDb({ all: [[{ name: 'published' }], [{ slug: 'riverside-fc' }]], run: { meta: { changes: 1 } } }),
       },
     });
     const res = await registerPost(ctx as any);
@@ -394,6 +421,16 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(401);
+  });
+
+  it('returns 503 without registering a club when migration 0021 is not applied', async () => {
+    const db = makeDb({ all: [[{ name: 'id' }]] });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC' });
+    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
+
+    const res = await registerPost(ctx as any);
+    expect(res.status).toBe(503);
+    expect(prepared(db).some(({ sql }) => /INSERT INTO club_config/.test(sql))).toBe(false);
   });
 });
 

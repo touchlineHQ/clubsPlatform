@@ -1,5 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { writeAuditLog } from "../lib/audit-log";
+import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
 type ClubRow = {
@@ -75,6 +76,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "slug must contain only lowercase letters, numbers, and hyphens" }, { status: 400 });
   }
 
+  if (!(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
+  }
+
   const existing = await context.env.DB
     .prepare(`SELECT id FROM club_config WHERE slug = ?`)
     .bind(slug)
@@ -105,7 +110,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // applied everywhere yet, and self-healing the column here would make that
   // migration fail with "duplicate column name" — the hazard spelled out in
   // lib/ensure-tables.ts. The GET handlers fall back gracefully instead, so the
-  // only casualty in that window is a publish toggle, which fails loudly.
+  // write paths that need the column return a controlled unavailable response.
   try {
     await context.env.DB.prepare(`ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`).run();
   } catch { /* column already exists */ }
@@ -119,13 +124,17 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
-  const existing = await context.env.DB
-    .prepare(`SELECT id, published FROM club_config WHERE slug = ?`)
-    .bind(clubSlug)
-    .first<{ id: string; published: number }>();
-  if (!existing) return json({ error: "Not found" }, { status: 404 });
-
   const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null; published: boolean }>;
+  const changesPublication = body.published !== undefined;
+  if (changesPublication && !(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
+  }
+
+  const existing = await context.env.DB
+    .prepare(`SELECT id${changesPublication ? ", published" : ""} FROM club_config WHERE slug = ?`)
+    .bind(clubSlug)
+    .first<{ id: string; published?: number }>();
+  if (!existing) return json({ error: "Not found" }, { status: 404 });
 
   const sets: string[] = [];
   const binds: unknown[] = [];
