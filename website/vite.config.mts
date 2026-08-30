@@ -39,12 +39,15 @@ const posthogApiKey = process.env.POSTHOG_CLI_API_KEY;
  * stop the site from shipping. Source maps are an observability nicety;
  * shipping is the point, so an upload failure is downgraded to a warning.
  *
- * The cleanup is not optional. The plugin deletes the maps only after a
- * *successful* upload, deliberately leaving them on disk otherwise — so
- * swallowing the error without this would publish our source maps to
- * Cloudflare Pages. On failure we therefore delete them ourselves, and if even
- * that fails we rethrow: shipping the site is worth more than symbolication,
- * but not worth leaking source.
+ * The cleanup is not optional, and it runs on *every* path — hence `finally`
+ * rather than `catch`. The plugin never guarantees deletion: it skips it
+ * entirely when the upload throws, and even after a *successful* upload it
+ * deletes with `Promise.allSettled` and merely warns if `rm` rejects (EPERM,
+ * EBUSY, a read-only filesystem). Either way the handler can resolve with a
+ * `.map` still on disk, which `wrangler pages deploy website/dist` would then
+ * publish — our entire frontend source, served to anyone. A sweep that fails
+ * therefore propagates and fails the build: shipping the site is worth more
+ * than symbolication, but it is not worth leaking source.
  */
 function uploadFailureIsNotFatal(plugin: Plugin): Plugin {
   const writeBundle = plugin.writeBundle;
@@ -70,6 +73,10 @@ function uploadFailureIsNotFatal(plugin: Plugin): Plugin {
           );
           return undefined;
         } finally {
+          // Enforces the `deleteAfterUpload: true` set below rather than
+          // trusting the plugin to have honoured it. Sweeping every `.map`
+          // instead of tracking individual files is deliberate: no source map
+          // should ever survive into `dist`, so the broad rule is the safe one.
           const outDir = args[0]?.dir;
           if (outDir) {
             const maps = (await readdir(outDir, { recursive: true }))

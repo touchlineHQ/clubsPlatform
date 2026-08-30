@@ -124,12 +124,15 @@ when `posthog-cli` exits non-zero — an unreachable PostHog, or a personal API
 key that has been rotated or expired. Since the `Build` step gates
 `wrangler pages deploy`, that would stop the site from shipping because
 analytics tooling had a bad day. `vite.config.mts` wraps the plugin so an
-upload failure logs a warning and the build carries on. The wrapper also
-deletes the source maps itself in that case: the plugin only removes them after
-a *successful* upload, so without the cleanup a swallowed error would publish
-our source maps to Cloudflare Pages. If that cleanup ever fails, the build
-fails — shipping is worth more than symbolication, but not worth leaking
-source.
+upload failure logs a warning and the build carries on.
+
+The wrapper also sweeps the source maps out of `dist` itself, on **every** path
+rather than only the failure one. The plugin never guarantees deletion: it
+skips it when the upload throws, and even after a successful upload it deletes
+with `Promise.allSettled` and only warns if `rm` rejects. Either way it can
+finish with a `.map` still on disk, which the deploy would then publish — the
+whole frontend source, served to anyone. If the sweep itself fails the build
+fails: shipping is worth more than symbolication, but not worth leaking source.
 
 Two more things to know if you touch this:
 
