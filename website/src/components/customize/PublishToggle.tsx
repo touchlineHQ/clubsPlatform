@@ -32,7 +32,9 @@ export function PublishToggle({ published, onPublishedChange }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch('/api/clubs', {
+      // PATCH /api/club, not /api/clubs — the latter is gated on multi-club
+      // mode, and a single-club fork needs to go live too.
+      const res = await fetch('/api/club', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
         body: JSON.stringify({ published: next }),

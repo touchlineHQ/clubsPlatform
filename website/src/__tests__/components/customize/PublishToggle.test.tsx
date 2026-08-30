@@ -56,7 +56,7 @@ describe('PublishToggle', () => {
     fireEvent.click(screen.getByRole('button', { name: /Yes, go live/i }));
 
     await waitFor(() => expect(onPublishedChange).toHaveBeenCalledWith(true));
-    expect(mockFetch).toHaveBeenCalledWith('/api/clubs', expect.objectContaining({
+    expect(mockFetch).toHaveBeenCalledWith('/api/club', expect.objectContaining({
       method: 'PATCH',
       headers: expect.objectContaining({ 'X-Club-Slug': 'test-club' }),
       body: JSON.stringify({ published: true }),
@@ -72,7 +72,7 @@ describe('PublishToggle', () => {
     fireEvent.click(screen.getByRole('button', { name: /Yes, make private/i }));
 
     await waitFor(() => expect(onPublishedChange).toHaveBeenCalledWith(false));
-    expect(mockFetch).toHaveBeenCalledWith('/api/clubs', expect.objectContaining({
+    expect(mockFetch).toHaveBeenCalledWith('/api/club', expect.objectContaining({
       body: JSON.stringify({ published: false }),
     }));
     expect(captureEvent).toHaveBeenCalledWith('club unpublished', { club_slug: 'test-club' });

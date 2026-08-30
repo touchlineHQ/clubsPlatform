@@ -1,5 +1,4 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { writeAuditLog } from "../lib/audit-log";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
@@ -106,11 +105,11 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // Defensive: add primaryColor / secondaryColor columns if the production DB
   // predates migrations 0009 / 0015.
   //
-  // `published` deliberately gets no equivalent. Migration 0021 has not been
-  // applied everywhere yet, and self-healing the column here would make that
-  // migration fail with "duplicate column name" — the hazard spelled out in
-  // lib/ensure-tables.ts. The GET handlers fall back gracefully instead, so the
-  // write paths that need the column return a controlled unavailable response.
+  // `published` deliberately gets no equivalent. Self-healing a column that
+  // migration 0021 also adds would make that migration fail with "duplicate
+  // column name" — the hazard spelled out in lib/ensure-tables.ts. The GET
+  // handlers fall back to treating every club as live instead, and the write
+  // paths that need the column return a controlled unavailable response.
   try {
     await context.env.DB.prepare(`ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`).run();
   } catch { /* column already exists */ }
@@ -124,17 +123,17 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
-  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null; published: boolean }>;
-  const changesPublication = body.published !== undefined;
-  if (changesPublication && !(await isClubPublicationSchemaReady(context.env.DB))) {
-    return clubPublicationUnavailable();
-  }
-
   const existing = await context.env.DB
-    .prepare(`SELECT id${changesPublication ? ", published" : ""} FROM club_config WHERE slug = ?`)
+    .prepare(`SELECT id FROM club_config WHERE slug = ?`)
     .bind(clubSlug)
-    .first<{ id: string; published?: number }>();
+    .first<{ id: string }>();
   if (!existing) return json({ error: "Not found" }, { status: 404 });
+
+  // `published` is deliberately not settable here: this handler is gated on
+  // multi-club mode above, and a single-club fork needs the go-live switch too.
+  // It lives on PATCH /api/club instead.
+  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null; published: unknown }>;
+  if ('published' in body) return json({ error: "Nothing to update" }, { status: 400 });
 
   const sets: string[] = [];
   const binds: unknown[] = [];
@@ -144,7 +143,6 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   if (body.active !== undefined) set("active", body.active ? 1 : 0);
   if (body.primaryColor !== undefined) set("primaryColor", body.primaryColor ?? null);
   if (body.secondaryColor !== undefined) set("secondaryColor", body.secondaryColor ?? null);
-  if (body.published !== undefined) set("published", body.published ? 1 : 0);
 
   if (!sets.length) return json({ error: "Nothing to update" }, { status: 400 });
 
@@ -152,22 +150,6 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     .prepare(`UPDATE club_config SET ${sets.join(", ")} WHERE id = ?`)
     .bind(...binds, existing.id)
     .run();
-
-  // Taking a club's site public (or pulling it back) is the kind of change a
-  // club will later want to trace to a person and a time, so it goes in the
-  // audit log alongside the payment overrides.
-  const wasPublished = existing.published !== 0;
-  if (body.published !== undefined && body.published !== wasPublished) {
-    await writeAuditLog(context.env.DB, {
-      clubSlug,
-      adminId: (result.session.user as Record<string, unknown>).id as string,
-      action: body.published ? "club.publish" : "club.unpublish",
-      targetTable: "club_config",
-      targetId: existing.id,
-      oldStatus: wasPublished ? "published" : "private",
-      newStatus: body.published ? "published" : "private",
-    });
-  }
 
   return json({ ok: true });
 };
