@@ -68,14 +68,14 @@ function uploadFailureIsNotFatal(plugin: Plugin): Plugin {
             `\n[posthog] source map upload failed, continuing the build anyway: ${error}\n` +
             '[posthog] frontend stack traces for this release will point at minified code.\n'
           );
-
+          return undefined;
+        } finally {
           const outDir = args[0]?.dir;
           if (outDir) {
             const maps = (await readdir(outDir, { recursive: true }))
               .filter((entry) => typeof entry === 'string' && entry.endsWith('.map'));
             await Promise.all(maps.map((map) => rm(join(outDir, map), { force: true })));
           }
-          return undefined;
         }
       },
     },
