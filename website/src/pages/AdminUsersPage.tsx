@@ -8,6 +8,7 @@ import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { captureError } from '../lib/posthog';
 
 interface UserRow {
   id: string;
@@ -60,7 +61,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       if (!res.ok) throw new Error('Failed to load users');
       const data = await res.json() as { users: UserRow[] };
       setUsers(data.users);
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.fetchUsers' });
       setError('Failed to load users');
     } finally {
       setLoading(false);
@@ -73,7 +75,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       if (!res.ok) throw new Error('Failed to load assignments');
       const data = await res.json() as { assignments: TeamRoleAssignment[] };
       setAssignments(data.assignments);
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.fetchAssignments' });
       setAssignError('Failed to load team assignments');
     } finally {
       setAssignmentsLoading(false);
@@ -90,8 +93,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       };
       setDefinedSections(data.sections);
       setDefinedTeams(data.teams);
-    } catch {
-      // ignore
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.fetchDefinedTeams' });
     }
   };
 
@@ -112,7 +115,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       });
       if (!res.ok) throw new Error('Failed to update role');
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.updateRole' });
       setError('Failed to update role');
     } finally {
       setUpdating(null);
@@ -175,7 +179,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       setNewRole(null);
       // Refresh both assignments and users (role may have been auto-upgraded)
       await Promise.all([fetchAssignments(), fetchUsers()]);
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.addAssignment' });
       setAssignError('Failed to add assignment');
     } finally {
       setAdding(false);
@@ -192,7 +197,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
       });
       if (!res.ok) throw new Error('Failed to remove');
       setAssignments(prev => prev.filter(a => a.id !== id));
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.removeAssignment' });
       setAssignError('Failed to remove assignment');
     } finally {
       setRemoving(null);

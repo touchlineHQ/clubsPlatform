@@ -45,6 +45,7 @@ type JsonResponse<T> = T extends Record<string | number, unknown>
     : unknown
   : unknown;
 
+/** Append query parameters to a URL. */
 function withQuery(url: string, query: Record<string, unknown> | undefined) {
   if (!query) return url;
   const qs = new URLSearchParams();
@@ -56,6 +57,10 @@ function withQuery(url: string, query: Record<string, unknown> | undefined) {
   return s ? `${url}?${s}` : url;
 }
 
+/**
+ * Type-safe API fetch helper that validates requests against the OpenAPI schema.
+ * Automatically includes credentials and parses JSON responses.
+ */
 export async function apiFetch<P extends PathsWithMethod<M>, M extends HttpMethod>(
   method: M,
   path: P,

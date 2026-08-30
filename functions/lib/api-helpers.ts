@@ -15,6 +15,7 @@ export interface Env {
   POSTHOG_HOST?: string;
 }
 
+/** Create a JSON Response with the appropriate Content-Type header. */
 export function json(res: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(res), {
     ...(init ?? {}),
@@ -22,10 +23,12 @@ export function json(res: unknown, init?: ResponseInit): Response {
   });
 }
 
+/** Return the current timestamp in milliseconds. */
 export function nowMs(): number {
   return Date.now();
 }
 
+/** Generate a random ID with the given prefix. */
 export function randomId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
@@ -47,6 +50,11 @@ export function getClubSlug(request: Request): string | null {
   return request.headers.get("X-Club-Slug") || null;
 }
 
+/**
+ * Verify the request has admin authentication and return the session.
+ * Returns an error response for unauthenticated or non-admin users.
+ * In multi-club mode, also enforces that the admin's club matches the request club.
+ */
 export async function requireAdmin(
   context: EventContext<Env, string, unknown>,
 ) {
@@ -84,6 +92,11 @@ export async function requireAdmin(
   return { session } as const;
 }
 
+/**
+ * Verify the request has manager or admin authentication and return the session.
+ * Returns an error response for unauthenticated or insufficient-privilege users.
+ * In multi-club mode, also enforces that the user's club matches the request club.
+ */
 export async function requireManagerOrAdmin(
   context: EventContext<Env, string, unknown>,
 ) {
@@ -122,6 +135,7 @@ export async function requireManagerOrAdmin(
   return { session, role } as const;
 }
 
+/** Verify the request has valid authentication and return the session. Returns an error response for unauthenticated users. */
 export async function requireAuth(context: EventContext<Env, string, unknown>) {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;

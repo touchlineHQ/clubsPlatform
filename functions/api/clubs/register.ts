@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from "../../lib/api-helpers";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 function slugify(name: string): string {
   return name
@@ -68,6 +68,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: userId,
       event: 'club registered',
+      ...clubGroups(slug),
       properties: { club_slug: slug, club_name: clubName },
     });
   }

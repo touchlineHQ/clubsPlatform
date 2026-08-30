@@ -16,6 +16,7 @@ import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
 import { useClub } from '../context/ClubContext';
+import { captureEvent } from '../lib/posthog';
 import { PageHeader } from '../components/club/PageHeader';
 
 interface Props {
@@ -79,6 +80,8 @@ export function CustomizePage({
     } else {
       onApplyPreview(localData);
     }
+
+    captureEvent('preview applied', { club_slug: clubSlug });
   };
 
   return (

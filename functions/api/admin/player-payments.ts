@@ -1,6 +1,6 @@
 import { ensureTables } from '../../lib/ensure-tables';
 import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../../lib/api-helpers';
-import { getPostHog } from '../../lib/posthog';
+import { getPostHog, clubGroups } from '../../lib/posthog';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
 import {
@@ -109,6 +109,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'player payment deactivated',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, payment_id: body.id },
     });
   }
@@ -326,6 +327,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'player payment subscription retried',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         payment_id: payment.id,

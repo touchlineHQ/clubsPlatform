@@ -2,7 +2,7 @@ import { ensureTables } from '../../lib/ensure-tables';
 import { randomId, nowMs } from '../../lib/api-helpers';
 import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
-import { getPostHog } from '../../lib/posthog';
+import { getPostHog, clubGroups } from '../../lib/posthog';
 import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
 import {
   resolveSubscriptionStartDate,
@@ -262,6 +262,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       posthog.captureImmediate({
         distinctId: fanId || registrationId,
         event: 'payment duplicate mandate cancelled',
+        ...clubGroups(clubSlug),
         properties: {
           club_slug: clubSlug,
           reference,
@@ -357,6 +358,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       posthog.captureImmediate({
         distinctId: fanId || registrationId,
         event: 'payment failed',
+        ...clubGroups(clubSlug),
         properties: { club_slug: clubSlug, reference, mandate_id: mandateId, reason: 'subscription_creation_failed' },
       }).catch(err => console.error('PostHog capture failed', err));
     }
@@ -385,6 +387,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     posthog.captureImmediate({
       distinctId: fanId || registrationId,
       event: 'payment completed',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         reference,

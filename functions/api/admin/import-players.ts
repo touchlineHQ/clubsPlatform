@@ -1,7 +1,7 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { hashPwd } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
-import { getPostHog } from "../../lib/posthog";
+import { getPostHog, clubGroups } from "../../lib/posthog";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -244,6 +244,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'players imported',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         rows_submitted: rows.length,

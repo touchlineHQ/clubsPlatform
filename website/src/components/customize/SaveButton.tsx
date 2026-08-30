@@ -3,6 +3,7 @@ import { Button, Text, Group } from '@mantine/core';
 import { IconDeviceFloppy, IconCheck, IconX } from '@tabler/icons-react';
 import type { AppData, Club } from '../../types';
 import { useClub } from '../../context/ClubContext';
+import { captureError, captureEvent } from '../../lib/posthog';
 
 interface Props {
   data: AppData;
@@ -37,10 +38,13 @@ export function SaveButton({ data, onSaved }: Props) {
         req('POST', '/api/gallery', { items: data.gallery }),
         req('POST', '/api/matchday', { items: data.matchday }),
       ]);
+      captureEvent('customisation saved', { club_slug: clubSlug });
       setResult('success');
       onSaved?.(data.club);
       window.location.reload();
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'customisation.save', club_slug: clubSlug });
+      captureEvent('customisation save failed', { club_slug: clubSlug });
       setResult('error');
     } finally {
       setSaving(false);
@@ -67,7 +71,15 @@ export function SaveButton({ data, onSaved }: Props) {
       {result === 'error' && (
         <Group gap={4}>
           <IconX size={14} color="red" />
-          <Text size="xs" c="red">Failed to save — check console for details</Text>
+          {/* Deliberately does not promise the save was a no-op. handleSave
+              issues seven independent writes through Promise.all, which
+              rejects on the first failure while the others stay in flight —
+              so a failure can leave some sections saved and others not.
+              Telling the user nothing was lost would send them away from a
+              partially-saved club without checking. */}
+          <Text size="xs" c="red">
+            Couldn't save everything. Some changes may have saved — reload to check before retrying.
+          </Text>
         </Group>
       )}
     </Group>

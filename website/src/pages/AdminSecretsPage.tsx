@@ -7,6 +7,7 @@ import { IconAlertCircle, IconTrash, IconDeviceFloppy } from '@tabler/icons-reac
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { captureError } from '../lib/posthog';
 
 interface SecretRow {
   id: string;
@@ -54,7 +55,8 @@ export function AdminSecretsPage() {
       const data = await res.json() as { secrets: SecretRow[]; publicKey: string | null };
       setSecrets(data.secrets);
       setPublicKey(data.publicKey);
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminSecrets.fetchSecrets' });
       setError('Failed to load secrets');
     } finally {
       setLoading(false);
@@ -84,7 +86,9 @@ export function AdminSecretsPage() {
       setNewKey(null);
       setNewValue('');
       await fetchSecrets();
-    } catch {
+    } catch (e) {
+      // Only the key name is ever safe to attach here, never the value.
+      captureError(e, { op: 'adminSecrets.save' });
       setSaveError('Failed to save secret');
     } finally {
       setSaving(false);
@@ -100,7 +104,8 @@ export function AdminSecretsPage() {
       });
       if (!res.ok) { setError('Failed to delete secret'); return; }
       setSecrets(prev => prev.filter(s => s.key !== key));
-    } catch {
+    } catch (e) {
+      captureError(e, { op: 'adminSecrets.delete' });
       setError('Failed to delete secret');
     } finally {
       setDeleting(null);

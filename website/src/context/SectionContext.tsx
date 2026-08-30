@@ -10,6 +10,7 @@ export const SectionContext = createContext<SectionContextValue>({
   setActiveSection: () => {},
 });
 
+/** Provider component that manages the active team section selection and persists it to localStorage. */
 export function SectionProvider({ children }: { children: ReactNode }) {
   const [activeSection, setActiveSectionState] = useState<string>(
     () => localStorage.getItem('activeSection') ?? 'all'
@@ -27,6 +28,7 @@ export function SectionProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Hook to access the current section context. */
 export function useSection() {
   return useContext(SectionContext);
 }

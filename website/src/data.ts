@@ -27,10 +27,14 @@ export async function loadClubSlugs(): Promise<string[]> {
     
     // Safety check in case the clubs key is missing or empty
     if (!data || !Array.isArray(data.clubs)) return [];
-    
-    return data.clubs
-      .map(club => club.slug)
-      .sort();
+
+    // Dedupe: a club running teams in more than one league appears once per
+    // league in the index, so its slug repeats. Mantine's Autocomplete throws
+    // on duplicate option values, which took down the whole Customise page.
+    // TeamsForm already dedupes its equivalent list the same way.
+    return Array.from(new Set(
+      data.clubs.map(club => club.slug)
+    )).sort();
   } catch {
     return [];
   }

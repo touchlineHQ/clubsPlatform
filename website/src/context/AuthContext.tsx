@@ -31,6 +31,7 @@ export const AuthContext = createContext<AuthContextValue>({
   refresh: async () => null,
 });
 
+/** Provider component that manages authentication state and user session. */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -91,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** Hook to access the current authentication context. */
 export function useAuth() {
   return useContext(AuthContext);
 }

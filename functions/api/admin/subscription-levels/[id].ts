@@ -1,6 +1,6 @@
 import { ensureTables } from "../../../lib/ensure-tables";
 import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../../lib/api-helpers";
-import { getPostHog } from "../../../lib/posthog";
+import { getPostHog, clubGroups } from "../../../lib/posthog";
 import { validateStartDate } from "../subscription-levels";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
@@ -105,6 +105,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'subscription level updated',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         level_id: id,
@@ -142,6 +143,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'subscription level deleted',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, level_id: id },
     });
   }

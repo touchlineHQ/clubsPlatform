@@ -1,7 +1,7 @@
 import { ensureTables } from '../../../lib/ensure-tables';
 import type { Env } from '../../../lib/api-helpers';
 import { createGoCardlessLink } from '../../../lib/gocardless-link';
-import { getPostHog } from '../../../lib/posthog';
+import { getPostHog, clubGroups } from '../../../lib/posthog';
 
 const ALLOWED_TYPES = new Set(['SUBS']);
 
@@ -101,6 +101,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: fanId,
       event: 'payment page viewed',
+      ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
         payment_type: paymentType,

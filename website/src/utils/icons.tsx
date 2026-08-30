@@ -45,6 +45,7 @@ function buildMap(size: number): Record<string, ReactNode> {
   };
 }
 
+/** Return the Tabler icon corresponding to a FontAwesome class name, or a fallback icon if not found. */
 export function tablerIcon(faClass: string, size = 18): ReactNode {
   return buildMap(size)[faClass] ?? <IconHelp size={size} />;
 }

@@ -1,6 +1,6 @@
 import { ensureTables } from '../../lib/ensure-tables';
 import type { Env } from '../../lib/api-helpers';
-import { getPostHog } from '../../lib/posthog';
+import { getPostHog, clubGroups } from '../../lib/posthog';
 
 /**
  * Public FAN entry page for a club's payment flow.
@@ -94,6 +94,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     await posthog.captureImmediate({
       distinctId: fanId,
       event: 'payment fan entry submitted',
+      ...clubGroups(clubSlug),
       properties: { club_slug: clubSlug, fan_id: fanId },
     });
   }
@@ -104,6 +105,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   );
 };
 
+/** Generate the HTML form page for FAN entry. */
 function formPage(
   clubName: string,
   clubSlug: string,
@@ -203,10 +205,12 @@ function formPage(
 </html>`;
 }
 
+/** Escape HTML special characters. */
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Escape HTML attribute special characters. */
 function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
