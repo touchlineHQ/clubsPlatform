@@ -82,12 +82,24 @@ jobs:
       # they are undefined in the bundle. Both are repository *variables*, not
       # secrets: the PostHog project key is a write-only public key that ships
       # in the client bundle regardless, and the host is already in our CSP.
+      #
+      # The POSTHOG_CLI_* values drive source map upload to PostHog error
+      # tracking (see website/vite.config.mts). Without them a frontend
+      # exception is reported against a minified chunk, which nobody — human or
+      # agent — can act on. Unlike the VITE_* pair, POSTHOG_CLI_API_KEY is a
+      # genuine *secret*: it is a personal API key, not the project write key,
+      # so it must never be a repository variable and must never reach the
+      # client bundle. The build succeeds without it and simply skips the
+      # upload, which is what keeps forks and the PR workflow working.
       - name: Build
         run: npm run build
         working-directory: website
         env:
           VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
