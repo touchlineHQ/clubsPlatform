@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
 import { makeContext, makeDb, getReq, patchReq, adminSession, memberSession, platformAdminSession } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -10,7 +10,19 @@ vi.mock('../../lib/seed', () => ({
   seedClubData: vi.fn(async () => {}),
 }));
 
+vi.mock('../../lib/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }));
+
 import { onRequestGet, onRequestPatch } from '../../api/club';
+import { writeAuditLog } from '../../lib/audit-log';
+
+/** Every prepare() call paired with the bindings it was given. */
+function prepared(db: any): { sql: string; bindings: unknown[] }[] {
+  const prepare = db.prepare as Mock;
+  return prepare.mock.calls.map((call: unknown[], i: number) => ({
+    sql: call[0] as string,
+    bindings: prepare.mock.results[i].value.bind.mock.calls[0] ?? [],
+  }));
+}
 
 const clubRow = {
   slug: 'test-club',
@@ -178,5 +190,136 @@ describe('PATCH /api/club', () => {
     );
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(200);
+  });
+
+  // ─── Go live / make private ────────────────────────────────────────────────
+
+  const patchPublished = (published: boolean, wasPublished: number, env: Record<string, unknown> = {}) => {
+    const db = makeDb({
+      // The schema guard's PRAGMA reads the `all` queue before the row lookup.
+      all: [[{ name: 'published' }]],
+      first: { id: 'club_1', data: null, published: wasPublished },
+      run: { meta: { changes: 1 } },
+    });
+    const ctx = makeContext(
+      patchReq('/api/club', { published }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as never, ...env } },
+    );
+    return { db, ctx };
+  };
+
+  it('takes a private club live and logs it', async () => {
+    const { db, ctx } = patchPublished(true, 0);
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+
+    const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
+    expect(update?.sql).toMatch(/published = \?/);
+    expect(update?.bindings).toContain(1);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        clubSlug: 'test-club',
+        action: 'club.publish',
+        targetTable: 'club_config',
+        targetId: 'club_1',
+        oldStatus: 'private',
+        newStatus: 'published',
+      }),
+    );
+  });
+
+  it('takes a live club private and logs it', async () => {
+    const { db, ctx } = patchPublished(false, 1);
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+
+    const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
+    expect(update?.bindings).toContain(0);
+    expect(writeAuditLog).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ action: 'club.unpublish', oldStatus: 'published', newStatus: 'private' }),
+    );
+  });
+
+  // The whole reason this lives on /api/club rather than /api/clubs, which is
+  // gated on multi-club mode: a single-club fork has to be able to go live.
+  it('publishes on a single-club deployment', async () => {
+    const { ctx } = patchPublished(true, 0);
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+    expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('publishes on a multi-club deployment', async () => {
+    const { ctx } = patchPublished(true, 0, { MULTI_CLUB: '1' });
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+  });
+
+  it('does not log when published is unchanged', async () => {
+    const { ctx } = patchPublished(true, 1);
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('keeps published out of the stored content blob', async () => {
+    const { db, ctx } = patchPublished(true, 0);
+    await onRequestPatch(ctx as never);
+
+    const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
+    const blob = JSON.parse(update?.bindings[0] as string) as Record<string, unknown>;
+    // The column is the single source of truth; a copy in the blob could drift.
+    expect(blob).not.toHaveProperty('published');
+  });
+
+  it('rejects a publish attempt from a non-admin', async () => {
+    mockGetSession.mockResolvedValue(memberSession);
+    const { ctx } = patchPublished(true, 0);
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(403);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('rejects a publish attempt against another club', async () => {
+    mockGetSession.mockResolvedValue(adminSession); // admin of 'test-club'
+    const db = makeDb({ first: { id: 'club_1', data: null, published: 0 } });
+    const ctx = makeContext(
+      patchReq('/api/club', { published: true }, { 'X-Club-Slug': 'other-club' }),
+      { env: { DB: db as never, MULTI_CLUB: '1' } },
+    );
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(403);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 without updating when migration 0021 is not applied', async () => {
+    const db = makeDb({ all: [[{ name: 'id' }]] });
+    const ctx = makeContext(
+      patchReq('/api/club', { published: true }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as never } },
+    );
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(503);
+    expect(prepared(db).some(p => /UPDATE club_config SET/.test(p.sql))).toBe(false);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  // This endpoint carries every content save the Customise page makes. Naming
+  // `published` on those would break saving outright on a database that has not
+  // had migration 0021 applied — a far worse failure than a stuck toggle.
+  it('never touches the published column on an ordinary content save', async () => {
+    const db = makeDb({ first: { id: 'club_1', data: null }, run: { meta: { changes: 1 } } });
+    const ctx = makeContext(
+      patchReq('/api/club', { name: 'Updated FC' }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as never } },
+    );
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(200);
+
+    const sql = prepared(db).map(p => p.sql).join('\n');
+    expect(sql).not.toMatch(/published/);
+    expect(sql).not.toMatch(/PRAGMA/);
   });
 });

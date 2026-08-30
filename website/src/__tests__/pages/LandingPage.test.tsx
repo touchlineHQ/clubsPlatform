@@ -89,6 +89,19 @@ describe('LandingPage', () => {
     expect(screen.getAllByText(/Demo Club/i).length).toBeGreaterThan(0);
   });
 
+  // Vacuous while the real-club cards sit behind the "featured clubs" TODO —
+  // nothing but the demo club renders today. It is here as the guard that goes
+  // live with them: uncomment those cards without keeping the `published`
+  // filter on realClubs and this test turns red instead of the directory
+  // advertising a club whose site isn't ready.
+  it('never advertises a club whose site is private', () => {
+    renderWithMantine(
+      <LandingPage clubs={[...clubs, { id: 'c3', slug: 'quiet-fc', name: 'Quiet FC', published: false }]} />,
+      { authValue: mockLoggedOut },
+    );
+    expect(screen.queryByText(/Quiet FC/i)).toBeNull();
+  });
+
   it('hero buttons mouse enter/leave triggers style updates without error', () => {
     renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
     const buttons = document.querySelectorAll('button');

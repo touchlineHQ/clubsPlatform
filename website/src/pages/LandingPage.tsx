@@ -315,7 +315,11 @@ const HeroSection = () => (
 // ─────────────────────────────────────────────────────────────────────────────
 const ClubDirectorySection = ({ clubs }: { clubs: ClubEntry[] }) => {
   const demoClub = clubs.find(c => c.slug === DEMO_SLUG);
-  const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG);
+  // published === false means the club's site isn't live yet — /api/clubs still
+  // lists it so its admins can reach their own login page, but it has no place
+  // in the public directory. Applied here, not where the cards render, so the
+  // TODO below can be uncommented without leaking a club that isn't ready.
+  const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG && c.published !== false);
 
   return (
     <Box id="clubs" style={{ background: '#fff', padding: '80px 24px' }}>

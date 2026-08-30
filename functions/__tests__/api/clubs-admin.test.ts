@@ -1,12 +1,10 @@
 import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
-import { makeContext, makeDb, adminSession, platformAdminSession, memberSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
+import { makeContext, makeDb, platformAdminSession, memberSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
-
-vi.mock('../../lib/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }));
 
 // ─── clubs.ts ─────────────────────────────────────────────────────────────────
 
@@ -16,7 +14,6 @@ import {
   onRequestPatch as clubsPatch,
   onRequestDelete as clubsDelete,
 } from '../../api/clubs';
-import { writeAuditLog } from '../../lib/audit-log';
 
 /** Every prepare() call paired with the bindings it was given. */
 function prepared(db: any): { sql: string; bindings: unknown[] }[] {
@@ -216,85 +213,20 @@ describe('clubs PATCH (update club)', () => {
     expect(res.status).toBe(401);
   });
 
-  // ─── Go live / make private ────────────────────────────────────────────────
-
-  it('takes a private club live and logs it', async () => {
-    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 0 }, run: { meta: { changes: 1 } } });
+  // Going live is handled by PATCH /api/club, which is not gated on multi-club
+  // mode. If `published` ever became settable here too, a single-club fork
+  // would silently lose the switch again.
+  it('does not accept published', async () => {
     const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
-
+    const ctx = makeContext(req, {
+      env: { MULTI_CLUB: '1', DB: makeDb({ first: { id: 'club_1' } }) },
+    });
     const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(200);
-
-    const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
-    expect(update?.sql).toMatch(/published = \?/);
-    expect(update?.bindings).toEqual([1, 'club_1']);
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({
-        clubSlug: 'test-club',
-        action: 'club.publish',
-        targetTable: 'club_config',
-        targetId: 'club_1',
-        oldStatus: 'private',
-        newStatus: 'published',
-      }),
-    );
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/Nothing to update/);
   });
 
-  it('takes a live club private and logs it', async () => {
-    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
-    const req = patchReq('/api/clubs', { published: false }, { 'X-Club-Slug': 'test-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
-
-    const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(200);
-
-    const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
-    expect(update?.bindings).toEqual([0, 'club_1']);
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({ action: 'club.unpublish', oldStatus: 'published', newStatus: 'private' }),
-    );
-  });
-
-  it('does not log when published is unchanged', async () => {
-    const db = makeDb({ all: [[{ name: 'published' }]], first: { id: 'club_1', published: 1 }, run: { meta: { changes: 1 } } });
-    const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
-
-    const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(200);
-    expect(writeAuditLog).not.toHaveBeenCalled();
-  });
-
-  it('rejects a publish attempt from a non-admin', async () => {
-    mockGetSession.mockResolvedValue(memberSession);
-    const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: makeDb() } });
-    const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(403);
-    expect(writeAuditLog).not.toHaveBeenCalled();
-  });
-
-  it("rejects a publish attempt against another club", async () => {
-    mockGetSession.mockResolvedValue(adminSession); // admin of 'test-club'
-    const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'other-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: makeDb() } });
-    const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(403);
-    expect(writeAuditLog).not.toHaveBeenCalled();
-  });
-
-  it('returns 503 without updating when publishing and migration 0021 is not applied', async () => {
-    const db = makeDb({ all: [[{ name: 'id' }]] });
-    const req = patchReq('/api/clubs', { published: true }, { 'X-Club-Slug': 'test-club' });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
-
-    const res = await clubsPatch(ctx as any);
-    expect(res.status).toBe(503);
-    expect(prepared(db).some(({ sql }) => /UPDATE club_config SET/.test(sql))).toBe(false);
-  });
 });
 
 describe('clubs DELETE (soft-delete club)', () => {
