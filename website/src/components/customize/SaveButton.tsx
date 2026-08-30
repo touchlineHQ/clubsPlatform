@@ -71,7 +71,15 @@ export function SaveButton({ data, onSaved }: Props) {
       {result === 'error' && (
         <Group gap={4}>
           <IconX size={14} color="red" />
-          <Text size="xs" c="red">Couldn't save your changes. Nothing was lost — try again in a moment.</Text>
+          {/* Deliberately does not promise the save was a no-op. handleSave
+              issues seven independent writes through Promise.all, which
+              rejects on the first failure while the others stay in flight —
+              so a failure can leave some sections saved and others not.
+              Telling the user nothing was lost would send them away from a
+              partially-saved club without checking. */}
+          <Text size="xs" c="red">
+            Couldn't save everything. Some changes may have saved — reload to check before retrying.
+          </Text>
         </Group>
       )}
     </Group>

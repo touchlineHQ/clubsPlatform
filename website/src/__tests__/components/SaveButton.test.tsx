@@ -126,6 +126,21 @@ describe('SaveButton', () => {
       expect(captureEvent).toHaveBeenCalledWith('customisation saved', expect.any(Object)));
   });
 
+  // handleSave issues seven independent writes through Promise.all, which
+  // rejects on the first failure while the rest stay in flight — so a failure
+  // can leave some sections saved and others not. The message must not tell
+  // the user their data is intact, or they'll walk away from a half-saved club.
+  it('does not claim the save was a no-op when it fails', async () => {
+    mockFetch.mockResolvedValue({ ok: false, json: async () => ({ error: 'bad' }) });
+
+    renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+
+    const message = await screen.findByText(/couldn't save/i);
+    expect(message.textContent).toMatch(/may have saved/i);
+    expect(message.textContent).not.toMatch(/nothing was lost/i);
+  });
+
   it("records 'customisation save failed' on failure", async () => {
     mockFetch.mockResolvedValue({ ok: false, json: async () => ({ error: 'bad' }) });
 
