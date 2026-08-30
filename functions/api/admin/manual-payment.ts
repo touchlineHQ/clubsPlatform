@@ -117,8 +117,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const reference = manualReference(registration.teamName, registration.fanId);
   const now = nowMs();
 
+  // Keyed on registrationId so an undo-then-remark reuses the row rather than
+  // colliding with UNIQUE(clubSlug, reference), and scoped to `mandateId = ''`
+  // so only a manual row is ever reused. A spent GoCardless row (cancelled or
+  // failed) sits on the same registration and passes the live guard above;
+  // reusing it would rewrite its reference while leaving its mandateId in
+  // place, and the webhook's `WHERE mandateId = ?` would then flip the
+  // override straight back off.
   const existing = await context.env.DB
-    .prepare(`SELECT id, status FROM "player_payment" WHERE clubSlug = ? AND registrationId = ?`)
+    .prepare(
+      `SELECT id, status FROM "player_payment"
+        WHERE clubSlug = ? AND registrationId = ? AND mandateId = ''
+        ORDER BY updatedAt DESC
+        LIMIT 1`
+    )
     .bind(clubSlug, body.registrationId)
     .first<{ id: string; status: string }>();
 
@@ -130,7 +142,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let oldStatus: string | null;
 
   if (existing) {
-    // Re-marking after an undo — reuse the registration's existing row.
+    // Re-marking after an undo — reuse the registration's own manual row.
     paymentId = existing.id;
     oldStatus = existing.status;
     await context.env.DB

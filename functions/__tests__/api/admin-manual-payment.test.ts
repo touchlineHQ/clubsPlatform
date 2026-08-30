@@ -203,6 +203,18 @@ describe('onRequestPost — marking as paid', () => {
     );
   });
 
+  it('never reuses a spent GoCardless row — it would keep a mandateId the webhook matches on', async () => {
+    // A cancelled mandate passes the live guard above and stays on the
+    // registration. Reusing that row would leave its mandateId in place, and
+    // the mandate webhook's `WHERE mandateId = ?` would flip the override off.
+    const db = makeDb({ first: [REGISTRATION, null, null] });
+    await onRequestPost(markPaidCtx(db) as any);
+
+    const lookup = findSql(db, 'AND registrationId = ?');
+    expect(lookup!.sql).toContain(`mandateId = ''`);
+    expect(findSql(db, 'INSERT INTO "player_payment"')).toBeDefined();
+  });
+
   it('returns 409 when the registration is already marked as paid', async () => {
     const db = makeDb({
       first: [REGISTRATION, null, { id: 'pay_1', status: 'manual' }],
