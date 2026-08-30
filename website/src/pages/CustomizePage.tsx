@@ -15,6 +15,7 @@ import { RegistrationForm } from '../components/customize/RegistrationForm';
 import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
+import { PublishToggle } from '../components/customize/PublishToggle';
 import { useClub } from '../context/ClubContext';
 import { captureEvent } from '../lib/posthog';
 import { PageHeader } from '../components/club/PageHeader';
@@ -28,6 +29,8 @@ interface Props {
   previewActive: boolean;
   onPrimaryColorSaved?: (color: string | null) => void;
   onSecondaryColorSaved?: (color: string | null) => void;
+  published?: boolean;
+  onPublishedChange?: (published: boolean) => void;
 }
 
 export function CustomizePage({
@@ -39,6 +42,8 @@ export function CustomizePage({
   previewActive,
   onPrimaryColorSaved,
   onSecondaryColorSaved,
+  published = true,
+  onPublishedChange,
 }: Props) {
   const { clubSlug } = useClub();
   const [loadingFeeds, setLoadingFeeds] = useState(false);
@@ -103,6 +108,10 @@ export function CustomizePage({
           ) : null
         }
       />
+
+      {onPublishedChange && (
+        <PublishToggle published={published} onPublishedChange={onPublishedChange} />
+      )}
 
       <Paper p="md" radius="md" withBorder>
         <Group justify="space-between" wrap="wrap">

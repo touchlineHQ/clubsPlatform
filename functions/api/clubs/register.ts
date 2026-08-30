@@ -51,9 +51,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     slug = `${slug}-${suffix}`;
   }
 
+  // published = 0: a brand-new club starts private, visible to the admin who
+  // just created it and nobody else, until they go live from the Customise page.
   const id = randomId("club");
   await context.env.DB
-    .prepare(`INSERT INTO club_config (id, slug, name, active, createdAt) VALUES (?, ?, ?, 1, ?)`)
+    .prepare(`INSERT INTO club_config (id, slug, name, active, published, createdAt) VALUES (?, ?, ?, 1, 0, ?)`)
     .bind(id, slug, clubName, nowMs())
     .run();
 

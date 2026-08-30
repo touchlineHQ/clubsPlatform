@@ -758,6 +758,35 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
 
+  // A club onboarding behind the private-site gate is usually onboarding
+  // precisely so it can take registrations. The payment routes are
+  // server-rendered outside the SPA and must not learn about `published`.
+  it('still pays out for a club whose site is private', async () => {
+    mockCreateGoCardlessLink.mockResolvedValue({
+      ok: true,
+      authorisationUrl: 'https://gc.com/auth/1',
+      reference: 'R1',
+      billingRequestId: 'B1',
+    });
+
+    const db = makeDb({
+      first: { slug: 'test-club', published: 0 },
+      all: [[sampleRegistration]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://gc.com/auth/1');
+
+    const sql = (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(sql).not.toMatch(/published/);
+  });
+
   it('redirects to GoCardless authorisation URL for a valid player', async () => {
     mockCreateGoCardlessLink.mockResolvedValue({
       ok: true,

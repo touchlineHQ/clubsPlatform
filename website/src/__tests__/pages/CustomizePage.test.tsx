@@ -226,4 +226,26 @@ describe('CustomizePage', () => {
       expect(onApplyPreview).toHaveBeenCalledWith(appData);
     });
   });
+
+  it('shows the go-live control when the club is private', () => {
+    renderWithMantine(
+      <CustomizePage {...defaultProps} published={false} onPublishedChange={vi.fn()} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+    expect(screen.getByText('Site visibility')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Go live$/i })).toBeTruthy();
+  });
+
+  it('shows the make-private control when the club is live', () => {
+    renderWithMantine(
+      <CustomizePage {...defaultProps} published onPublishedChange={vi.fn()} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+    expect(screen.getByRole('button', { name: /^Make private$/i })).toBeTruthy();
+  });
+
+  it('omits the visibility control when the page has no way to change it', () => {
+    renderWithMantine(<CustomizePage {...defaultProps} />, { authValue: mockAdmin, clubValue: mockSingleClub });
+    expect(screen.queryByText('Site visibility')).toBeNull();
+  });
 });

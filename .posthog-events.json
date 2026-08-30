@@ -28,10 +28,24 @@
     ]
   },
   {
+    "event": "club published",
+    "description": "An admin takes their club's site live from the Customise page, making it visible to everyone.",
+    "files": [
+      "website/src/components/customize/PublishToggle.tsx"
+    ]
+  },
+  {
     "event": "club registered",
     "description": "A new club is registered on the platform; the signing-up user becomes its admin.",
     "files": [
       "functions/api/clubs/register.ts"
+    ]
+  },
+  {
+    "event": "club unpublished",
+    "description": "An admin makes their club's site private again, so only the club's admins can see its pages.",
+    "files": [
+      "website/src/components/customize/PublishToggle.tsx"
     ]
   },
   {

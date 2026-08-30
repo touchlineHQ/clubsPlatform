@@ -9,6 +9,7 @@ type ClubRow = {
   secondaryColor: string | null;
   data: string | null;
   seeded: number;
+  published: number;
 };
 
 function defaultClub(slug: string, name: string) {
@@ -32,12 +33,30 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
-  const row = await context.env.DB
-    .prepare(`SELECT slug, name, primaryColor, secondaryColor, data, seeded FROM club_config WHERE slug = ? AND active = 1`)
+  // The fallback keeps this working against a production DB that hasn't had
+  // migration 0021 applied yet — see the same pattern in api/clubs.ts.
+  const loadClub = (publishedColumn: string) => context.env.DB
+    .prepare(`SELECT slug, name, primaryColor, secondaryColor, data, seeded, ${publishedColumn} FROM club_config WHERE slug = ? AND active = 1`)
     .bind(clubSlug)
     .first<ClubRow>();
 
+  let row: ClubRow | null;
+  try {
+    row = await loadClub('published');
+  } catch {
+    row = await loadClub('1 AS published');
+  }
+
   if (!row) return json({ error: "Club not found" }, { status: 404 });
+
+  // A club that hasn't gone live yet serves its content to its own admins only.
+  // Everyone else gets the same 404 as a club that doesn't exist, so the
+  // response never confirms a private club is there. The session lookup only
+  // happens for unpublished clubs — a live club pays nothing for this.
+  if (row.published === 0) {
+    const admin = await requireAdmin(context);
+    if ("error" in admin) return json({ error: "Club not found" }, { status: 404 });
+  }
 
   // Seed from static JSON on first access (awaited so parallel requests see seeded data)
   if (!row.seeded) {

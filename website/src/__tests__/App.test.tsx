@@ -25,9 +25,20 @@ vi.mock('react-router-dom', () => ({
   useLocation: () => ({ pathname: '/' }),
 }));
 
+const ANON_AUTH = {
+  user: null as { clubSlug: string | null } | null,
+  loading: false,
+  isAdmin: false,
+  isManager: false,
+  isPlatformAdmin: false,
+  teamRoles: [] as unknown[],
+  refresh: vi.fn(),
+};
+/** Mutable so a test can sign someone in — the private-club gate keys off it. */
+const mockAuth = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock('../context/AuthContext', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useAuth: () => ({ user: null, loading: false, isAdmin: false, isManager: false, isPlatformAdmin: false, teamRoles: [], refresh: vi.fn() }),
+  useAuth: () => mockAuth.current,
   AuthContext: { Provider: ({ children }: { children: React.ReactNode }) => <>{children}</> },
 }));
 
@@ -102,9 +113,10 @@ const singleClubRegistry = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAuth.current = { ...ANON_AUTH };
   Object.defineProperty(window, 'location', {
     writable: true,
-    value: { ...window.location, hash: '', pathname: '/' },
+    value: { ...window.location, hash: '', pathname: '/', replace: vi.fn() },
   });
 });
 
@@ -166,6 +178,18 @@ describe('App', () => {
     });
   });
 
+  it('renders the payment result page without waiting for the club registry', async () => {
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { hash: '#/payment-success', pathname: '/' },
+    });
+    mockLoadClubRegistry.mockReturnValue(new Promise(() => {}));
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('payment-success')).toBeTruthy();
+    });
+  });
+
   it('renders all conditionally-visible routes when visibility is fully set', async () => {
     const allVisibleData: AppData = {
       ...appData,
@@ -203,6 +227,26 @@ describe('App', () => {
     });
   });
 
+  it('does not show the private-site banner for a live club', async () => {
+    mockLoadClubRegistry.mockResolvedValue(singleClubRegistry);
+    mockLoadAllData.mockResolvedValue(appData);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('site-header')).toBeTruthy();
+    });
+    expect(screen.queryByText(/This site is private/)).toBeNull();
+  });
+
+  it('does not show the private-site banner when the registry omits published', async () => {
+    // Older /api/clubs payloads carry no published field; those clubs are live.
+    mockLoadClubRegistry.mockResolvedValue(singleClubRegistry);
+    mockLoadAllData.mockResolvedValue(appData);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('home-page')).toBeTruthy();
+    });
+  });
+
   it('does not extract slug when URL path does not match any club', async () => {
     Object.defineProperty(window, 'location', {
       writable: true,
@@ -217,5 +261,119 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByTestId('landing-page')).toBeTruthy();
     });
+  });
+});
+
+describe('App — private club', () => {
+  const privateMultiClubRegistry = {
+    multiClub: true,
+    pitchBookings: false,
+    clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', published: false }],
+  };
+
+  const atClubPath = () => Object.defineProperty(window, 'location', {
+    writable: true,
+    value: { hash: '', pathname: '/test-club/', replace: vi.fn() },
+  });
+
+  it('sends an anonymous visitor to the platform landing page', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(window.location.replace).toHaveBeenCalledWith('/');
+    });
+    expect(screen.queryByTestId('site-header')).toBeNull();
+  });
+
+  it('never loads the club data for a visitor who cannot see the site', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(window.location.replace).toHaveBeenCalled();
+    });
+    // GET /api/club answers 404 for them — asking would only hang the loader.
+    expect(mockLoadAllData).not.toHaveBeenCalled();
+  });
+
+  it('turns away a signed-in member who is not an admin', async () => {
+    atClubPath();
+    mockAuth.current = { ...ANON_AUTH, user: { clubSlug: 'test-club' } };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(window.location.replace).toHaveBeenCalledWith('/');
+    });
+    expect(mockLoadAllData).not.toHaveBeenCalled();
+  });
+
+  it('keeps the login page reachable so an admin can sign in', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Login')).toBeTruthy();
+    });
+  });
+
+  it('waits for auth to settle before turning anyone away', async () => {
+    atClubPath();
+    mockAuth.current = { ...ANON_AUTH, loading: true };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(document.querySelector('.mantine-Loader-root')).toBeTruthy();
+    });
+    expect(window.location.replace).not.toHaveBeenCalled();
+    expect(mockLoadAllData).not.toHaveBeenCalled();
+  });
+
+  it("renders the site, with a private banner, for the club's own admin", async () => {
+    atClubPath();
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, user: { clubSlug: 'test-club' } };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    mockLoadAllData.mockResolvedValue(appData);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('site-header')).toBeTruthy();
+    });
+    expect(screen.getByText(/This site is private/)).toBeTruthy();
+    expect(window.location.replace).not.toHaveBeenCalled();
+  });
+
+  it('renders the site for a platform admin', async () => {
+    atClubPath();
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, isPlatformAdmin: true, user: { clubSlug: null } };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    mockLoadAllData.mockResolvedValue(appData);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('site-header')).toBeTruthy();
+    });
+  });
+
+  it('turns away an admin of a different club', async () => {
+    atClubPath();
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, user: { clubSlug: 'other-club' } };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(window.location.replace).toHaveBeenCalledWith('/');
+    });
+  });
+
+  it('shows a holding card instead of redirecting in single-club mode', async () => {
+    mockLoadClubRegistry.mockResolvedValue({
+      multiClub: false,
+      pitchBookings: false,
+      clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', published: false }],
+    });
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Not live yet')).toBeTruthy();
+    });
+    // "/" is this club's own site in a single-club fork — redirecting would loop.
+    expect(window.location.replace).not.toHaveBeenCalled();
   });
 });
