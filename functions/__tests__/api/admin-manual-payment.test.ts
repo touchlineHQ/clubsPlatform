@@ -215,6 +215,30 @@ describe('onRequestPost — marking as paid', () => {
     expect(findSql(db, 'INSERT INTO "player_payment"')).toBeDefined();
   });
 
+  it('returns 409, not 500, when a concurrent request inserts the manual row first', async () => {
+    // The insert is ON CONFLICT DO NOTHING, so losing the race changes no rows
+    // rather than breaking UNIQUE(clubSlug, reference).
+    const db = makeDb({ first: [REGISTRATION, null, null], run: { meta: { changes: 0 } } });
+    const res = await onRequestPost(markPaidCtx(db) as any);
+
+    expect(res.status).toBe(409);
+    expect(findSql(db, 'INSERT INTO "player_payment"')!.sql).toContain('ON CONFLICT');
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when a concurrent request re-marks the reusable row first', async () => {
+    const db = makeDb({
+      first: [REGISTRATION, null, { id: 'pay_old', status: 'inactive' }],
+      run: { meta: { changes: 0 } },
+    });
+    const res = await onRequestPost(markPaidCtx(db) as any);
+
+    expect(res.status).toBe(409);
+    // Conditional on the row still not being manual, so the loser writes nothing.
+    expect(findSql(db, `SET reference = ?`)!.sql).toContain(`status != 'manual'`);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it('returns 409 when the registration is already marked as paid', async () => {
     const db = makeDb({
       first: [REGISTRATION, null, { id: 'pay_1', status: 'manual' }],

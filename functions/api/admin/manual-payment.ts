@@ -141,26 +141,43 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let paymentId: string;
   let oldStatus: string | null;
 
+  // Both writes below are conditional, and a no-op means a concurrent request
+  // got there first. The read above cannot stand in for that: two admins
+  // marking the same player at once would otherwise both see the pre-state,
+  // both write 'manual', and both write an audit event — or, with no row to
+  // reuse, the second insert would break UNIQUE(clubSlug, reference) and 500
+  // instead of returning the documented 409.
   if (existing) {
     // Re-marking after an undo — reuse the registration's own manual row.
     paymentId = existing.id;
     oldStatus = existing.status;
-    await context.env.DB
-      .prepare(`UPDATE "player_payment" SET reference = ?, status = 'manual', updatedAt = ? WHERE id = ?`)
+    const update = await context.env.DB
+      .prepare(
+        `UPDATE "player_payment"
+            SET reference = ?, status = 'manual', updatedAt = ?
+          WHERE id = ? AND status != 'manual'`
+      )
       .bind(reference, now, paymentId)
       .run();
+    if (update.meta.changes === 0) {
+      return json({ error: 'Already marked as paid' }, { status: 409 });
+    }
   } else {
     paymentId = randomId('pay');
     oldStatus = null;
-    await context.env.DB
+    const insert = await context.env.DB
       .prepare(
         `INSERT INTO "player_payment"
            (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
             status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, '', NULL, 'manual', ?, ?)`
+         VALUES (?, ?, ?, ?, '', NULL, 'manual', ?, ?)
+         ON CONFLICT(clubSlug, reference) DO NOTHING`
       )
       .bind(paymentId, clubSlug, body.registrationId, reference, now, now)
       .run();
+    if (insert.meta.changes === 0) {
+      return json({ error: 'Already marked as paid' }, { status: 409 });
+    }
   }
 
   await writeAuditLog(context.env.DB, {
