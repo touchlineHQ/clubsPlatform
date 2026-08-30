@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton,
-  Select, ActionIcon, Modal, Tooltip, Tabs,
+  Select, ActionIcon, Modal, Tooltip, Tabs, Textarea,
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowRight, IconChevronDown, IconChevronUp, IconFileSpreadsheet, IconFileUpload,
-  IconSelector, IconTrash,
+  IconSelector, IconTrash, IconUserCheck,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -28,6 +28,10 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+  // Manual override attribution — admin (club) rows only; never sent to players.
+  manualPaidBy?: string | null;
+  manualPaidAt?: number | null;
+  manualNote?: string | null;
 }
 
 interface SubscriptionLevel {
@@ -62,6 +66,10 @@ interface SubStatusInfo {
 function getSubscriptionStatus(row: RegistrationRow): SubStatusInfo {
   switch (row.paymentStatus) {
     case 'active':
+    // A manual admin override is a paid player — identical badge, so filtering,
+    // sorting and the export all treat them the same. Only the admin table adds
+    // a marker showing who overrode it.
+    case 'manual':
       return { status: 'paid', label: 'Paid', color: 'green' };
     case 'pending':
       return { status: 'setup', label: 'Mandate set up', color: 'blue' };
@@ -143,12 +151,41 @@ function StatusBadge({ value }: { value: string | null }) {
   );
 }
 
-function SubscriptionBadge({ row }: { row: RegistrationRow }) {
+function manualOverrideTooltip(row: RegistrationRow): string {
+  const who = row.manualPaidBy ?? 'an admin';
+  const when = row.manualPaidAt
+    ? ` on ${new Date(row.manualPaidAt).toLocaleDateString('en-GB')}`
+    : '';
+  return `Marked as paid by ${who}${when}${row.manualNote ? ` — ${row.manualNote}` : ''}`;
+}
+
+/**
+ * `showManualMarker` is passed only by the admin club table. Player-facing rows
+ * render the plain green badge, so a manually-paid player looks exactly like a
+ * Direct Debit payer.
+ */
+function SubscriptionBadge({ row, showManualMarker }: { row: RegistrationRow; showManualMarker?: boolean }) {
   const info = getSubscriptionStatus(row);
-  return (
+  const badge = (
     <Badge size="sm" variant="light" color={info.color} radius="xl" styles={BADGE_STYLES}>
       {info.label}
     </Badge>
+  );
+
+  if (!showManualMarker || row.paymentStatus !== 'manual') return badge;
+
+  return (
+    <Group gap={4} wrap="nowrap" align="center">
+      {badge}
+      <Tooltip label={manualOverrideTooltip(row)} withArrow multiline w={260}>
+        <IconUserCheck
+          size={14}
+          stroke={2}
+          aria-label="Manually marked as paid"
+          style={{ color: 'var(--mantine-color-teal-7)', flexShrink: 0 }}
+        />
+      </Tooltip>
+    </Group>
   );
 }
 
@@ -239,6 +276,42 @@ function RelationshipBadge({ value }: { value: string | null }) {
   );
 }
 
+interface ManualPaymentProps {
+  busyId: string | null;
+  onMark: (row: RegistrationRow) => void;
+  onUnmark: (row: RegistrationRow) => void;
+}
+
+/**
+ * Mirrors the rule enforced by POST /api/admin/manual-payment: a registration
+ * with a live GoCardless mandate ('pending') or subscription ('active') can
+ * never be overridden, because deactivating a payment does not stop GoCardless
+ * collecting. Hiding the button there keeps admins from meeting the 409.
+ */
+function ManualPaymentAction({ row, busyId, onMark, onUnmark }: ManualPaymentProps & { row: RegistrationRow }) {
+  const busy = busyId === row.registrationId;
+
+  if (row.paymentStatus === 'manual') {
+    return (
+      <Tooltip label="Remove the manual override and return this player to Outstanding" withArrow>
+        <Button size="xs" variant="subtle" color="orange" loading={busy} onClick={() => onUnmark(row)}>
+          Undo paid
+        </Button>
+      </Tooltip>
+    );
+  }
+
+  if (row.paymentStatus === 'active' || row.paymentStatus === 'pending') return null;
+
+  return (
+    <Tooltip label="Record this player as paid outside GoCardless — cash, bank transfer, sponsored place" withArrow multiline w={240}>
+      <Button size="xs" variant="subtle" color="green" loading={busy} onClick={() => onMark(row)}>
+        Mark as paid
+      </Button>
+    </Tooltip>
+  );
+}
+
 interface TableProps {
   rows: RegistrationRow[];
   sixthHeader: 'Linked accounts' | 'Relationship';
@@ -249,9 +322,10 @@ interface TableProps {
     updatingId: string | null;
     onChange: (row: RegistrationRow, levelId: string | null) => void;
   };
+  manualPayment?: ManualPaymentProps;
 }
 
-function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLevels }: TableProps) {
+function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLevels, manualPayment }: TableProps) {
   const [sort, setSort] = useState<SortState>({ key: 'teamName', dir: 'asc' });
   const sixthIsLinkedAccounts = sixthHeader === 'Linked accounts';
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -295,8 +369,9 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
               </Group>
               <Group gap={6} wrap="wrap">
                 <StatusBadge value={r.registrationStatus} />
-                <SubscriptionBadge row={r} />
+                <SubscriptionBadge row={r} showManualMarker={!!manualPayment} />
               </Group>
+              {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
               <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
               {editableLevels && (
                 <Box>
@@ -322,9 +397,9 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
     );
   }
 
-  const miw = canDelete
+  const miw = (canDelete
     ? (editableLevels ? 1060 : 880)
-    : (editableLevels ? 1000 : 820);
+    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0);
 
   return (
     <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
@@ -362,7 +437,7 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
                   />
                 </Table.Td>
               )}
-              <Table.Td><SubscriptionBadge row={r} /></Table.Td>
+              <Table.Td><SubscriptionBadge row={r} showManualMarker={!!manualPayment} /></Table.Td>
               <Table.Td>
                 {sixthIsLinkedAccounts
                   ? <LinkedAccountsCell row={r} />
@@ -370,16 +445,19 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
               </Table.Td>
               {canDelete && onDelete && (
                 <Table.Td style={{ width: 1 }}>
-                  <Tooltip label="Remove registration">
-                    <ActionIcon
-                      variant="subtle"
-                      color="red"
-                      onClick={() => onDelete(r)}
-                      aria-label="Remove registration"
-                    >
-                      <IconTrash size={16} />
-                    </ActionIcon>
-                  </Tooltip>
+                  <Group gap="xs" wrap="nowrap" justify="flex-end">
+                    {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
+                    <Tooltip label="Remove registration">
+                      <ActionIcon
+                        variant="subtle"
+                        color="red"
+                        onClick={() => onDelete(r)}
+                        aria-label="Remove registration"
+                      >
+                        <IconTrash size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
                 </Table.Td>
               )}
             </Table.Tr>
@@ -527,6 +605,7 @@ function exportRegistrationsToXlsx(
     'Linked Accounts':   r.linkedAccounts ?? '',
     'Subscription Level': r.subscriptionLevelName ?? '',
     'Subscription Status': getSubscriptionStatus(r).label,
+    'Marked Paid By':    r.manualPaidBy ?? '',
     'Payment Link':      buildPaymentLink(origin, clubSlug, r.fanId),
   }));
 
@@ -539,6 +618,7 @@ function exportRegistrationsToXlsx(
     { wch: 38 }, // Linked Accounts
     { wch: 22 }, // Subscription Level
     { wch: 18 }, // Subscription Status
+    { wch: 28 }, // Marked Paid By
     { wch: 60 }, // Payment Link
   ];
 
@@ -575,6 +655,11 @@ export function RegistrationsPage() {
   const [levels, setLevels] = useState<SubscriptionLevel[]>([]);
   const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
   const [levelError, setLevelError] = useState('');
+  const [pendingManual, setPendingManual] = useState<RegistrationRow | null>(null);
+  const [manualNote, setManualNote] = useState('');
+  const [manualBusyId, setManualBusyId] = useState<string | null>(null);
+  const [manualError, setManualError] = useState('');
+  const [unmarkPaidError, setUnmarkPaidError] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -673,6 +758,68 @@ export function RegistrationsPage() {
     }
   }, [clubSlug, levels, refresh]);
 
+  const openManualModal = useCallback((row: RegistrationRow) => {
+    setManualNote('');
+    setManualError('');
+    setPendingManual(row);
+  }, []);
+
+  const closeManualModal = () => {
+    if (manualBusyId) return;
+    setPendingManual(null);
+    setManualNote('');
+    setManualError('');
+  };
+
+  const handleConfirmMarkPaid = async () => {
+    if (!pendingManual) return;
+    setManualBusyId(pendingManual.registrationId);
+    setManualError('');
+    try {
+      const res = await fetch('/api/admin/manual-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          registrationId: pendingManual.registrationId,
+          ...(manualNote.trim() ? { note: manualNote.trim() } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to mark as paid');
+      }
+      setPendingManual(null);
+      setManualNote('');
+      // Refresh rather than patch locally — the server owns the attribution
+      // (who/when) shown in the badge tooltip.
+      await refresh();
+    } catch (e) {
+      setManualError(e instanceof Error ? e.message : 'Failed to mark as paid');
+    } finally {
+      setManualBusyId(null);
+    }
+  };
+
+  const handleUnmarkPaid = useCallback(async (row: RegistrationRow) => {
+    setManualBusyId(row.registrationId);
+    setUnmarkPaidError('');
+    try {
+      const res = await fetch(
+        `/api/admin/manual-payment?registrationId=${encodeURIComponent(row.registrationId)}`,
+        { method: 'DELETE', headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to remove the manual override');
+      }
+      await refresh();
+    } catch (e) {
+      setUnmarkPaidError(e instanceof Error ? e.message : 'Failed to remove the manual override');
+    } finally {
+      setManualBusyId(null);
+    }
+  }, [clubSlug, refresh]);
+
   const handleImported = () => {
     closeImport();
     refresh();
@@ -759,6 +906,7 @@ export function RegistrationsPage() {
         </Group>
       </Group>
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
+      {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
       {club.length === 0 ? (
         <EmptyState isAdmin={isAdmin} scope="club" />
       ) : filteredClub && filteredClub.length === 0 ? (
@@ -773,6 +921,11 @@ export function RegistrationsPage() {
             levels,
             updatingId: updatingLevelId,
             onChange: handleLevelChange,
+          }}
+          manualPayment={{
+            busyId: manualBusyId,
+            onMark: openManualModal,
+            onUnmark: handleUnmarkPaid,
           }}
         />
       )}
@@ -813,6 +966,54 @@ export function RegistrationsPage() {
         radius="md"
       >
         <ImportPlayersPanel onImported={handleImported} />
+      </Modal>
+
+      <Modal
+        opened={pendingManual !== null}
+        onClose={closeManualModal}
+        title="Mark as paid"
+        size="sm"
+        centered
+      >
+        {pendingManual && (
+          <Stack>
+            {manualError && <Alert color="red" variant="light">{manualError}</Alert>}
+            <Text size="sm">
+              Mark <strong>{pendingManual.fanId}</strong> ({pendingManual.teamName}) as
+              paid up for subs? They will show as <strong>Paid</strong> and will not be
+              asked to set up a Direct Debit.
+            </Text>
+            <Textarea
+              label="Note (optional)"
+              placeholder="e.g. cash at training 12 Aug, bank transfer ref 4471"
+              value={manualNote}
+              onChange={e => setManualNote(e.currentTarget.value)}
+              rows={3}
+              radius="md"
+            />
+            <Text size="xs" c="dimmed">
+              Your name and the time are recorded against this override for audit.
+            </Text>
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                radius="xl"
+                onClick={closeManualModal}
+                disabled={manualBusyId !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="green"
+                radius="xl"
+                onClick={handleConfirmMarkPaid}
+                loading={manualBusyId !== null}
+              >
+                Mark as paid
+              </Button>
+            </Group>
+          </Stack>
+        )}
       </Modal>
 
       <Modal

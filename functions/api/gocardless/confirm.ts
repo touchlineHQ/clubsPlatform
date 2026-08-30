@@ -10,6 +10,13 @@ import {
 } from '../../lib/gocardless-link';
 import { buildDbReference } from '../../lib/payment-reference';
 
+/**
+ * Inserts or updates a player_payment record for a completed GoCardless flow.
+ *
+ * Appends the billing request ID to the reference to ensure each payment attempt
+ * gets its own row. Replays of the same billing request become idempotent updates.
+ * Skips silently if clubSlug or registrationId are missing.
+ */
 async function upsertPaymentRecord(
   db: D1Database,
   {
@@ -62,6 +69,14 @@ async function upsertPaymentRecord(
     .run();
 }
 
+/**
+ * GET handler — GoCardless redirect endpoint after a payer completes the billing flow.
+ *
+ * Validates the billing request, creates or reconciles a GoCardless subscription,
+ * and writes the payment record to the database. Handles cross-mandate deduplication
+ * to prevent double-charging. All authoritative data (club, pricing, registration)
+ * is re-derived from the database rather than trusting URL parameters.
+ */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { request, env } = context;
 

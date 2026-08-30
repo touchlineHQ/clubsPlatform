@@ -140,6 +140,20 @@
     ]
   },
   {
+    "event": "player payment manual override removed",
+    "description": "An admin undoes a manual payment override, putting the registration back to outstanding.",
+    "files": [
+      "functions/api/admin/manual-payment.ts"
+    ]
+  },
+  {
+    "event": "player payment manually marked paid",
+    "description": "An admin records a registration as paid outside Direct Debit — cash, bank transfer or a sponsored place.",
+    "files": [
+      "functions/api/admin/manual-payment.ts"
+    ]
+  },
+  {
     "event": "player payment subscription retried",
     "description": "An admin retries creating a GoCardless subscription for an existing mandate.",
     "files": [

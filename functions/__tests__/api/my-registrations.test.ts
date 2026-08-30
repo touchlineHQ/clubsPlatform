@@ -111,6 +111,61 @@ describe('onRequestGet', () => {
     expect(body.club[0].registrationId).toBe('reg_2');
   });
 
+  it('admin scope: attaches who marked a registration as manually paid', async () => {
+    mockGetSession.mockResolvedValue(adminSession);
+    const manualRow = { ...clubRegistration, paymentStatus: 'manual' };
+    const db = makeDb({
+      all: [
+        [sampleRegistration],
+        [manualRow],
+        // Newest first — reg_2 was re-marked after an undo.
+        [
+          { registrationId: 'reg_2', manualPaidBy: 'alice@club.com', manualPaidAt: 200, manualNote: 'cash' },
+          { registrationId: 'reg_2', manualPaidBy: 'bob@club.com', manualPaidAt: 100, manualNote: 'older' },
+        ],
+      ],
+    });
+    const ctx = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+    const res = await onRequestGet(ctx as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(200);
+    expect(body.club[0].manualPaidBy).toBe('alice@club.com');
+    expect(body.club[0].manualPaidAt).toBe(200);
+    expect(body.club[0].manualNote).toBe('cash');
+  });
+
+  it('admin scope: skips the attribution lookup when no row is manual', async () => {
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
+    const ctx = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+    await onRequestGet(ctx as any);
+    // Personal + club queries only — no third lookup.
+    expect((db.prepare as any).mock.calls.length).toBe(2);
+  });
+
+  it('hides the manual override from players but keeps it for admins', async () => {
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
+    const ctx = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+    await onRequestGet(ctx as any);
+
+    const [personalSql, clubSql] = (db.prepare as any).mock.calls.map((c: unknown[]) => c[0] as string);
+    const manualBranch = `WHEN SUM(CASE WHEN pp.status = 'manual' THEN 1 ELSE 0 END) > 0 THEN`;
+    // The player sees a manually-paid registration as an ordinary active one.
+    expect(personalSql).toContain(`${manualBranch} 'active'`);
+    expect(clubSql).toContain(`${manualBranch} 'manual'`);
+  });
+
   it('admin scope: club field is an array even when empty', async () => {
     mockGetSession.mockResolvedValue(adminSession);
     const db = makeDb({ all: [[], []] });

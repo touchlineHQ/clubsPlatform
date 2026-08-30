@@ -58,6 +58,20 @@ const samplePayment2 = {
   updatedAt: 1700000001000,
 };
 
+/** An admin override for a player paying outside GoCardless — no mandate. */
+const manualPayment = {
+  id: 'pay-3',
+  registrationId: 'reg-3',
+  fanId: '77777',
+  teamName: 'Under 12s',
+  reference: 'MANUAL-UNDER12S-77777-SUBS',
+  mandateId: '',
+  subscriptionId: null,
+  status: 'manual',
+  createdAt: 1700000002000,
+  updatedAt: 1700000002000,
+};
+
 describe('PaymentRecordsTab', () => {
   it('shows loader initially when fetch never resolves', () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
@@ -125,6 +139,65 @@ describe('PaymentRecordsTab', () => {
     await waitFor(() => {
       expect(screen.getByText('Mandate only')).toBeTruthy();
     });
+  });
+
+  it('shows Manually paid badge for a manual override', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [manualPayment] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Manually paid')).toBeTruthy();
+    });
+  });
+
+  it('filters down to manual overrides', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [samplePayment, manualPayment] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => expect(screen.getByText('12345')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('combobox', { name: /filter by status/i }));
+    await waitFor(() => {
+      const option = screen.queryByRole('option', { name: 'Manually paid' });
+      if (option) fireEvent.click(option);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('77777')).toBeTruthy();
+      expect(screen.queryByText('12345')).toBeNull();
+    });
+  });
+
+  it('offers Deactivate on a manual override so it can be undone here too', async () => {
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [manualPayment] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Deactivate/i })).toBeTruthy();
+    });
+    // A manual row has no mandate, so there is nothing to retry.
+    expect(screen.queryByRole('button', { name: /Retry sub/i })).toBeNull();
   });
 
   it('filters payments by team', async () => {

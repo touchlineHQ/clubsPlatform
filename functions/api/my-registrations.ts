@@ -13,18 +13,105 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+  manualPaidBy?: string | null;
+  manualPaidAt?: number | null;
+  manualNote?: string | null;
 }
 
-const PAYMENT_STATUS_SUBQUERY = `(
+/**
+ * Collapses a registration's player_payment rows into the single status the UI
+ * shows.
+ *
+ * `manual` is an admin override (see api/admin/manual-payment.ts). Player-facing
+ * responses fold it into `active`, so a manually-paid player is indistinguishable
+ * from a Direct Debit payer — the ticket asks for them to "show as fully paid up".
+ * The admin response keeps it distinct so the override, and who made it, stays
+ * visible to the club.
+ */
+function paymentStatusSubquery(distinguishManual: boolean): string {
+  const manualBranch = distinguishManual ? `'manual'` : `'active'`;
+  return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
+    WHEN SUM(CASE WHEN pp.status = 'manual' THEN 1 ELSE 0 END) > 0 THEN ${manualBranch}
     WHEN SUM(CASE WHEN pp.status = 'mandate_only' THEN 1 ELSE 0 END) > 0 THEN 'pending'
     WHEN COUNT(pp.id) > 0 THEN 'inactive'
     ELSE NULL
   END
   FROM "player_payment" pp WHERE pp.registrationId = pr.id
 ) AS paymentStatus`;
+}
 
+const PERSONAL_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(false);
+const CLUB_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(true);
+
+interface ManualAttributionRow {
+  registrationId: string;
+  manualPaidBy: string | null;
+  manualPaidAt: number;
+  manualNote: string | null;
+}
+
+/**
+ * Reads back who marked each manual payment as paid, from the audit log written
+ * by api/admin/manual-payment.ts. Kept out of the main query — one extra lookup
+ * beats three correlated subqueries, and it is skipped entirely when the club
+ * has no manual overrides.
+ */
+async function attachManualAttribution(
+  db: D1Database,
+  clubSlug: string,
+  rows: RegistrationRow[],
+): Promise<RegistrationRow[]> {
+  if (!rows.some((r) => r.paymentStatus === "manual")) return rows;
+
+  const { results } = await db
+    .prepare(
+      `SELECT pp.registrationId,
+              u.email      AS manualPaidBy,
+              al.createdAt AS manualPaidAt,
+              al.note      AS manualNote
+         FROM "admin_audit_log" al
+         JOIN "player_payment" pp ON pp.id = al.targetId
+         LEFT JOIN "user" u ON u.id = al.adminId
+        WHERE al.clubSlug = ?
+          AND al.targetTable = 'player_payment'
+          AND al.action = 'manual_paid'
+          AND pp.status = 'manual'
+        ORDER BY al.createdAt DESC`
+    )
+    .bind(clubSlug)
+    .all<ManualAttributionRow>();
+
+  // Ordered newest-first, so the first hit per registration is the override
+  // currently in force — a registration re-marked after an undo has several.
+  const latest = new Map<string, ManualAttributionRow>();
+  for (const row of results) {
+    if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
+  }
+
+  return rows.map((r) => {
+    const attribution = r.paymentStatus === "manual"
+      ? latest.get(r.registrationId)
+      : undefined;
+    return attribution
+      ? {
+          ...r,
+          manualPaidBy: attribution.manualPaidBy,
+          manualPaidAt: attribution.manualPaidAt,
+          manualNote: attribution.manualNote,
+        }
+      : r;
+  });
+}
+
+/**
+ * GET handler — fetches registrations for the authenticated user.
+ *
+ * Returns personal registrations (linked to the user) and, for admins, all club
+ * registrations with manual payment attribution when applicable. Manual payment
+ * status is collapsed to 'active' for personal queries and kept distinct for admins.
+ */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);
   if ("error" in result) return result.error;
@@ -60,7 +147,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
-         ${PAYMENT_STATUS_SUBQUERY}
+         ${PERSONAL_PAYMENT_STATUS_SUBQUERY}
        FROM user_player up
        JOIN player p ON p.id = up.playerId
        JOIN player_registration pr ON pr.playerId = p.id
@@ -105,7 +192,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
-         ${PAYMENT_STATUS_SUBQUERY}
+         ${CLUB_PAYMENT_STATUS_SUBQUERY}
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
@@ -130,13 +217,25 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .all<RegistrationRow>();
 
+  const club = await attachManualAttribution(
+    context.env.DB,
+    clubSlug,
+    clubRows.results,
+  );
+
   return json({
     personal: personalRows.results,
-    club: clubRows.results,
+    club,
     scope: "admin",
   });
 };
 
+/**
+ * DELETE handler — removes a player registration.
+ *
+ * Admin-only endpoint. Deletes the registration record from the database. Returns
+ * 404 if the registration doesn't exist or doesn't belong to the club.
+ */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const auth = await requireAdmin(context);
   if ("error" in auth) return auth.error;

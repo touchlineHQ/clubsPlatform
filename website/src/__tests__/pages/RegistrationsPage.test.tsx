@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { renderWithMantine, mockMember, mockAdmin, mockSingleClub } from '../test-utils';
 
 vi.mock('react-router-dom', () => ({
@@ -168,6 +168,159 @@ describe('RegistrationsPage', () => {
     });
 
     expect(screen.getByTestId('modal')).toBeInTheDocument();
+  });
+
+  // ─── Manual payment override ────────────────────────────────────────────────
+
+  describe('manual payment override', () => {
+    const outstandingRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves', paymentStatus: null };
+    const manualRow = {
+      ...outstandingRow,
+      paymentStatus: 'manual',
+      manualPaidBy: 'alice@club.com',
+      manualPaidAt: 1755000000000,
+      manualNote: 'cash at training',
+    };
+
+    /** Renders as an admin and switches to the Club Registrations tab. */
+    async function renderClubTab(club: unknown[]) {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ personal: [], club, scope: 'admin' }),
+      });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockAdmin,
+        clubValue: mockSingleClub,
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      // The team name also appears in the filter dropdown, so key off the
+      // toolbar instead to know the club table has rendered.
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+    }
+
+    it('shows a manually paid registration as Paid, with a marker for the admin', async () => {
+      await renderClubTab([manualRow]);
+
+      // Scoped to the table — "Paid" is also a filter option.
+      const table = within(document.querySelector('table')!);
+      expect(table.getByText('Paid')).toBeTruthy();
+      expect(document.querySelector('[aria-label="Manually marked as paid"]')).toBeTruthy();
+    });
+
+    it('shows no marker to a player — a manual override looks like any other paid row', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({ personal: [{ ...manualRow, relationship: 'self' }], club: null, scope: 'user' }),
+      });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockMember,
+        clubValue: mockSingleClub,
+      });
+
+      await waitFor(() => expect(screen.getByText('Paid')).toBeTruthy());
+      expect(document.querySelector('[aria-label="Manually marked as paid"]')).toBeNull();
+      expect(screen.queryByRole('button', { name: /Mark as paid/i })).toBeNull();
+    });
+
+    it.each([
+      ['active', 'a live subscription'],
+      ['pending', 'a live mandate'],
+    ])('offers no override for %s — %s cannot be overridden', async (paymentStatus) => {
+      await renderClubTab([{ ...outstandingRow, paymentStatus }]);
+      expect(screen.queryByRole('button', { name: /Mark as paid/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Undo paid/i })).toBeNull();
+    });
+
+    it('offers the override for a cancelled payment', async () => {
+      await renderClubTab([{ ...outstandingRow, paymentStatus: 'inactive' }]);
+      expect(screen.getByRole('button', { name: /Mark as paid/i })).toBeTruthy();
+    });
+
+    it('marks a registration as paid with a note', async () => {
+      await renderClubTab([outstandingRow]);
+
+      fireEvent.click(screen.getByRole('button', { name: /Mark as paid/i }));
+      const modal = screen.getByTestId('modal');
+
+      fireEvent.change(within(modal).getByPlaceholderText(/cash at training/i), {
+        target: { value: 'bank transfer ref 4471' },
+      });
+      fireEvent.click(within(modal).getByRole('button', { name: /Mark as paid/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/admin/manual-payment',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ registrationId: 'reg_2', note: 'bank transfer ref 4471' }),
+          }),
+        );
+      });
+    });
+
+    it('omits the note when none is typed', async () => {
+      await renderClubTab([outstandingRow]);
+
+      fireEvent.click(screen.getByRole('button', { name: /Mark as paid/i }));
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /Mark as paid/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/admin/manual-payment',
+          expect.objectContaining({ body: JSON.stringify({ registrationId: 'reg_2' }) }),
+        );
+      });
+    });
+
+    it('surfaces the error when the server refuses the override', async () => {
+      await renderClubTab([outstandingRow]);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: 'This registration has a live GoCardless payment — a manual override cannot be applied while it is in place.' }),
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Mark as paid/i }));
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /Mark as paid/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/live GoCardless payment/i)).toBeTruthy();
+      });
+    });
+
+    it('undoes a manual override', async () => {
+      await renderClubTab([manualRow]);
+
+      fireEvent.click(screen.getByRole('button', { name: /Undo paid/i }));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          '/api/admin/manual-payment?registrationId=reg_2',
+          expect.objectContaining({ method: 'DELETE' }),
+        );
+      });
+    });
+
+    it('shows an undo failure in the club content', async () => {
+      await renderClubTab([manualRow]);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: 'Could not undo this payment' }),
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Undo paid/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Could not undo this payment')).toBeTruthy();
+      });
+    });
   });
 
   it('shows "No registrations linked to your account yet" when personal is empty and scope is user', async () => {

@@ -127,10 +127,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return selectionPage(env.DB, clubSlug, fanId, registrations, origin, paymentType);
   }
 
+  // 'manual' is an admin override for a player who pays outside GoCardless —
+  // they are paid up, so never send them into the mandate flow.
   const existingPayment = await env.DB
     .prepare(
       `SELECT reference FROM "player_payment"
-        WHERE registrationId = ? AND status = 'active'
+        WHERE registrationId = ? AND status IN ('active', 'manual')
         LIMIT 1`
     )
     .bind(registration.registrationId)
@@ -197,7 +199,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   return Response.redirect(result.authorisationUrl, 302);
 };
 
-/** Generate an HTML page showing multiple teams for a player to choose from when setting up a subscription. */
+/**
+ * Renders an HTML page for multi-team players to choose which registration to pay for.
+ *
+ * Shows each team with its subscription pricing and badges payments already in
+ * place. Disabled cards are shown for registrations without a level or that are
+ * already paid, by Direct Debit or by an admin's manual override.
+ */
 async function selectionPage(
   db: D1Database,
   clubSlug: string,
@@ -217,15 +225,22 @@ async function selectionPage(
     .bind(...registrations.map(r => r.registrationId))
     .all<{ registrationId: string; status: string }>();
 
-  const activeRegistrationIds = new Set(
-    existingPayments
-      .filter(p => p.status === 'active')
-      .map(p => p.registrationId)
-  );
+  // Both statuses mean "paid", so both disable the card. They are kept apart
+  // because a manual override has no GoCardless subscription behind it —
+  // badging one "Subscription active" would tell the player something untrue.
+  const paidStatusByRegistration = new Map<string, string>();
+  for (const p of existingPayments) {
+    if (p.status !== 'active' && p.status !== 'manual') continue;
+    // 'active' wins if a registration somehow carries both.
+    if (p.status === 'active' || !paidStatusByRegistration.has(p.registrationId)) {
+      paidStatusByRegistration.set(p.registrationId, p.status);
+    }
+  }
 
   const cards = registrations.map(r => {
     const hasLevel = r.levelId != null && r.yearlyPriceInPence != null;
-    const isActive = activeRegistrationIds.has(r.registrationId);
+    const paidStatus = paidStatusByRegistration.get(r.registrationId);
+    const isActive = paidStatus != null;
     const href = (hasLevel && !isActive)
       ? `${origin}/${clubSlug}/payments/${paymentType}/${fanId}?reg=${encodeURIComponent(r.registrationId)}`
       : null;
@@ -248,7 +263,7 @@ async function selectionPage(
           ? `<div class="card-amount">${escHtml(amountText)}</div>`
           : `<div class="card-no-level">No subscription level assigned — contact your club admin</div>`
         }
-        ${isActive ? `<span class="badge-active">Subscription active</span>` : ''}
+        ${isActive ? `<span class="badge-active">${paidStatus === 'manual' ? 'Manually paid' : 'Subscription active'}</span>` : ''}
       </div>
       ${href
         ? `<a class="btn" href="${escAttr(href)}">Set up payment</a>`
@@ -315,12 +330,16 @@ async function selectionPage(
   });
 }
 
-/** Escape HTML special characters. */
+/**
+ * Escapes a string for safe insertion into HTML text content.
+ */
 function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Escape HTML attribute special characters. */
+/**
+ * Escapes a string for safe insertion into HTML attribute values.
+ */
 function escAttr(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
