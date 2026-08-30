@@ -35,6 +35,8 @@ export interface ClubEntry {
   primaryColor?: string | null;
   secondaryColor?: string | null;
   location?: string;
+  /** False while the club's site is private — only its admins can see it. */
+  published?: boolean;
 }
 
 export interface Club {

@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
@@ -38,6 +39,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Club name could not be converted to a valid slug" }, { status: 400 });
   }
 
+  if (!(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
+  }
+
   // Ensure slug uniqueness — append a suffix if taken
   const existing = await context.env.DB
     .prepare(`SELECT slug FROM club_config WHERE slug LIKE ?`)
@@ -51,9 +56,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     slug = `${slug}-${suffix}`;
   }
 
+  // published = 0: a brand-new club starts private, visible to the admin who
+  // just created it and nobody else, until they go live from the Customise page.
   const id = randomId("club");
   await context.env.DB
-    .prepare(`INSERT INTO club_config (id, slug, name, active, createdAt) VALUES (?, ?, ?, 1, ?)`)
+    .prepare(`INSERT INTO club_config (id, slug, name, active, published, createdAt) VALUES (?, ?, ?, 1, 0, ?)`)
     .bind(id, slug, clubName, nowMs())
     .run();
 

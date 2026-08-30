@@ -1,4 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
+import { writeAuditLog } from "../lib/audit-log";
+import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
 type ClubRow = {
@@ -8,6 +10,7 @@ type ClubRow = {
   active: number;
   primaryColor: string | null;
   secondaryColor: string | null;
+  published: number;
   createdAt: number;
 };
 
@@ -16,10 +19,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const multiClub = isMultiClubMode(context.env);
   const pitchBookings = isPitchBookingsEnabled(context.env);
 
-  const rows = await context.env.DB
-    .prepare(`SELECT id, slug, name, active, primaryColor, secondaryColor, createdAt FROM club_config ORDER BY createdAt ASC`)
+  // published is added by migration 0021, and a Pages deployment can land before
+  // CI has applied it. Every club site resolves its slug through this endpoint,
+  // so a missing column must not 500 the whole platform: fall back to the
+  // pre-0021 column list and treat every club as live, which is what it was
+  // before the column existed.
+  const listClubs = (publishedColumn: string) => context.env.DB
+    .prepare(`SELECT id, slug, name, active, primaryColor, secondaryColor, ${publishedColumn}, createdAt FROM club_config ORDER BY createdAt ASC`)
     .all<ClubRow>();
 
+  let rows: D1Result<ClubRow>;
+  try {
+    rows = await listClubs('published');
+  } catch {
+    rows = await listClubs('1 AS published');
+  }
+
+  // Unpublished clubs stay in this list on purpose. The frontend resolves which
+  // club a URL belongs to from the registry, so dropping them would leave the
+  // club's own admins looking at the platform landing page with no way to log
+  // in. GET /api/club is what actually withholds a private club's content.
   let clubs = rows.results
     .filter(r => r.active === 1)
     .map(r => ({
@@ -28,6 +47,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       name: r.name,
       primaryColor: r.primaryColor ?? null,
       secondaryColor: r.secondaryColor ?? null,
+      published: r.published !== 0,
     }));
 
   // The demo club is a multi-club platform feature only — single-club forks
@@ -56,15 +76,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "slug must contain only lowercase letters, numbers, and hyphens" }, { status: 400 });
   }
 
+  if (!(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
+  }
+
   const existing = await context.env.DB
     .prepare(`SELECT id FROM club_config WHERE slug = ?`)
     .bind(slug)
     .first<{ id: string }>();
   if (existing) return json({ error: "A club with that slug already exists" }, { status: 409 });
 
+  // Same as self-signup: a club is created private and goes live deliberately.
   const id = randomId("club");
   await context.env.DB
-    .prepare(`INSERT INTO club_config (id, slug, name, active, createdAt) VALUES (?, ?, ?, 1, ?)`)
+    .prepare(`INSERT INTO club_config (id, slug, name, active, published, createdAt) VALUES (?, ?, ?, 1, 0, ?)`)
     .bind(id, slug, name, nowMs())
     .run();
 
@@ -79,7 +104,13 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
   // Defensive: add primaryColor / secondaryColor columns if the production DB
-  // predates migrations 0009 / 0015
+  // predates migrations 0009 / 0015.
+  //
+  // `published` deliberately gets no equivalent. Migration 0021 has not been
+  // applied everywhere yet, and self-healing the column here would make that
+  // migration fail with "duplicate column name" — the hazard spelled out in
+  // lib/ensure-tables.ts. The GET handlers fall back gracefully instead, so the
+  // write paths that need the column return a controlled unavailable response.
   try {
     await context.env.DB.prepare(`ALTER TABLE "club_config" ADD COLUMN "primaryColor" TEXT`).run();
   } catch { /* column already exists */ }
@@ -93,13 +124,17 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
-  const existing = await context.env.DB
-    .prepare(`SELECT id FROM club_config WHERE slug = ?`)
-    .bind(clubSlug)
-    .first<{ id: string }>();
-  if (!existing) return json({ error: "Not found" }, { status: 404 });
+  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null; published: boolean }>;
+  const changesPublication = body.published !== undefined;
+  if (changesPublication && !(await isClubPublicationSchemaReady(context.env.DB))) {
+    return clubPublicationUnavailable();
+  }
 
-  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null }>;
+  const existing = await context.env.DB
+    .prepare(`SELECT id${changesPublication ? ", published" : ""} FROM club_config WHERE slug = ?`)
+    .bind(clubSlug)
+    .first<{ id: string; published?: number }>();
+  if (!existing) return json({ error: "Not found" }, { status: 404 });
 
   const sets: string[] = [];
   const binds: unknown[] = [];
@@ -109,6 +144,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   if (body.active !== undefined) set("active", body.active ? 1 : 0);
   if (body.primaryColor !== undefined) set("primaryColor", body.primaryColor ?? null);
   if (body.secondaryColor !== undefined) set("secondaryColor", body.secondaryColor ?? null);
+  if (body.published !== undefined) set("published", body.published ? 1 : 0);
 
   if (!sets.length) return json({ error: "Nothing to update" }, { status: 400 });
 
@@ -116,6 +152,22 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     .prepare(`UPDATE club_config SET ${sets.join(", ")} WHERE id = ?`)
     .bind(...binds, existing.id)
     .run();
+
+  // Taking a club's site public (or pulling it back) is the kind of change a
+  // club will later want to trace to a person and a time, so it goes in the
+  // audit log alongside the payment overrides.
+  const wasPublished = existing.published !== 0;
+  if (body.published !== undefined && body.published !== wasPublished) {
+    await writeAuditLog(context.env.DB, {
+      clubSlug,
+      adminId: (result.session.user as Record<string, unknown>).id as string,
+      action: body.published ? "club.publish" : "club.unpublish",
+      targetTable: "club_config",
+      targetId: existing.id,
+      oldStatus: wasPublished ? "published" : "private",
+      newStatus: body.published ? "published" : "private",
+    });
+  }
 
   return json({ ok: true });
 };

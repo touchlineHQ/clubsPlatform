@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { AppShell, Center, Loader, MantineProvider } from '@mantine/core';
+import { HashRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
+import { Alert, Anchor, AppShell, Center, Loader, MantineProvider } from '@mantine/core';
+import { IconEyeOff } from '@tabler/icons-react';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import { loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
 import { createClubTheme, createLandingTheme, clubCssVariablesResolver } from './theme';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ClubContext } from './context/ClubContext';
 import { SectionProvider } from './context/SectionContext';
+import { PrivateClubNotice } from './components/PrivateClubNotice';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { SiteHeader } from './components/SiteHeader';
 import { SiteSidebar } from './components/SiteSidebar';
@@ -59,7 +61,8 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
   return null;
 }
 
-export const App = () => {
+function AppRoutes() {
+  const { user, loading: authLoading, isAdmin, isPlatformAdmin } = useAuth();
   const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
@@ -93,11 +96,21 @@ export const App = () => {
     });
   }, []);
 
-  // Step 2: once we have a club slug, load all club data
+  // A club that hasn't gone live is browsable by its own admins only. Platform
+  // admins (clubSlug === null) count everywhere — same rule as SiteSidebar.
+  const registryEntry = registry?.clubs.find(c => c.slug === clubSlug) ?? null;
+  const clubPublished = registryEntry?.published ?? true;
+  const belongsToClub = isPlatformAdmin || user?.clubSlug === clubSlug;
+  const canViewPrivate = isAdmin && belongsToClub;
+  const canViewSite = clubPublished || canViewPrivate;
+
+  // Step 2: once we have a club slug, load all club data. Skipped while the
+  // club is private and the viewer isn't one of its admins: GET /api/club
+  // answers 404 for them, which would reject here and hang on the loader.
   useEffect(() => {
-    if (!clubSlug || !registry) return;
+    if (!clubSlug || !registry || !canViewSite) return;
     loadAllData(clubSlug, registry.multiClub).then(setFetchedData);
-  }, [clubSlug, registry]);
+  }, [clubSlug, registry, canViewSite]);
 
   const data = previewData ?? fetchedData;
 
@@ -124,6 +137,13 @@ export const App = () => {
     } : prev);
   }, [clubSlug]);
 
+  const handlePublishedChanged = useCallback((published: boolean) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, published } : c),
+    } : prev);
+  }, [clubSlug]);
+
   const handleResetPreview = useCallback(() => {
     setPreviewData(null);
     setEditingData(null);
@@ -138,30 +158,38 @@ export const App = () => {
     );
   }
 
-  // Payment result pages are club-agnostic — render them before any club-slug
-  // guard so GoCardless redirects (which carry no club slug in the path) work.
-  const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
-  if (hashPath === '/payment-success' || hashPath === '/payment-cancelled') {
-    return (
-      <MantineProvider theme={createLandingTheme()}>
-        <HashRouter>
-          <Routes>
-            <Route path="/payment-success" element={<PaymentSuccessPage />} />
-            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
-          </Routes>
-        </HashRouter>
-      </MantineProvider>
-    );
-  }
-
   // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
     return (
       <MantineProvider theme={createLandingTheme()}>
-        <AuthProvider>
-          <LandingPage clubs={registry.clubs} />
-        </AuthProvider>
+        <LandingPage clubs={registry.clubs} />
       </MantineProvider>
+    );
+  }
+
+  // Private club, and the viewer isn't one of its admins. Only /login and
+  // /signup stay mounted so an admin arriving cold can still sign in; every
+  // other route is turned away by PrivateClubNotice.
+  if (clubSlug && !clubPublished && !canViewPrivate) {
+    if (authLoading) {
+      return (
+        <Center h="100vh">
+          <Loader size="xl" />
+        </Center>
+      );
+    }
+    return (
+      <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
+        <MantineProvider theme={createLandingTheme()}>
+          <HashRouter>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignUpPage />} />
+              <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
+            </Routes>
+          </HashRouter>
+        </MantineProvider>
+      </ClubContext.Provider>
     );
   }
 
@@ -174,7 +202,6 @@ export const App = () => {
     );
   }
 
-  const registryEntry = registry?.clubs.find(c => c.slug === clubSlug);
   const clubTheme = createClubTheme(
     registryEntry?.primaryColor ?? data.club.primaryColor,
     registryEntry?.secondaryColor ?? data.club.secondaryColor,
@@ -183,7 +210,6 @@ export const App = () => {
   return (
     <ClubContext.Provider value={{ clubSlug, isMultiClub: registry.multiClub, clubs: registry.clubs }}>
     <MantineProvider theme={clubTheme} cssVariablesResolver={clubCssVariablesResolver}>
-    <AuthProvider>
     <SectionProvider>
     <HashRouter>
       <NavigationHandler onNavigate={close} />
@@ -210,6 +236,24 @@ export const App = () => {
         </AppShell.Navbar>
 
         <AppShell.Main>
+          {/* Only an admin ever renders the site while it's private, so this
+              banner is their standing reminder that nobody else can see it. */}
+          {!clubPublished && (
+            <Alert
+              variant="light"
+              color="orange"
+              radius="md"
+              mb="md"
+              icon={<IconEyeOff size={18} />}
+              title="This site is private"
+            >
+              Only your club's admins can see these pages.{' '}
+              <Anchor component={Link} to="/customise" fw={600} inherit>
+                Go live from Site Admin
+              </Anchor>{' '}
+              when you're ready.
+            </Alert>
+          )}
           <Routes>
             <Route path="/" element={<HomePage club={data.club} visibility={data.visibility} />} />
 
@@ -253,6 +297,8 @@ export const App = () => {
                   previewActive={previewData !== null}
                   onPrimaryColorSaved={handlePrimaryColorSaved}
                   onSecondaryColorSaved={handleSecondaryColorSaved}
+                  published={clubPublished}
+                  onPublishedChange={handlePublishedChanged}
                 />
               </ProtectedRoute>
             } />
@@ -286,10 +332,39 @@ export const App = () => {
       </AppShell>
     </HashRouter>
     </SectionProvider>
-    </AuthProvider>
     </MantineProvider>
     </ClubContext.Provider>
   );
 }
+
+export const App = () => {
+  // Payment result pages are club-agnostic — render them before anything else
+  // so GoCardless redirects (which carry no club slug in the path) work. They
+  // sit outside AuthProvider too: a player arriving here is not signing in, and
+  // the /api/me round trip would only reset their analytics identity.
+  const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+  if (hashPath === '/payment-success' || hashPath === '/payment-cancelled') {
+    return (
+      <MantineProvider theme={createLandingTheme()}>
+        <HashRouter>
+          <Routes>
+            <Route path="/payment-success" element={<PaymentSuccessPage />} />
+            <Route path="/payment-cancelled" element={<PaymentCancelledPage />} />
+          </Routes>
+        </HashRouter>
+      </MantineProvider>
+    );
+  }
+
+  // AuthProvider sits above everything else because the private-club gate in
+  // AppRoutes has to know who's viewing before it decides whether to load the
+  // club's data at all. It renders a context provider and nothing else, so it
+  // is safe outside MantineProvider.
+  return (
+    <AuthProvider>
+      <AppRoutes />
+    </AuthProvider>
+  );
+};
 
 export default App;
