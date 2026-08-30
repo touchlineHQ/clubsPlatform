@@ -132,7 +132,8 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // `published` is deliberately not settable here: this handler is gated on
   // multi-club mode above, and a single-club fork needs the go-live switch too.
   // It lives on PATCH /api/club instead.
-  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null }>;
+  const body = (await context.request.json()) as Partial<{ name: string; active: boolean; primaryColor: string | null; secondaryColor: string | null; published: unknown }>;
+  if ('published' in body) return json({ error: "Nothing to update" }, { status: 400 });
 
   const sets: string[] = [];
   const binds: unknown[] = [];

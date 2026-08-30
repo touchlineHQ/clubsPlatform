@@ -227,6 +227,19 @@ describe('clubs PATCH (update club)', () => {
     expect(body.error).toMatch(/Nothing to update/);
   });
 
+  it('does not accept published in a mixed update', async () => {
+    const db = makeDb({ first: { id: 'club_1' } });
+    const req = patchReq('/api/clubs', { name: 'Updated FC', published: true }, { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, {
+      env: { MULTI_CLUB: '1', DB: db },
+    });
+    const res = await clubsPatch(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/Nothing to update/);
+    expect(prepared(db).some(p => /UPDATE club_config SET/.test(p.sql))).toBe(false);
+  });
+
 });
 
 describe('clubs DELETE (soft-delete club)', () => {

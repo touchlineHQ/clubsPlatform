@@ -10,10 +10,7 @@ vi.mock('../../lib/seed', () => ({
   seedClubData: vi.fn(async () => {}),
 }));
 
-vi.mock('../../lib/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }));
-
 import { onRequestGet, onRequestPatch } from '../../api/club';
-import { writeAuditLog } from '../../lib/audit-log';
 
 /** Every prepare() call paired with the bindings it was given. */
 function prepared(db: any): { sql: string; bindings: unknown[] }[] {
@@ -153,6 +150,37 @@ describe('GET /api/club', () => {
 });
 
 describe('PATCH /api/club', () => {
+  it.each([null, [], 'invalid', 42, true])('rejects a non-object body: %j', async (body) => {
+    const db = makeDb();
+    const ctx = makeContext(
+      patchReq('/api/club', body, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as never } },
+    );
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects invalid JSON', async () => {
+    const db = makeDb();
+    const req = new Request('https://example.com/api/club', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Club-Slug': 'test-club' },
+      body: '{',
+    });
+    const res = await onRequestPatch(makeContext(req, { env: { DB: db as never } }) as never);
+    expect(res.status).toBe(400);
+  });
+
+  it.each([null, 0, 1, 'true', {}])('rejects a non-boolean published value: %j', async (published) => {
+    const db = makeDb();
+    const ctx = makeContext(
+      patchReq('/api/club', { published }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as never } },
+    );
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(400);
+  });
+
   it('returns 400 when X-Club-Slug header is missing', async () => {
     const db = makeDb();
     const ctx = makeContext(patchReq('/api/club', { name: 'New Name' }), { env: { DB: db as never } });
@@ -216,17 +244,12 @@ describe('PATCH /api/club', () => {
     const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
     expect(update?.sql).toMatch(/published = \?/);
     expect(update?.bindings).toContain(1);
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({
-        clubSlug: 'test-club',
-        action: 'club.publish',
-        targetTable: 'club_config',
-        targetId: 'club_1',
-        oldStatus: 'private',
-        newStatus: 'published',
-      }),
-    );
+    const audit = prepared(db).find(p => /INSERT INTO "admin_audit_log"/.test(p.sql));
+    expect(audit?.bindings.slice(1, 9)).toEqual([
+      'test-club', 'user_1', 'club.publish', 'club_config', 'club_1', 'private', 'published', null,
+    ]);
+    expect(db.batch).toHaveBeenCalledOnce();
+    expect((db.batch as Mock).mock.calls[0][0]).toHaveLength(2);
   });
 
   it('takes a live club private and logs it', async () => {
@@ -236,10 +259,9 @@ describe('PATCH /api/club', () => {
 
     const update = prepared(db).find(p => /UPDATE club_config SET/.test(p.sql));
     expect(update?.bindings).toContain(0);
-    expect(writeAuditLog).toHaveBeenCalledWith(
-      db,
-      expect.objectContaining({ action: 'club.unpublish', oldStatus: 'published', newStatus: 'private' }),
-    );
+    const audit = prepared(db).find(p => /INSERT INTO "admin_audit_log"/.test(p.sql));
+    expect(audit?.bindings).toEqual(expect.arrayContaining(['club.unpublish', 'published', 'private']));
+    expect(db.batch).toHaveBeenCalledOnce();
   });
 
   // The whole reason this lives on /api/club rather than /api/clubs, which is
@@ -248,7 +270,6 @@ describe('PATCH /api/club', () => {
     const { ctx } = patchPublished(true, 0);
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(200);
-    expect(writeAuditLog).toHaveBeenCalled();
   });
 
   it('publishes on a multi-club deployment', async () => {
@@ -258,10 +279,11 @@ describe('PATCH /api/club', () => {
   });
 
   it('does not log when published is unchanged', async () => {
-    const { ctx } = patchPublished(true, 1);
+    const { db, ctx } = patchPublished(true, 1);
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(200);
-    expect(writeAuditLog).not.toHaveBeenCalled();
+    expect(prepared(db).some(p => /admin_audit_log/.test(p.sql))).toBe(false);
+    expect(db.batch).not.toHaveBeenCalled();
   });
 
   it('keeps published out of the stored content blob', async () => {
@@ -279,7 +301,6 @@ describe('PATCH /api/club', () => {
     const { ctx } = patchPublished(true, 0);
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(403);
-    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
   it('rejects a publish attempt against another club', async () => {
@@ -291,7 +312,6 @@ describe('PATCH /api/club', () => {
     );
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(403);
-    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
   it('returns 503 without updating when migration 0021 is not applied', async () => {
@@ -303,7 +323,6 @@ describe('PATCH /api/club', () => {
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(503);
     expect(prepared(db).some(p => /UPDATE club_config SET/.test(p.sql))).toBe(false);
-    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
   // This endpoint carries every content save the Customise page makes. Naming

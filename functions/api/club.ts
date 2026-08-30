@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { writeAuditLog } from "../lib/audit-log";
+import { prepareAuditLog } from "../lib/audit-log";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { seedClubData } from "../lib/seed";
 import { type Env, json, getClubSlug, requireAdmin } from "../lib/api-helpers";
@@ -89,7 +89,19 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
-  const body = await context.request.json() as Record<string, unknown>;
+  let parsedBody: unknown;
+  try {
+    parsedBody = await context.request.json();
+  } catch {
+    return json({ error: "Invalid request body" }, { status: 400 });
+  }
+  if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    return json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const body = parsedBody as Record<string, unknown>;
+  if ('published' in body && typeof body.published !== 'boolean') {
+    return json({ error: "published must be a boolean" }, { status: 400 });
+  }
 
   // Only a go-live touches `published`, so only a go-live needs the column to
   // exist. Every other save through this endpoint — which is every content save
@@ -130,29 +142,31 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // is gated on multi-club mode, and a single-club fork needs the switch too.
   if (changesPublication) {
     sets.push('published = ?');
-    binds.push(body.published ? 1 : 0);
+    binds.push(body.published === true ? 1 : 0);
   }
   binds.push(clubSlug);
 
-  await context.env.DB
+  const update = context.env.DB
     .prepare(`UPDATE club_config SET ${sets.join(', ')} WHERE slug = ?`)
-    .bind(...binds)
-    .run();
+    .bind(...binds);
 
   // Taking a club's site public (or pulling it back) is the kind of change a
   // club will later want to trace to a person and a time, so it goes in the
   // audit log alongside the payment overrides.
   const wasPublished = row.published !== 0;
-  if (changesPublication && !!body.published !== wasPublished) {
-    await writeAuditLog(context.env.DB, {
+  if (changesPublication && body.published !== wasPublished) {
+    const audit = prepareAuditLog(context.env.DB, {
       clubSlug,
       adminId: (result.session.user as Record<string, unknown>).id as string,
-      action: body.published ? 'club.publish' : 'club.unpublish',
+      action: body.published === true ? 'club.publish' : 'club.unpublish',
       targetTable: 'club_config',
       targetId: row.id,
       oldStatus: wasPublished ? 'published' : 'private',
-      newStatus: body.published ? 'published' : 'private',
+      newStatus: body.published === true ? 'published' : 'private',
     });
+    await context.env.DB.batch([update, audit]);
+  } else {
+    await update.run();
   }
 
   return json({ ok: true });
