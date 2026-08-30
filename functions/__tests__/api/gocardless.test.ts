@@ -1071,6 +1071,28 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(html).toContain('Set up payment');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
   });
+
+  it('badges a manual override as "Manually paid", not as an active subscription', async () => {
+    // The card is disabled either way — an override means they are paid up — but
+    // there is no GoCardless subscription behind it to call active.
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration, reg2], [{ registrationId: 'reg_1', status: 'manual' }]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Manually paid');
+    expect(html).not.toContain('Subscription active');
+    expect(html).toContain('Already set up');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
 });
 
 // ─── GET/POST /[clubSlug]/payments (FAN entry) ───────────────────────────────
