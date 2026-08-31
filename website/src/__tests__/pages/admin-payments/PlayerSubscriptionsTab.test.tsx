@@ -16,11 +16,6 @@ vi.mock('@mantine/core', async (importOriginal) => {
   };
 });
 
-// jsdom doesn't implement scrollIntoView; stub it to prevent Mantine Combobox timer errors
-if (typeof window !== 'undefined') {
-  window.HTMLElement.prototype.scrollIntoView = () => {};
-}
-
 const mockFetch = vi.fn();
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);

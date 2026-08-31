@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import { renderWithMantine, mockLoggedOut } from '../test-utils';
 import type { ClubEntry } from '../../types';
@@ -8,11 +8,6 @@ vi.mock('../../auth-client', () => ({
   signIn: { email: vi.fn() },
   signOut: vi.fn(),
 }));
-
-// jsdom doesn't implement scrollIntoView
-beforeAll(() => {
-  Element.prototype.scrollIntoView = vi.fn();
-});
 
 import { LandingPage } from '../../pages/LandingPage';
 

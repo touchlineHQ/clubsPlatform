@@ -258,6 +258,10 @@ describe('RegistrationsPage', () => {
       ]);
 
       fireEvent.click(screen.getByRole('combobox', { name: /filter by subscription/i }));
+      // The click has to happen inside the retry callback: Mantine closes the
+      // dropdown a tick after it opens, so the option is gone by the time a
+      // resolved waitFor hands control back. It still fires exactly once —
+      // earlier attempts throw at the expect above it.
       await waitFor(() => {
         const option = screen.queryByRole('option', { name: 'Paying' });
         expect(option).toBeTruthy();
