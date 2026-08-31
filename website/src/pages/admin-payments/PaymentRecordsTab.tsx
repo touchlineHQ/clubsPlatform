@@ -63,7 +63,8 @@ interface PaymentFilters { team: string; status: string; }
 
 const STATUS_OPTIONS = [
   { value: ALL,          label: 'All statuses' },
-  { value: 'active',     label: 'Active' },
+  { value: 'active',     label: 'Paying' },
+  { value: 'completed',  label: 'Paid in full' },
   { value: 'manual',     label: 'Manually paid' },
   { value: 'mandate_only', label: 'Mandate only' },
   { value: 'inactive',   label: 'Inactive' },
@@ -81,12 +82,16 @@ function applyFilters(rows: PlayerPaymentRow[], filters: PaymentFilters): Player
 
 const BADGE_STYLES = { label: { textBoxTrim: 'none', textBoxEdge: 'auto' } } as const;
 
+// Raw player_payment.status values — the canonical list lives in
+// functions/lib/payment-status.ts. Green means the whole plan was collected;
+// 'active' is blue because a subscription part-way through is not paid up yet.
 // 'manual' is an admin override for a player paying outside GoCardless —
 // see functions/api/admin/manual-payment.ts.
 const STATUS_BADGES: Record<string, { color: string; label: string }> = {
-  active:   { color: 'green', label: 'Active' },
-  manual:   { color: 'teal',  label: 'Manually paid' },
-  inactive: { color: 'red',   label: 'Inactive' },
+  active:    { color: 'blue',  label: 'Paying' },
+  completed: { color: 'green', label: 'Paid in full' },
+  manual:    { color: 'teal',  label: 'Manually paid' },
+  inactive:  { color: 'red',   label: 'Inactive' },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -132,6 +137,10 @@ interface DeactivateActionProps {
 
 function DeactivateAction({ payment, confirmId, deactivatingId, onRequest, onConfirm, onCancel }: DeactivateActionProps) {
   if (payment.status === 'inactive') return null;
+  // A plan that collected in full is not deactivatable — dropping the marker
+  // would put a paid-up player back in front of the mandate flow, so PATCH
+  // /api/admin/player-payments returns a 409 for it.
+  if (payment.status === 'completed') return null;
   if (confirmId === payment.id) {
     return (
       <Group gap="xs">

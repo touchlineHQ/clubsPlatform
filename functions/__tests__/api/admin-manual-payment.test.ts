@@ -121,6 +121,17 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
+  it('returns 409 when the plan already collected in full', async () => {
+    const db = makeDb({ first: [REGISTRATION, { id: 'pay_1', status: 'completed' }] });
+    const res = await onRequestPost(markPaidCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/already been paid in full/);
+    expect(body.status).toBe('completed');
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it('scopes the guard to rows with a real mandate, so cancelled ones do not block', async () => {
     const db = makeDb({ first: [REGISTRATION, null, null] });
     await onRequestPost(markPaidCtx(db) as any);
@@ -128,7 +139,9 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     const guard = findSql(db, `mandateId != ''`);
     expect(guard).toBeDefined();
     expect(guard!.sql).toContain('status IN');
-    expect(guard!.bindings).toEqual(['reg_1', 'test-club', 'active', 'mandate_only']);
+    expect(guard!.bindings).toEqual([
+      'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
+    ]);
   });
 });
 

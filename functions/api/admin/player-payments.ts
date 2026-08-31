@@ -8,13 +8,15 @@ import {
   fetchNextPossibleChargeDate,
 } from '../../lib/gocardless-link';
 import { stripReferenceSuffix } from '../../lib/payment-reference';
+import { subscriptionStatusToPaymentStatus } from '../../lib/payment-status';
 import type { GCSubscription } from '../gocardless/_types';
 
 /**
  * Subscription statuses meaning "will never collect", so it is safe to create a
  * replacement. Deliberately excludes 'finished': that means every payment of a
  * count-limited plan was collected, so the payer has already paid in full and
- * creating a replacement would charge them the whole plan again.
+ * creating a replacement would charge them the whole plan again. That case is
+ * reconciled to 'completed' instead — see lib/payment-status.ts.
  */
 const TERMINAL_SUBSCRIPTION_STATUSES = new Set(['cancelled', 'customer_approval_denied']);
 
@@ -88,6 +90,15 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
   if (!payment) return json({ error: 'Payment not found' }, { status: 404 });
   if (payment.status === 'inactive') return json({ error: 'Already inactive' }, { status: 409 });
+  // Deactivating is DB-only — it cancels nothing at GoCardless. Losing the
+  // 'completed' marker would put a paid-up player back in front of the mandate
+  // flow, so a plan that collected in full is not deactivatable.
+  if (payment.status === 'completed') {
+    return json(
+      { error: 'This plan was paid in full and cannot be deactivated' },
+      { status: 409 },
+    );
+  }
 
   await context.env.DB
     .prepare(`UPDATE "player_payment" SET status = 'inactive', updatedAt = ? WHERE id = ? AND clubSlug = ?`)
@@ -223,8 +234,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       const matchedByReference =
         !!match.metadata?.reference && refCandidates.has(match.metadata.reference);
       // A finished subscription collected every payment of its plan, so the row
-      // is done rather than live — same mapping the webhook applies.
-      const reconciledStatus = match.status === 'finished' ? 'inactive' : 'active';
+      // is paid in full rather than live — same mapping the webhook applies.
+      const reconciledStatus = subscriptionStatusToPaymentStatus(match.status);
 
       // Subscription already exists — reconcile the DB row and return success
       await context.env.DB

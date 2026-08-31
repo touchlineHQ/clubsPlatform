@@ -3,6 +3,7 @@ import { nowMs } from '../../lib/api-helpers';
 import { decryptSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
 import { resolveFanIdFromGCResource } from '../../lib/posthog-identity';
+import { NOT_PAID_IN_FULL_SQL } from '../../lib/payment-status';
 import type { Env } from './_types';
 
 interface GCWebhookEvent {
@@ -81,7 +82,7 @@ async function verifySignature(
   return false;
 }
 
-/** Map a GC mandate/subscription action to our internal player_payment status. */
+/** Map a GC mandate action to our internal player_payment status. */
 function mandateActionToStatus(action: string): 'active' | 'inactive' | null {
   switch (action) {
     case 'cancelled':
@@ -97,15 +98,23 @@ function mandateActionToStatus(action: string): 'active' | 'inactive' | null {
   }
 }
 
-function subscriptionActionToStatus(action: string): 'active' | 'inactive' | null {
+/**
+ * Map a GC subscription action to our internal player_payment status.
+ *
+ * 'finished' and 'cancelled' both end a subscription but mean opposite things
+ * to a treasurer: finished is the plan collecting its last payment, cancelled
+ * is the payer stopping early. Only 'cancelled' is a problem.
+ *
+ * created / customer_approval_granted / payment_created deliberately map to
+ * nothing: they arrive throughout the life of a subscription, so treating them
+ * as "active" would resurrect a row an admin had just deactivated.
+ */
+function subscriptionActionToStatus(action: string): 'completed' | 'inactive' | null {
   switch (action) {
-    case 'cancelled':
     case 'finished':
+      return 'completed';
+    case 'cancelled':
       return 'inactive';
-    case 'created':
-    case 'customer_approval_granted':
-    case 'payment_created':
-      return 'active';
     default:
       return null;
   }
@@ -159,12 +168,16 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
   if (ev.resource_type === 'mandates' && mandateId) {
     const status = mandateActionToStatus(ev.action);
     if (status) {
+      // The paid-in-full guard matters most here: a payer who has finished
+      // their plan usually cancels the Direct Debit afterwards, and the
+      // mandates.cancelled that follows must not undo "paid in full".
       await env.DB
         .prepare(
           `UPDATE "player_payment"
               SET status = ?, updatedAt = ?
             WHERE mandateId = ?
-              AND status != ?`,
+              AND status != ?
+              AND ${NOT_PAID_IN_FULL_SQL}`,
         )
         .bind(status, now, mandateId, status)
         .run();
@@ -188,15 +201,16 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
 
   if (ev.resource_type === 'subscriptions' && subscriptionId) {
     const status = subscriptionActionToStatus(ev.action);
-    if (status === 'inactive') {
+    if (status) {
       await env.DB
         .prepare(
           `UPDATE "player_payment"
-              SET status = 'inactive', updatedAt = ?
+              SET status = ?, updatedAt = ?
             WHERE subscriptionId = ?
-              AND status != 'inactive'`,
+              AND status != ?
+              AND ${NOT_PAID_IN_FULL_SQL}`,
         )
-        .bind(now, subscriptionId)
+        .bind(status, now, subscriptionId, status)
         .run();
     }
     if (posthog) {

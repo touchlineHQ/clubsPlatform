@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { makeContext, makeDb, makeEnv, adminSession, memberSession, postReq } from '../test-utils';
+import { makeContext, makeDb, makeEnv, adminSession, memberSession, postReq, patchReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -9,7 +9,7 @@ vi.mock('../../lib/auth', () => ({
 vi.mock('../../lib/secrets', () => ({ getSecret: vi.fn(async () => 'live-token') }));
 vi.mock('../../lib/audit-log', () => ({ writeAuditLog: vi.fn(async () => {}) }));
 
-import { onRequestPost } from '../../api/admin/player-payments';
+import { onRequestPost, onRequestPatch } from '../../api/admin/player-payments';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
 
@@ -272,7 +272,7 @@ describe('POST /api/admin/player-payments — duplicate protection', () => {
     vi.unstubAllGlobals();
   });
 
-  it('reconciles a finished subscription as inactive without re-charging the player', async () => {
+  it('reconciles a finished subscription as paid in full without re-charging the player', async () => {
     const fetchMock = makeGcFetchMock({
       subscriptions: [
         { id: 'SUB-DONE', status: 'finished', metadata: { reference: LOGICAL_REFERENCE } },
@@ -285,7 +285,7 @@ describe('POST /api/admin/player-payments — duplicate protection', () => {
 
     // The plan was collected in full, so a replacement would charge it all again.
     expect(countCreateCalls(fetchMock)).toBe(0);
-    expect(body).toMatchObject({ subscriptionId: 'SUB-DONE', reconciled: true, status: 'inactive' });
+    expect(body).toMatchObject({ subscriptionId: 'SUB-DONE', reconciled: true, status: 'completed' });
 
     vi.unstubAllGlobals();
   });
@@ -379,5 +379,44 @@ describe('POST /api/admin/player-payments — GoCardless rejection', () => {
     expect(body.detail).toContain('Validation failed');
 
     vi.unstubAllGlobals();
+  });
+});
+
+describe('PATCH /api/admin/player-payments — deactivate', () => {
+  beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
+
+  function patchCtx(db: any) {
+    return makeContext(
+      patchReq('/api/admin/player-payments', { id: 'pay_1' }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+  }
+
+  it('deactivates a live subscription row', async () => {
+    const db = makeDb({ first: { id: 'pay_1', status: 'active' }, run: { meta: { changes: 1 } } });
+    const res = await onRequestPatch(patchCtx(db) as never);
+
+    expect(res.status).toBe(200);
+    expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('refuses to deactivate a plan that collected in full', async () => {
+    // Deactivating only updates our DB — it cancels nothing at GoCardless — so
+    // dropping the marker would put a paid-up player back in the mandate flow.
+    const db = makeDb({ first: { id: 'pay_1', status: 'completed' }, run: { meta: { changes: 1 } } });
+    const res = await onRequestPatch(patchCtx(db) as never);
+    const body = (await res.json()) as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/paid in full/);
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('refuses to deactivate an already-inactive row', async () => {
+    const db = makeDb({ first: { id: 'pay_1', status: 'inactive' }, run: { meta: { changes: 1 } } });
+    const res = await onRequestPatch(patchCtx(db) as never);
+
+    expect(res.status).toBe(409);
+    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 });

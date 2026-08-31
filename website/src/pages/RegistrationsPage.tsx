@@ -55,7 +55,7 @@ interface SortState {
   dir: SortDir;
 }
 
-type SubStatus = 'paid' | 'setup' | 'outstanding' | 'cancelled';
+type SubStatus = 'paid' | 'paying' | 'setup' | 'outstanding' | 'cancelled';
 
 interface SubStatusInfo {
   status: SubStatus;
@@ -63,16 +63,27 @@ interface SubStatusInfo {
   color: string;
 }
 
+/**
+ * `row.paymentStatus` is the token /api/my-registrations collapses a
+ * registration's payment rows into; the canonical list of the underlying
+ * database statuses lives in functions/lib/payment-status.ts.
+ *
+ * Green means the season is paid for and nothing more is owed. Blue means a
+ * Direct Debit is collecting without error, which is the state a treasurer
+ * needs to tell apart from a finished one.
+ */
 function getSubscriptionStatus(row: RegistrationRow): SubStatusInfo {
   switch (row.paymentStatus) {
-    case 'active':
+    case 'completed':
     // A manual admin override is a paid player — identical badge, so filtering,
     // sorting and the export all treat them the same. Only the admin table adds
     // a marker showing who overrode it.
     case 'manual':
-      return { status: 'paid', label: 'Paid', color: 'green' };
+      return { status: 'paid', label: 'Paid in full', color: 'green' };
+    case 'active':
+      return { status: 'paying', label: 'Paying', color: 'blue' };
     case 'pending':
-      return { status: 'setup', label: 'Mandate set up', color: 'blue' };
+      return { status: 'setup', label: 'Mandate set up', color: 'cyan' };
     case 'inactive':
       return { status: 'cancelled', label: 'Cancelled', color: 'red' };
     default:
@@ -284,9 +295,10 @@ interface ManualPaymentProps {
 
 /**
  * Mirrors the rule enforced by POST /api/admin/manual-payment: a registration
- * with a live GoCardless mandate ('pending') or subscription ('active') can
- * never be overridden, because deactivating a payment does not stop GoCardless
- * collecting. Hiding the button there keeps admins from meeting the 409.
+ * with a live GoCardless mandate ('pending'), a live subscription ('active') or
+ * a plan already collected in full ('completed') can never be overridden —
+ * deactivating a payment does not stop GoCardless collecting, and a finished
+ * plan is paid already. Hiding the button keeps admins from meeting the 409.
  */
 function ManualPaymentAction({ row, busyId, onMark, onUnmark }: ManualPaymentProps & { row: RegistrationRow }) {
   const busy = busyId === row.registrationId;
@@ -301,7 +313,13 @@ function ManualPaymentAction({ row, busyId, onMark, onUnmark }: ManualPaymentPro
     );
   }
 
-  if (row.paymentStatus === 'active' || row.paymentStatus === 'pending') return null;
+  // Nothing to override for a player who is already paying or already paid —
+  // api/admin/manual-payment.ts rejects all three with a 409.
+  if (
+    row.paymentStatus === 'active' ||
+    row.paymentStatus === 'completed' ||
+    row.paymentStatus === 'pending'
+  ) return null;
 
   return (
     <Tooltip label="Record this player as paid outside GoCardless — cash, bank transfer, sponsored place" withArrow multiline w={240}>
@@ -495,7 +513,8 @@ function ClubFilterBar({ rows, filters, onChange }: ClubFilterBarProps) {
 
   const subscriptionOptions: { value: string; label: string }[] = [
     { value: ALL, label: 'All subscriptions' },
-    { value: 'paid', label: 'Paid' },
+    { value: 'paid', label: 'Paid in full' },
+    { value: 'paying', label: 'Paying' },
     { value: 'setup', label: 'Mandate set up' },
     { value: 'outstanding', label: 'Outstanding' },
     { value: 'cancelled', label: 'Cancelled' },
@@ -980,8 +999,8 @@ export function RegistrationsPage() {
             {manualError && <Alert color="red" variant="light">{manualError}</Alert>}
             <Text size="sm">
               Mark <strong>{pendingManual.fanId}</strong> ({pendingManual.teamName}) as
-              paid up for subs? They will show as <strong>Paid</strong> and will not be
-              asked to set up a Direct Debit.
+              paid up for subs? They will show as <strong>Paid in full</strong> and will
+              not be asked to set up a Direct Debit.
             </Text>
             <Textarea
               label="Note (optional)"

@@ -161,9 +161,32 @@ describe('onRequestGet', () => {
 
     const [personalSql, clubSql] = (db.prepare as any).mock.calls.map((c: unknown[]) => c[0] as string);
     const manualBranch = `WHEN SUM(CASE WHEN pp.status = 'manual' THEN 1 ELSE 0 END) > 0 THEN`;
-    // The player sees a manually-paid registration as an ordinary active one.
-    expect(personalSql).toContain(`${manualBranch} 'active'`);
+    // The player sees a manually-paid registration as paid in full, not as one
+    // still collecting — 'active' now badges as "Paying".
+    expect(personalSql).toContain(`${manualBranch} 'completed'`);
     expect(clubSql).toContain(`${manualBranch} 'manual'`);
+  });
+
+  it('ranks a live subscription above a finished one, and both above a spent mandate', async () => {
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
+    const ctx = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+    await onRequestGet(ctx as any);
+
+    const [personalSql] = (db.prepare as any).mock.calls.map((c: unknown[]) => c[0] as string);
+    const order = ['active', 'completed', 'manual', 'mandate_only'].map((s) =>
+      personalSql.indexOf(`pp.status = '${s}'`),
+    );
+    expect(order.every((i) => i >= 0)).toBe(true);
+    // Registrations are reused across seasons, so last season's completed plan
+    // must not outrank this season's live subscription.
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(personalSql.indexOf(`COUNT(pp.id) > 0 THEN 'inactive'`)).toBeGreaterThan(
+      order[order.length - 1],
+    );
   });
 
   it('admin scope: club field is an array even when empty', async () => {

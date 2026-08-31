@@ -58,6 +58,20 @@ const samplePayment2 = {
   updatedAt: 1700000001000,
 };
 
+/** A count-limited plan that collected every payment: paid in full. */
+const completedPayment = {
+  id: 'pay-4',
+  registrationId: 'reg-4',
+  fanId: '55555',
+  teamName: 'Under 14s',
+  reference: 'UNDER14S-55555-SUBS-DONE1234',
+  mandateId: 'MD999',
+  subscriptionId: 'SB999',
+  status: 'completed',
+  createdAt: 1700000003000,
+  updatedAt: 1700000003000,
+};
+
 /** An admin override for a player paying outside GoCardless — no mandate. */
 const manualPayment = {
   id: 'pay-3',
@@ -109,7 +123,7 @@ describe('PaymentRecordsTab', () => {
     expect(screen.getByText('Under 10s')).toBeTruthy();
   });
 
-  it('shows Active badge for active payment', async () => {
+  it('shows Paying badge for an active subscription', async () => {
     mockFetch.mockImplementation(async () => ({
       ok: true,
       json: async () => ({ payments: [samplePayment] }),
@@ -121,8 +135,44 @@ describe('PaymentRecordsTab', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Active')).toBeTruthy();
+      expect(screen.getByText('Paying')).toBeTruthy();
     });
+  });
+
+  it('shows Paid in full badge for a plan that collected every payment', async () => {
+    // Green is reserved for money fully collected, so a finished plan and a
+    // part-way subscription no longer read the same.
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [completedPayment] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Paid in full')).toBeTruthy();
+    });
+    expect(screen.queryByText('Paying')).toBeNull();
+  });
+
+  it('offers no Deactivate button for a plan paid in full', async () => {
+    // PATCH returns 409 for it — dropping the marker would put a paid-up player
+    // back in front of the mandate flow.
+    mockFetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ payments: [completedPayment] }),
+    }));
+
+    renderWithMantine(
+      <PaymentRecordsTab clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    await waitFor(() => expect(screen.getByText('Paid in full')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /Deactivate/i })).toBeNull();
   });
 
   it('shows Mandate only badge for mandate_only payment', async () => {
@@ -245,11 +295,11 @@ describe('PaymentRecordsTab', () => {
       expect(screen.getByText('12345')).toBeTruthy();
     });
 
-    // Select "Active" in the status filter (use role='option' to target dropdown, not the badge)
+    // Select "Paying" in the status filter (use role='option' to target dropdown, not the badge)
     const statusSelect = screen.getByRole('combobox', { name: /filter by status/i });
     fireEvent.click(statusSelect);
     await waitFor(() => {
-      const option = screen.queryByRole('option', { name: 'Active' });
+      const option = screen.queryByRole('option', { name: 'Paying' });
       if (option) fireEvent.click(option);
     });
 

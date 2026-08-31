@@ -2,8 +2,28 @@ import { ensureTables } from '../../../lib/ensure-tables';
 import type { Env } from '../../../lib/api-helpers';
 import { createGoCardlessLink } from '../../../lib/gocardless-link';
 import { getPostHog, clubGroups } from '../../../lib/posthog';
+import { SETTLED_STATUSES } from '../../../lib/payment-status';
 
 const ALLOWED_TYPES = new Set(['SUBS']);
+
+/**
+ * Which "already sorted" status wins when a registration carries several rows,
+ * and what the selection page calls it. A live subscription outranks a finished
+ * one so the pill describes what is happening now; a manual override ranks
+ * lowest because it has no GoCardless subscription behind it, and badging one
+ * "Subscription active" would tell the player something untrue.
+ */
+const SETTLED_STATUS_RANK: Record<string, number> = {
+  active: 3,
+  completed: 2,
+  manual: 1,
+};
+
+const SETTLED_STATUS_LABEL: Record<string, string> = {
+  active: 'Subscription active',
+  completed: 'Paid in full',
+  manual: 'Manually paid',
+};
 
 type RegistrationRow = {
   registrationId: string;
@@ -127,15 +147,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return selectionPage(env.DB, clubSlug, fanId, registrations, origin, paymentType);
   }
 
-  // 'manual' is an admin override for a player who pays outside GoCardless —
-  // they are paid up, so never send them into the mandate flow.
+  // Anything already collecting or already paid means the player is sorted, so
+  // never send them into the mandate flow again. 'completed' is the one that
+  // bites: a plan that has collected in full would otherwise be charged twice.
   const existingPayment = await env.DB
     .prepare(
       `SELECT reference FROM "player_payment"
-        WHERE registrationId = ? AND status IN ('active', 'manual')
+        WHERE registrationId = ?
+          AND status IN (${SETTLED_STATUSES.map(() => '?').join(', ')})
         LIMIT 1`
     )
-    .bind(registration.registrationId)
+    .bind(registration.registrationId, ...SETTLED_STATUSES)
     .first<{ reference: string }>();
 
   if (existingPayment?.reference) {
@@ -225,14 +247,14 @@ async function selectionPage(
     .bind(...registrations.map(r => r.registrationId))
     .all<{ registrationId: string; status: string }>();
 
-  // Both statuses mean "paid", so both disable the card. They are kept apart
-  // because a manual override has no GoCardless subscription behind it —
-  // badging one "Subscription active" would tell the player something untrue.
+  // Every settled status disables the card; SETTLED_STATUS_RANK decides which
+  // one the pill describes when a registration carries more than one row.
   const paidStatusByRegistration = new Map<string, string>();
   for (const p of existingPayments) {
-    if (p.status !== 'active' && p.status !== 'manual') continue;
-    // 'active' wins if a registration somehow carries both.
-    if (p.status === 'active' || !paidStatusByRegistration.has(p.registrationId)) {
+    const rank = SETTLED_STATUS_RANK[p.status];
+    if (rank === undefined) continue;
+    const current = paidStatusByRegistration.get(p.registrationId);
+    if (current === undefined || rank > SETTLED_STATUS_RANK[current]) {
       paidStatusByRegistration.set(p.registrationId, p.status);
     }
   }
@@ -240,8 +262,8 @@ async function selectionPage(
   const cards = registrations.map(r => {
     const hasLevel = r.levelId != null && r.yearlyPriceInPence != null;
     const paidStatus = paidStatusByRegistration.get(r.registrationId);
-    const isActive = paidStatus != null;
-    const href = (hasLevel && !isActive)
+    const isSettled = paidStatus != null;
+    const href = (hasLevel && !isSettled)
       ? `${origin}/${clubSlug}/payments/${paymentType}/${fanId}?reg=${encodeURIComponent(r.registrationId)}`
       : null;
 
@@ -256,18 +278,18 @@ async function selectionPage(
       : null;
 
     return `
-    <div class="card${(hasLevel && !isActive) ? '' : ' card--disabled'}">
+    <div class="card${(hasLevel && !isSettled) ? '' : ' card--disabled'}">
       <div class="card-body">
         <div class="card-team">${escHtml(r.teamName)}</div>
         ${amountText
           ? `<div class="card-amount">${escHtml(amountText)}</div>`
           : `<div class="card-no-level">No subscription level assigned — contact your club admin</div>`
         }
-        ${isActive ? `<span class="badge-active">${paidStatus === 'manual' ? 'Manually paid' : 'Subscription active'}</span>` : ''}
+        ${isSettled ? `<span class="badge-active">${SETTLED_STATUS_LABEL[paidStatus!]}</span>` : ''}
       </div>
       ${href
         ? `<a class="btn" href="${escAttr(href)}">Set up payment</a>`
-        : `<span class="btn btn--disabled">${isActive ? 'Already set up' : 'Set up payment'}</span>`
+        : `<span class="btn btn--disabled">${isSettled ? 'Already set up' : 'Set up payment'}</span>`
       }
     </div>`;
   }).join('');

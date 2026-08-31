@@ -9,6 +9,10 @@ import {
   fetchNextPossibleChargeDate,
 } from '../../lib/gocardless-link';
 import { buildDbReference } from '../../lib/payment-reference';
+import {
+  PAID_IN_FULL_STATUSES,
+  subscriptionStatusToPaymentStatus,
+} from '../../lib/payment-status';
 
 /**
  * Inserts or updates a player_payment record for a completed GoCardless flow.
@@ -34,7 +38,7 @@ async function upsertPaymentRecord(
     billingRequestId: string;
     mandateId: string;
     subscriptionId: string | null;
-    status: 'active' | 'mandate_only';
+    status: 'active' | 'completed' | 'mandate_only';
   }
 ): Promise<void> {
   if (!clubSlug || !registrationId) return;
@@ -52,7 +56,14 @@ async function upsertPaymentRecord(
        ON CONFLICT(clubSlug, reference) DO UPDATE SET
          mandateId      = excluded.mandateId,
          subscriptionId = COALESCE(excluded.subscriptionId, subscriptionId),
-         status         = excluded.status,
+         -- A row that has paid the season in full stays that way. A replay
+         -- long after the plan completed would otherwise write it back to
+         -- 'active' and re-open the mandate flow to a paid-up player.
+         status         = CASE
+                            WHEN "player_payment".status IN (${PAID_IN_FULL_STATUSES.map(() => '?').join(', ')})
+                            THEN "player_payment".status
+                            ELSE excluded.status
+                          END,
          updatedAt      = excluded.updatedAt`
     )
     .bind(
@@ -65,6 +76,7 @@ async function upsertPaymentRecord(
       status,
       now,
       now,
+      ...PAID_IN_FULL_STATUSES,
     )
     .run();
 }
@@ -296,7 +308,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         await upsertPaymentRecord(env.DB, {
           clubSlug, registrationId, reference, billingRequestId,
           mandateId, subscriptionId: match.id,
-          status: 'active',
+          // The finder above only skips subscriptions that will never collect,
+          // so a 'finished' one — the plan already paid in full — matches here.
+          status: subscriptionStatusToPaymentStatus(match.status),
         });
       } catch (e) {
         console.error('Failed to upsert payment record (existing sub):', e);
