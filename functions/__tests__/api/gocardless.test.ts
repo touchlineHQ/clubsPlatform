@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
 import { makeContext, makeDb, makeEnv, managerSession, getReq, postReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -336,6 +336,38 @@ describe('GET /api/gocardless/confirm', () => {
     const location = res.headers.get('location') ?? '';
     expect(location).toContain('/payment-success');
     expect(location).toContain('existing=1');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('records a reused finished subscription as paid in full, not active', async () => {
+    // The finder only skips subscriptions that will never collect, so a
+    // 'finished' one matches — and it means the plan is already paid in full.
+    const existingSub = {
+      id: 'SUB-DONE',
+      status: 'finished',
+      metadata: { reference: 'REF-1' },
+      links: { mandate: 'MND-1' },
+    };
+    const fetchMock = makeFetchMock({ existingSubscriptions: [existingSub] });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const db = makeDb({ first: defaultPricingRow, run: { meta: { changes: 1 } } });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+    const ctx = makeContext(new Request(makeConfirmUrl()), { env });
+
+    await confirmOnRequestGet(ctx as any);
+
+    const prepare = db.prepare as Mock;
+    const upsertIdx = prepare.mock.calls.findIndex(
+      (c: unknown[]) => String(c[0]).includes('INSERT INTO "player_payment"'),
+    );
+    expect(upsertIdx).toBeGreaterThanOrEqual(0);
+    const binds = prepare.mock.results[upsertIdx].value.bind.mock.calls[0] ?? [];
+    expect(binds).toContain('completed');
+    expect(binds).not.toContain('active');
+    // ...and the upsert itself refuses to write a terminal row back down.
+    expect(String(prepare.mock.calls[upsertIdx][0])).toContain('ELSE excluded.status');
 
     vi.unstubAllGlobals();
   });
@@ -1121,6 +1153,79 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     expect(html).not.toContain('Subscription active');
     expect(html).toContain('Already set up');
     expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
+
+  it('never re-offers the mandate flow to a player whose plan collected in full', async () => {
+    // The double-charge case: 'finished' used to land as 'inactive', which this
+    // short-circuit ignored, so a paid-up player could be charged again.
+    const db = makeDb({
+      first: [{ slug: 'test-club' }, { reference: 'REF-SUB-DONE1234' }],
+      all: [[sampleRegistration]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location') ?? '').toContain('existing=1');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+
+    const lookup = (db.prepare as Mock).mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .find((sql) => sql.includes('SELECT reference FROM "player_payment"'));
+    expect(lookup).toBeDefined();
+    const lookupIdx = (db.prepare as Mock).mock.calls.findIndex(
+      (c: unknown[]) => String(c[0]) === lookup,
+    );
+    const binds = (db.prepare as Mock).mock.results[lookupIdx].value.bind.mock.calls[0] ?? [];
+    // mandate_only is deliberately absent — nothing has been collected there,
+    // so those players still need to finish the flow.
+    expect(binds).toEqual(['reg_1', 'active', 'completed', 'manual']);
+  });
+
+  it('badges a completed plan as "Paid in full" and disables the card', async () => {
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [[sampleRegistration, reg2], [{ registrationId: 'reg_1', status: 'completed' }]],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const res = await paymentRedirectOnRequestGet(ctx as any);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain('Paid in full');
+    expect(html).not.toContain('Subscription active');
+    expect(html).toContain('Already set up');
+    expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+  });
+
+  it('describes a live subscription rather than a finished one when both exist', async () => {
+    const db = makeDb({
+      first: { slug: 'test-club' },
+      all: [
+        [sampleRegistration, reg2],
+        [
+          { registrationId: 'reg_1', status: 'completed' },
+          { registrationId: 'reg_1', status: 'active' },
+        ],
+      ],
+    });
+    const env = makeEnv({ DB: db as any });
+    const ctx = makeContext(
+      new Request('https://example.com/test-club/payments/SUBS/FAN001'),
+      { env, params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' } },
+    );
+
+    const html = await (await paymentRedirectOnRequestGet(ctx as any)).text();
+    expect(html).toContain('Subscription active');
+    expect(html).not.toContain('Paid in full');
   });
 });
 

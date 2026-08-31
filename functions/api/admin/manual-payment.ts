@@ -2,6 +2,7 @@ import { ensureTables } from '../../lib/ensure-tables';
 import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../../lib/api-helpers';
 import { getPostHog } from '../../lib/posthog';
 import { writeAuditLog } from '../../lib/audit-log';
+import { GC_BLOCKING_STATUSES } from '../../lib/payment-status';
 
 /**
  * Manual payment override — an admin ticking a registration as paid for players
@@ -21,9 +22,6 @@ import { writeAuditLog } from '../../lib/audit-log';
  * `<reference>-________` dedupe match.
  */
 
-/** Statuses that mean GoCardless is still holding a live mandate or subscription. */
-const LIVE_GC_STATUSES = ['active', 'mandate_only'];
-
 interface RegistrationRow {
   registrationId: string;
   teamName: string;
@@ -39,6 +37,15 @@ interface RegistrationRow {
 function manualReference(teamName: string, fanId: string): string {
   return `MANUAL-${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-SUBS`;
 }
+
+/** Prevent a webhook-completed GoCardless row and a manual override coexisting. */
+const NO_COMPLETED_GC_PAYMENT_SQL = `NOT EXISTS (
+  SELECT 1 FROM "player_payment" AS gc
+   WHERE gc.registrationId = ?
+     AND gc.clubSlug = ?
+     AND gc.status = 'completed'
+     AND gc.mandateId != ''
+)`;
 
 /**
  * Load a registration's basic details for creating a manual payment reference.
@@ -64,8 +71,8 @@ async function loadRegistration(
  * POST handler — marks a registration's subscription as manually paid.
  *
  * Creates or updates a player_payment row with status 'manual' for players who pay
- * outside GoCardless. Returns 409 if a live GoCardless payment already exists or
- * if the registration is already marked as paid.
+ * outside GoCardless. Returns 409 if a live or fully-paid GoCardless payment
+ * already exists, or if the registration is already marked as paid.
  */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
@@ -90,25 +97,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // subscription: the platform would show the player as paid up while
   // GoCardless carried on collecting. Deactivating the payment is not a way
   // around this — that only updates our DB, it does not cancel at GoCardless.
-  const liveGcPayment = await context.env.DB
+  // A completed plan is blocked too: the player has already paid in full.
+  const gcPayment = await context.env.DB
     .prepare(
       `SELECT id, status FROM "player_payment"
         WHERE registrationId = ?
           AND clubSlug = ?
-          AND status IN (${LIVE_GC_STATUSES.map(() => '?').join(',')})
+          AND status IN (${GC_BLOCKING_STATUSES.map(() => '?').join(',')})
           AND mandateId != ''
         LIMIT 1`
     )
-    .bind(body.registrationId, clubSlug, ...LIVE_GC_STATUSES)
+    .bind(body.registrationId, clubSlug, ...GC_BLOCKING_STATUSES)
     .first<{ id: string; status: string }>();
 
-  if (liveGcPayment) {
+  if (gcPayment) {
     return json(
       {
         error:
-          'This registration has a live GoCardless payment — a manual override '
-          + 'cannot be applied while it is in place.',
-        status: liveGcPayment.status,
+          gcPayment.status === 'completed'
+            ? 'This registration has already been paid in full through GoCardless.'
+            : 'This registration has a live GoCardless payment — a manual override '
+              + 'cannot be applied while it is in place.',
+        status: gcPayment.status,
       },
       { status: 409 },
     );
@@ -142,11 +152,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let oldStatus: string | null;
 
   // Both writes below are conditional, and a no-op means a concurrent request
-  // got there first. The read above cannot stand in for that: two admins
-  // marking the same player at once would otherwise both see the pre-state,
-  // both write 'manual', and both write an audit event — or, with no row to
-  // reuse, the second insert would break UNIQUE(clubSlug, reference) and 500
-  // instead of returning the documented 409.
+  // or GoCardless webhook got there first. The reads above cannot stand in for
+  // that: two admins marking the same player at once would otherwise both see
+  // the pre-state, both write 'manual', and both write an audit event — or,
+  // with no row to reuse, the second insert would break UNIQUE(clubSlug,
+  // reference) and 500 instead of returning the documented 409. The NOT EXISTS
+  // predicate also closes the window for a webhook to mark a GC row completed.
   if (existing) {
     // Re-marking after an undo — reuse the registration's own manual row.
     paymentId = existing.id;
@@ -155,9 +166,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .prepare(
         `UPDATE "player_payment"
             SET reference = ?, status = 'manual', updatedAt = ?
-          WHERE id = ? AND status != 'manual'`
+          WHERE id = ? AND status != 'manual'
+            AND ${NO_COMPLETED_GC_PAYMENT_SQL}`
       )
-      .bind(reference, now, paymentId)
+      .bind(reference, now, paymentId, body.registrationId, clubSlug)
       .run();
     if (update.meta.changes === 0) {
       return json({ error: 'Already marked as paid' }, { status: 409 });
@@ -170,10 +182,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         `INSERT INTO "player_payment"
            (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
             status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, '', NULL, 'manual', ?, ?)
+         SELECT ?, ?, ?, ?, '', NULL, 'manual', ?, ?
+          WHERE ${NO_COMPLETED_GC_PAYMENT_SQL}
          ON CONFLICT(clubSlug, reference) DO NOTHING`
       )
-      .bind(paymentId, clubSlug, body.registrationId, reference, now, now)
+      .bind(
+        paymentId,
+        clubSlug,
+        body.registrationId,
+        reference,
+        now,
+        now,
+        body.registrationId,
+        clubSlug,
+      )
       .run();
     if (insert.meta.changes === 0) {
       return json({ error: 'Already marked as paid' }, { status: 409 });

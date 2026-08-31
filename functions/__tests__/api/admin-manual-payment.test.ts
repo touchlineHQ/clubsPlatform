@@ -121,6 +121,17 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
+  it('returns 409 when the plan already collected in full', async () => {
+    const db = makeDb({ first: [REGISTRATION, { id: 'pay_1', status: 'completed' }] });
+    const res = await onRequestPost(markPaidCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/already been paid in full/);
+    expect(body.status).toBe('completed');
+    expect(writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it('scopes the guard to rows with a real mandate, so cancelled ones do not block', async () => {
     const db = makeDb({ first: [REGISTRATION, null, null] });
     await onRequestPost(markPaidCtx(db) as any);
@@ -128,7 +139,9 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     const guard = findSql(db, `mandateId != ''`);
     expect(guard).toBeDefined();
     expect(guard!.sql).toContain('status IN');
-    expect(guard!.bindings).toEqual(['reg_1', 'test-club', 'active', 'mandate_only']);
+    expect(guard!.bindings).toEqual([
+      'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
+    ]);
   });
 });
 
@@ -153,6 +166,9 @@ describe('onRequestPost — marking as paid', () => {
     expect(insert!.bindings[1]).toBe('test-club');
     expect(insert!.bindings[2]).toBe('reg_1');
     expect(insert!.bindings[3]).toBe(MANUAL_REFERENCE);
+    expect(insert!.sql).toContain(`gc.status = 'completed'`);
+    expect(insert!.sql).toContain(`gc.mandateId != ''`);
+    expect(insert!.bindings.slice(-2)).toEqual(['reg_1', 'test-club']);
   });
 
   it('records the acting admin in the audit log, with the note trimmed', async () => {
@@ -197,6 +213,9 @@ describe('onRequestPost — marking as paid', () => {
     const update = findSql(db, `SET reference = ?, status = 'manual'`);
     expect(update).toBeDefined();
     expect(update!.bindings[0]).toBe(MANUAL_REFERENCE);
+    expect(update!.sql).toContain(`gc.status = 'completed'`);
+    expect(update!.sql).toContain(`gc.mandateId != ''`);
+    expect(update!.bindings.slice(-2)).toEqual(['reg_1', 'test-club']);
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ targetId: 'pay_old', oldStatus: 'inactive', newStatus: 'manual' }),

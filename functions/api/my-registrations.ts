@@ -22,17 +22,31 @@ interface RegistrationRow {
  * Collapses a registration's player_payment rows into the single status the UI
  * shows.
  *
+ * Ordered most-live-first:
+ *
+ * - `active` stays top. Registrations are reused across seasons (they are
+ *   unique on club + player + team), so a player carrying last season's
+ *   completed plan alongside this season's live subscription is *currently
+ *   paying*, and that is the more useful fact.
+ * - `completed` (every payment of a count-limited plan collected) outranks
+ *   `mandate_only` and `inactive`: an abandoned setup attempt or a spent
+ *   mandate sitting beside a finished plan must not mask "paid in full".
+ * - `completed` outranks `manual` because the GoCardless record is the stronger
+ *   evidence. New overlaps are blocked by api/admin/manual-payment.ts, so this
+ *   only decides legacy rows.
+ *
  * `manual` is an admin override (see api/admin/manual-payment.ts). Player-facing
- * responses fold it into `active`, so a manually-paid player is indistinguishable
- * from a Direct Debit payer — the ticket asks for them to "show as fully paid up".
- * The admin response keeps it distinct so the override, and who made it, stays
- * visible to the club.
+ * responses fold it into `completed`, so a manually-paid player is
+ * indistinguishable from someone who has paid GoCardless in full — the ticket
+ * asks for them to "show as fully paid up". The admin response keeps it distinct
+ * so the override, and who made it, stays visible to the club.
  */
 function paymentStatusSubquery(distinguishManual: boolean): string {
-  const manualBranch = distinguishManual ? `'manual'` : `'active'`;
+  const manualBranch = distinguishManual ? `'manual'` : `'completed'`;
   return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
+    WHEN SUM(CASE WHEN pp.status = 'completed' THEN 1 ELSE 0 END) > 0 THEN 'completed'
     WHEN SUM(CASE WHEN pp.status = 'manual' THEN 1 ELSE 0 END) > 0 THEN ${manualBranch}
     WHEN SUM(CASE WHEN pp.status = 'mandate_only' THEN 1 ELSE 0 END) > 0 THEN 'pending'
     WHEN COUNT(pp.id) > 0 THEN 'inactive'
@@ -110,7 +124,8 @@ async function attachManualAttribution(
  *
  * Returns personal registrations (linked to the user) and, for admins, all club
  * registrations with manual payment attribution when applicable. Manual payment
- * status is collapsed to 'active' for personal queries and kept distinct for admins.
+ * status is collapsed to 'completed' for personal queries and kept distinct for
+ * admins.
  */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);

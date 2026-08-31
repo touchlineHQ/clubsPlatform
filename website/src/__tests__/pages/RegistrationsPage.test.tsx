@@ -203,12 +203,12 @@ describe('RegistrationsPage', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
     }
 
-    it('shows a manually paid registration as Paid, with a marker for the admin', async () => {
+    it('shows a manually paid registration as Paid in full, with a marker for the admin', async () => {
       await renderClubTab([manualRow]);
 
-      // Scoped to the table — "Paid" is also a filter option.
+      // Scoped to the table — "Paid in full" is also a filter option.
       const table = within(document.querySelector('table')!);
-      expect(table.getByText('Paid')).toBeTruthy();
+      expect(table.getByText('Paid in full')).toBeTruthy();
       expect(document.querySelector('[aria-label="Manually marked as paid"]')).toBeTruthy();
     });
 
@@ -223,18 +223,56 @@ describe('RegistrationsPage', () => {
         clubValue: mockSingleClub,
       });
 
-      await waitFor(() => expect(screen.getByText('Paid')).toBeTruthy());
+      await waitFor(() => expect(screen.getByText('Paid in full')).toBeTruthy());
       expect(document.querySelector('[aria-label="Manually marked as paid"]')).toBeNull();
       expect(screen.queryByRole('button', { name: /Mark as paid/i })).toBeNull();
     });
 
     it.each([
       ['active', 'a live subscription'],
+      ['completed', 'a plan collected in full'],
       ['pending', 'a live mandate'],
     ])('offers no override for %s — %s cannot be overridden', async (paymentStatus) => {
       await renderClubTab([{ ...outstandingRow, paymentStatus }]);
       expect(screen.queryByRole('button', { name: /Mark as paid/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /Undo paid/i })).toBeNull();
+    });
+
+    it.each([
+      ['completed', 'Paid in full'],
+      ['active', 'Paying'],
+      ['pending', 'Mandate set up'],
+      ['inactive', 'Cancelled'],
+      [null, 'Outstanding'],
+    ])('badges %s as "%s"', async (paymentStatus, label) => {
+      // The whole point of the change: a plan collected in full must not read
+      // the same as one that stopped early, nor as one still collecting.
+      await renderClubTab([{ ...outstandingRow, paymentStatus }]);
+      expect(within(document.querySelector('table')!).getByText(label)).toBeTruthy();
+    });
+
+    it('separates a finished plan from one still collecting in the filter', async () => {
+      await renderClubTab([
+        { ...outstandingRow, registrationId: 'reg_done', fanId: 'FAN-DONE', paymentStatus: 'completed' },
+        { ...outstandingRow, registrationId: 'reg_live', fanId: 'FAN-LIVE', paymentStatus: 'active' },
+      ]);
+
+      fireEvent.click(screen.getByRole('combobox', { name: /filter by subscription/i }));
+      // The click has to happen inside the retry callback: Mantine closes the
+      // dropdown a tick after it opens, so the option is gone by the time a
+      // resolved waitFor hands control back. It still fires exactly once —
+      // earlier attempts throw at the expect above it.
+      await waitFor(() => {
+        const option = screen.queryByRole('option', { name: 'Paying' });
+        expect(option).toBeTruthy();
+        fireEvent.click(option!);
+      });
+
+      await waitFor(() => {
+        const table = within(document.querySelector('table')!);
+        expect(table.getByText('FAN-LIVE')).toBeTruthy();
+        expect(table.queryByText('FAN-DONE')).toBeNull();
+      });
     });
 
     it('offers the override for a cancelled payment', async () => {

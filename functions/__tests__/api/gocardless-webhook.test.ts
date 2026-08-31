@@ -181,6 +181,83 @@ describe('POST /api/gocardless/webhook', () => {
     expect(updateCalls[0].binds).toEqual(expect.arrayContaining(['SUB-1']));
   });
 
+  it('marks player_payment completed when a subscriptions.finished event arrives', async () => {
+    // 'finished' is GoCardless saying the count-limited plan collected every
+    // payment it was created with, i.e. the player has paid in full. Sharing
+    // 'inactive' with a genuine cancellation is what badged them "Cancelled".
+    const body = JSON.stringify({
+      events: [
+        {
+          id: 'EV-sub-done',
+          resource_type: 'subscriptions',
+          action: 'finished',
+          links: { subscription: 'SUB-DONE' },
+        },
+      ],
+    });
+    const { db, updateCalls } = makeWebhookDb();
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const ctx = makeContext(makeWebhookReq(body, sig), { env });
+
+    const res = await webhookOnRequestPost(ctx as any);
+    expect(res.status).toBe(204);
+    expect(updateCalls.length).toBe(1);
+    expect(updateCalls[0].binds).toEqual(expect.arrayContaining(['completed', 'SUB-DONE']));
+    expect(updateCalls[0].binds).not.toContain('inactive');
+  });
+
+  it.each([
+    ['mandates', 'cancelled', { mandate: 'MND-1' }],
+    ['mandates', 'expired', { mandate: 'MND-1' }],
+    ['mandates', 'consumed', { mandate: 'MND-1' }],
+    ['subscriptions', 'cancelled', { subscription: 'SUB-1' }],
+  ])('guards a paid-in-full row against %s.%s', async (resourceType, action, links) => {
+    // A payer who has finished their plan normally cancels the Direct Debit
+    // afterwards. That must not undo "paid in full".
+    const body = JSON.stringify({
+      events: [{ id: `EV-${resourceType}-${action}`, resource_type: resourceType, action, links }],
+    });
+    const { db, updateCalls } = makeWebhookDb();
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const ctx = makeContext(makeWebhookReq(body, sig), { env });
+
+    await webhookOnRequestPost(ctx as any);
+    expect(updateCalls.length).toBe(1);
+    expect(updateCalls[0].sql).toContain(`status NOT IN ('completed', 'manual')`);
+    // 'inactive' stays reachable: GoCardless does not order its events, so a
+    // mandates.consumed landing first must still be able to reach 'completed'.
+    expect(updateCalls[0].sql).not.toContain(`'inactive'`);
+  });
+
+  it.each(['created', 'customer_approval_granted', 'payment_created'])(
+    'does not reactivate a row on subscriptions.%s',
+    async (action) => {
+      const body = JSON.stringify({
+        events: [
+          {
+            id: `EV-sub-${action}`,
+            resource_type: 'subscriptions',
+            action,
+            links: { subscription: 'SUB-1' },
+          },
+        ],
+      });
+      const { db, updateCalls, insertCalls } = makeWebhookDb();
+      const env = makeEnv({ DB: db as any });
+      const sig = await hmacHex(TEST_SECRET, body);
+      const ctx = makeContext(makeWebhookReq(body, sig), { env });
+
+      const res = await webhookOnRequestPost(ctx as any);
+      expect(res.status).toBe(204);
+      // These arrive throughout the life of a subscription — writing 'active'
+      // would resurrect a row an admin had just deactivated.
+      expect(updateCalls.length).toBe(0);
+      expect(insertCalls.length).toBe(1);
+    },
+  );
+
   it('is idempotent — does not re-apply effects when the same event id is received twice', async () => {
     const body = JSON.stringify({
       events: [

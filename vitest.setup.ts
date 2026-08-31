@@ -28,4 +28,12 @@ if (typeof window !== 'undefined') {
       disconnect() {}
     };
   }
+
+  // jsdom implements no layout, so Element.prototype.scrollIntoView is absent.
+  // Mantine's Combobox calls it from a zero-delay timer after an option is
+  // selected (use-combobox's selectActiveOption), which lands as an unhandled
+  // error outside any test and fails the whole run even when every test passes.
+  if (!Element.prototype.scrollIntoView) {
+    Element.prototype.scrollIntoView = () => {};
+  }
 }
