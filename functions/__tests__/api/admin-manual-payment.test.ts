@@ -166,6 +166,9 @@ describe('onRequestPost — marking as paid', () => {
     expect(insert!.bindings[1]).toBe('test-club');
     expect(insert!.bindings[2]).toBe('reg_1');
     expect(insert!.bindings[3]).toBe(MANUAL_REFERENCE);
+    expect(insert!.sql).toContain(`gc.status = 'completed'`);
+    expect(insert!.sql).toContain(`gc.mandateId != ''`);
+    expect(insert!.bindings.slice(-2)).toEqual(['reg_1', 'test-club']);
   });
 
   it('records the acting admin in the audit log, with the note trimmed', async () => {
@@ -210,6 +213,9 @@ describe('onRequestPost — marking as paid', () => {
     const update = findSql(db, `SET reference = ?, status = 'manual'`);
     expect(update).toBeDefined();
     expect(update!.bindings[0]).toBe(MANUAL_REFERENCE);
+    expect(update!.sql).toContain(`gc.status = 'completed'`);
+    expect(update!.sql).toContain(`gc.mandateId != ''`);
+    expect(update!.bindings.slice(-2)).toEqual(['reg_1', 'test-club']);
     expect(writeAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ targetId: 'pay_old', oldStatus: 'inactive', newStatus: 'manual' }),

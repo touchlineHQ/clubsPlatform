@@ -100,10 +100,20 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
     );
   }
 
-  await context.env.DB
-    .prepare(`UPDATE "player_payment" SET status = 'inactive', updatedAt = ? WHERE id = ? AND clubSlug = ?`)
+  const update = await context.env.DB
+    .prepare(
+      `UPDATE "player_payment"
+          SET status = 'inactive', updatedAt = ?
+        WHERE id = ? AND clubSlug = ? AND status != 'completed'`,
+    )
     .bind(nowMs(), body.id, clubSlug)
     .run();
+  if (update.meta.changes === 0) {
+    return json(
+      { error: 'This plan was paid in full and cannot be deactivated' },
+      { status: 409 },
+    );
+  }
 
   await writeAuditLog(context.env.DB, {
     clubSlug: clubSlug ?? '',

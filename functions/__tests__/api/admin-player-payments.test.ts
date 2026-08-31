@@ -397,7 +397,19 @@ describe('PATCH /api/admin/player-payments — deactivate', () => {
     const res = await onRequestPatch(patchCtx(db) as never);
 
     expect(res.status).toBe(200);
+    const updateSql = (db.prepare as Mock).mock.calls
+      .map(([sql]) => sql as string)
+      .find(sql => sql.includes(`SET status = 'inactive'`));
+    expect(updateSql).toContain(`status != 'completed'`);
     expect(writeAuditLog).toHaveBeenCalled();
+  });
+
+  it('returns 409 when the row becomes completed before the update', async () => {
+    const db = makeDb({ first: { id: 'pay_1', status: 'active' }, run: { meta: { changes: 0 } } });
+    const res = await onRequestPatch(patchCtx(db) as never);
+
+    expect(res.status).toBe(409);
+    expect(writeAuditLog).not.toHaveBeenCalled();
   });
 
   it('refuses to deactivate a plan that collected in full', async () => {

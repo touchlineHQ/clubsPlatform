@@ -38,6 +38,15 @@ function manualReference(teamName: string, fanId: string): string {
   return `MANUAL-${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-SUBS`;
 }
 
+/** Prevent a webhook-completed GoCardless row and a manual override coexisting. */
+const NO_COMPLETED_GC_PAYMENT_SQL = `NOT EXISTS (
+  SELECT 1 FROM "player_payment" AS gc
+   WHERE gc.registrationId = ?
+     AND gc.clubSlug = ?
+     AND gc.status = 'completed'
+     AND gc.mandateId != ''
+)`;
+
 /**
  * Load a registration's basic details for creating a manual payment reference.
  * Returns null if the registration doesn't exist or doesn't belong to the club.
@@ -143,11 +152,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let oldStatus: string | null;
 
   // Both writes below are conditional, and a no-op means a concurrent request
-  // got there first. The read above cannot stand in for that: two admins
-  // marking the same player at once would otherwise both see the pre-state,
-  // both write 'manual', and both write an audit event — or, with no row to
-  // reuse, the second insert would break UNIQUE(clubSlug, reference) and 500
-  // instead of returning the documented 409.
+  // or GoCardless webhook got there first. The reads above cannot stand in for
+  // that: two admins marking the same player at once would otherwise both see
+  // the pre-state, both write 'manual', and both write an audit event — or,
+  // with no row to reuse, the second insert would break UNIQUE(clubSlug,
+  // reference) and 500 instead of returning the documented 409. The NOT EXISTS
+  // predicate also closes the window for a webhook to mark a GC row completed.
   if (existing) {
     // Re-marking after an undo — reuse the registration's own manual row.
     paymentId = existing.id;
@@ -156,9 +166,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .prepare(
         `UPDATE "player_payment"
             SET reference = ?, status = 'manual', updatedAt = ?
-          WHERE id = ? AND status != 'manual'`
+          WHERE id = ? AND status != 'manual'
+            AND ${NO_COMPLETED_GC_PAYMENT_SQL}`
       )
-      .bind(reference, now, paymentId)
+      .bind(reference, now, paymentId, body.registrationId, clubSlug)
       .run();
     if (update.meta.changes === 0) {
       return json({ error: 'Already marked as paid' }, { status: 409 });
@@ -171,10 +182,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         `INSERT INTO "player_payment"
            (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
             status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, '', NULL, 'manual', ?, ?)
+         SELECT ?, ?, ?, ?, '', NULL, 'manual', ?, ?
+          WHERE ${NO_COMPLETED_GC_PAYMENT_SQL}
          ON CONFLICT(clubSlug, reference) DO NOTHING`
       )
-      .bind(paymentId, clubSlug, body.registrationId, reference, now, now)
+      .bind(
+        paymentId,
+        clubSlug,
+        body.registrationId,
+        reference,
+        now,
+        now,
+        body.registrationId,
+        clubSlug,
+      )
       .run();
     if (insert.meta.changes === 0) {
       return json({ error: 'Already marked as paid' }, { status: 409 });
