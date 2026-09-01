@@ -26,6 +26,11 @@ GC_ENVIRONMENT = "sandbox"
 # the copies in the [env.*] blocks below, not this one. Pair it with
 # POSTHOG_API_KEY in .dev.vars to send events from a local worker.
 POSTHOG_HOST = "https://p.touchlinehq.co.uk"
+# Envelope sender for transactional email (password resets, sign-up
+# verification, player-import invitations). The matching EMAIL_API_KEY is a
+# secret — see the README. getMailer() returns null unless BOTH are set, which
+# disables sending silently, exactly like POSTHOG_API_KEY.
+EMAIL_FROM = "no-reply@touchlinehq.co.uk"
 # SECRETS_ENCRYPTION_KEY must be set via Cloudflare dashboard secrets (NOT here) — 64 hex chars (32 bytes)
 # For local dev, add to .dev.vars: SECRETS_ENCRYPTION_KEY=<output of: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
 #
@@ -60,6 +65,7 @@ GC_ENVIRONMENT = "live"
 # truth for the project's vars. getPostHog() returns null unless BOTH are set,
 # which disables backend analytics silently.
 POSTHOG_HOST = "https://p.touchlinehq.co.uk"
+EMAIL_FROM = "no-reply@touchlinehq.co.uk"
 
 # ---------------------------------------------------------------------------
 # Preview environment — applied to deploys on every non-production branch
@@ -81,3 +87,4 @@ GC_ENVIRONMENT = "sandbox"
 # block overrides the top-level [vars], so anything omitted here is simply
 # absent from preview deployments.
 POSTHOG_HOST = "https://p.touchlinehq.co.uk"
+EMAIL_FROM = "no-reply@touchlinehq.co.uk"

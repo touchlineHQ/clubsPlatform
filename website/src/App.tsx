@@ -29,6 +29,8 @@ import { TeamPage } from './pages/TeamPage';
 import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
 import { SignUpPage } from './pages/SignUpPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { RegistrationsPage } from './pages/RegistrationsPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
@@ -185,6 +187,10 @@ function AppRoutes() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
+              {/* Mounted alongside /login for the same reason: someone locked
+                  out of a club that hasn't gone live still needs a way back in. */}
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>
@@ -275,6 +281,8 @@ function AppRoutes() {
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/registrations" element={
               <ProtectedRoute>
                 <RegistrationsPage />

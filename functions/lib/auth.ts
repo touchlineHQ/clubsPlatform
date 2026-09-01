@@ -1,4 +1,12 @@
 import { betterAuth } from "better-auth";
+import {
+  RESET_TOKEN_TTL_SECONDS,
+  reportEmailFailure,
+  sendResetPassword,
+  sendVerifyEmail,
+  type AccountEmailEnv,
+} from "./account-email";
+import { SIGNUP_LIMITS } from "./signup-validation";
 
 const enc = new TextEncoder();
 
@@ -42,20 +50,29 @@ export async function verifyPwd({ hash, password }: { hash: string; password: st
   }
 }
 
+export interface AuthEnv extends AccountEmailEnv {
+  DB: D1Database;
+  BETTER_AUTH_SECRET: string;
+}
+
+const DEFAULT_BASE_URL = "https://elbantams.pages.dev";
+
 /**
  * Create and configure a Better Auth instance with the database and credentials.
  * Automatically promotes the first user to admin.
  */
 export function createAuth(
-  env: { DB: D1Database; BETTER_AUTH_SECRET: string },
+  env: AuthEnv,
   opts?: { baseURL?: string }
 ) {
+  const origin = opts?.baseURL ?? DEFAULT_BASE_URL;
+
   return betterAuth({
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,
     baseURL: opts?.baseURL,
     trustedOrigins: [
-      opts?.baseURL ?? "https://elbantams.pages.dev",
+      origin,
       "https://*.clubsplatform.pages.dev",
       "http://localhost:5173",
       "http://localhost:8788",
@@ -65,6 +82,52 @@ export function createAuth(
       password: {
         hash: hashPwd,
         verify: verifyPwd,
+      },
+      // Same floor the sign-up validator enforces, so a reset cannot be used
+      // to set a password weaker than one the sign-up form would have refused.
+      minPasswordLength: SIGNUP_LIMITS.passwordMin,
+      maxPasswordLength: SIGNUP_LIMITS.passwordMax,
+      resetPasswordTokenExpiresIn: RESET_TOKEN_TTL_SECONDS,
+      // A reset is often a reaction to "someone else may be in my account", so
+      // finishing one should end every session that was already open.
+      revokeSessionsOnPasswordReset: true,
+      sendResetPassword: async ({ user, token }) => {
+        // Swallowed on purpose — see reportEmailFailure. A throw here would
+        // answer "does this account exist?" for anyone who asked.
+        try {
+          await sendResetPassword(env, {
+            origin,
+            userId: user.id,
+            email: user.email,
+            token,
+          });
+        } catch (err) {
+          await reportEmailFailure(env, err, { kind: "reset-password", userId: user.id });
+        }
+      },
+    },
+    // Deliberately not paired with `requireEmailVerification`. Every account
+    // that exists today — including every parent the FA import created — has
+    // emailVerified = 0, so gating sign-in on it would lock out the entire
+    // user base on deploy. Verification is recorded from here on; enforcing it
+    // is a follow-up that needs a backfill first.
+    emailVerification: {
+      sendOnSignUp: true,
+      autoSignInAfterVerification: true,
+      sendVerificationEmail: async ({ user, token }) => {
+        // A provider outage must not stop someone creating an account: this
+        // runs inline inside sign-up, and workerd has no background queue to
+        // defer it to.
+        try {
+          await sendVerifyEmail(env, {
+            origin,
+            userId: user.id,
+            email: user.email,
+            token,
+          });
+        } catch (err) {
+          await reportEmailFailure(env, err, { kind: "verify-email", userId: user.id });
+        }
       },
     },
     user: {

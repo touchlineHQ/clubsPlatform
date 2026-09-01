@@ -7,6 +7,19 @@ vi.mock('../../lib/auth', () => ({
   hashPwd: vi.fn(async () => 'pbkdf2$fakehash'),
 }));
 
+const mockSendImportWelcome = vi.hoisted(() => vi.fn(async () => true));
+const mockReportEmailFailure = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../lib/account-email', () => ({
+  sendImportWelcome: mockSendImportWelcome,
+  reportEmailFailure: mockReportEmailFailure,
+}));
+
+const mockCreateSetPasswordToken = vi.hoisted(() => vi.fn(async () => 'invite-token'));
+vi.mock('../../lib/set-password-token', () => ({
+  createSetPasswordToken: mockCreateSetPasswordToken,
+  INVITE_TTL_SECONDS: 7 * 24 * 60 * 60,
+}));
+
 // ─── player-registrations.ts ──────────────────────────────────────────────────
 
 import { onRequestGet as playerRegistrationsGet } from '../../api/admin/player-registrations';
@@ -336,6 +349,121 @@ describe('import-players POST', () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toMatch(/too many/i);
+  });
+});
+
+// ─── import-players.ts: set-password invitations ──────────────────────────────
+
+import { hashPwd } from '../../lib/auth';
+
+/**
+ * A CSV-imported parent never signed up, so nothing tells them the account
+ * exists. These cover the invitation that closes that gap — and the promise
+ * that a provider having a bad day cannot cost the club its import.
+ */
+describe('import-players invitations', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+    mockSendImportWelcome.mockResolvedValue(true);
+    mockCreateSetPasswordToken.mockResolvedValue('invite-token');
+  });
+
+  function importOneParent(env: Record<string, unknown> = {}) {
+    const db = makeDb({ first: null, run: { meta: { changes: 1 } }, batch: [] });
+    const req = postReq(
+      '/api/admin/import-players',
+      {
+        rows: [{
+          fanId: 'FAN010',
+          ageGroup: 'U11',
+          teamName: 'U11 Boys',
+          registrationExpiry: '2025-07-31',
+          registrationStatus: 'active',
+          playerEmail: null,
+          parentEmails: ['parent@example.com'],
+        }],
+      },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    return importPlayersPost(makeContext(req, { env: { DB: db as any, ...env } }) as any);
+  }
+
+  it('mints a token and emails a set-password link to each new account', async () => {
+    const res = await importOneParent();
+    const body = await res.json() as any;
+
+    expect(mockCreateSetPasswordToken).toHaveBeenCalledOnce();
+    expect(mockSendImportWelcome).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        clubSlug: 'test-club',
+        email: 'parent@example.com',
+        token: 'invite-token',
+      }),
+    );
+    expect(body.users.invited).toBe(1);
+    expect(body.users.inviteFailed).toBe(0);
+  });
+
+  // The FAN ID is printed on team sheets. Using it as the password handed a
+  // working credential to everyone in the age group.
+  it('never sets the placeholder password to the player\'s FAN ID', async () => {
+    await importOneParent();
+    for (const [password] of vi.mocked(hashPwd).mock.calls) {
+      expect(password).not.toBe('FAN010');
+    }
+    expect(vi.mocked(hashPwd)).toHaveBeenCalled();
+  });
+
+  it('reports zero invitations when transactional email is not configured', async () => {
+    mockSendImportWelcome.mockResolvedValue(false);
+    const body = await (await importOneParent()).json() as any;
+    expect(body.users.created).toBe(1);
+    expect(body.users.invited).toBe(0);
+    expect(body.users.inviteFailed).toBe(0);
+  });
+
+  it('records a provider failure without failing the import', async () => {
+    mockSendImportWelcome.mockRejectedValue(new Error('provider down'));
+
+    const res = await importOneParent();
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+
+    expect(body.ok).toBe(true);
+    expect(body.users.created).toBe(1);
+    expect(body.users.inviteFailed).toBe(1);
+    // The row-level error list is for data problems — the account is fine.
+    expect(body.errors).toEqual([]);
+    expect(mockReportEmailFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Error),
+      expect.objectContaining({ kind: 'import-welcome', clubSlug: 'test-club' }),
+    );
+  });
+
+  it('does not send anything when no account was created', async () => {
+    const db = makeDb({ first: null, run: { meta: { changes: 1 } }, batch: [] });
+    const req = postReq(
+      '/api/admin/import-players',
+      {
+        rows: [{
+          fanId: 'FAN011',
+          ageGroup: 'U11',
+          teamName: 'U11 Boys',
+          registrationExpiry: '2025-07-31',
+          registrationStatus: 'active',
+          playerEmail: null,
+          parentEmails: [],
+        }],
+      },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const res = await importPlayersPost(makeContext(req, { env: { DB: db as any } }) as any);
+
+    expect((await res.json() as any).users.created).toBe(0);
+    expect(mockSendImportWelcome).not.toHaveBeenCalled();
   });
 });
 
