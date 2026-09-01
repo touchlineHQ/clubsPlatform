@@ -1,4 +1,10 @@
 import { createAuth } from "./auth";
+import { isMultiClubMode, isPitchBookingsEnabled } from "./env-flags";
+
+// Re-exported so the many call sites that reach for them alongside `json` and
+// `requireAdmin` keep one import. The implementations live below `auth.ts` in
+// the import graph — see lib/env-flags.ts.
+export { isMultiClubMode, isPitchBookingsEnabled };
 
 export interface Env {
   DB: D1Database;
@@ -13,6 +19,9 @@ export interface Env {
   SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
+  EMAIL_API_KEY?: string; // transactional email provider key — Cloudflare secret
+  EMAIL_FROM?: string;
+  EMAIL_API_BASE?: string;
 }
 
 /** Create a JSON Response with the appropriate Content-Type header. */
@@ -31,18 +40,6 @@ export function nowMs(): number {
 /** Generate a random ID with the given prefix. */
 export function randomId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
-}
-
-/** Returns true when MULTI_CLUB env var is set to a truthy value. */
-export function isMultiClubMode(env: Env): boolean {
-  const v = env.MULTI_CLUB;
-  return !!(v && v !== "0" && v !== "false");
-}
-
-/** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */
-export function isPitchBookingsEnabled(env: Env): boolean {
-  const v = env.PITCH_BOOKINGS;
-  return !!(v && v !== "0" && v !== "false");
 }
 
 /** Extract the club slug sent by the frontend via X-Club-Slug header. */

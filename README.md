@@ -48,6 +48,8 @@ Set in `wrangler.toml` under `[vars]`:
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
 | `SECRETS_TRANSPORT_PUBLIC_KEY` | RSA-2048 SPKI public key sent to the browser | required for secrets |
 | `POSTHOG_HOST` | PostHog ingest host used by the Pages Functions | analytics disabled if unset |
+| `EMAIL_FROM` | Envelope sender for transactional email, on a domain verified with the provider | email disabled if unset |
+| `EMAIL_API_BASE` | Override the provider API base (tests, self-hosting) | `https://api.resend.com` |
 
 For local-only overrides without editing `wrangler.toml`, create a `.dev.vars` file (gitignored by Wrangler):
 
@@ -167,6 +169,77 @@ Two deliberate limits on how far it can go:
 No scouts (scheduled agents that comb the data on a timer) are configured. The
 error tracking source emits on its own, so a scout would add cost without
 adding coverage at this volume.
+
+## Transactional Email
+
+Password resets, sign-up verification and player-import invitations are sent
+through [Resend](https://resend.com) over its HTTP API — the Node SDK does not
+run on workerd.
+
+| Value | Where it is set |
+|-------|-----------------|
+| `EMAIL_API_KEY` | Pages **secret**, per environment. Cannot be set in the dashboard — same reason as `POSTHOG_API_KEY`. |
+| `EMAIL_FROM` | `wrangler.toml`, in **both** env blocks. |
+
+```sh
+npx wrangler pages secret put EMAIL_API_KEY --project-name clubsplatform
+npx wrangler pages secret put EMAIL_API_KEY --project-name clubsplatform --env preview
+```
+
+`getMailer()` returns `null` unless **both** `EMAIL_API_KEY` and `EMAIL_FROM`
+are set, and every call site is guarded. A missing value therefore disables
+sending silently — exactly like the PostHog pair above, and for the same
+reason: a club without mail configured should still be able to log in, import
+players and take payments. If resets stop arriving, check these first.
+
+### Mail reads as the club, not the platform
+
+A parent signed up with their club and will treat "Club Platform" as spam. So
+each message is addressed from the club:
+
+- **Display name** — `club_config.name`.
+- **Reply-to** — the club's own contact address from its content blob, when set.
+- **Links** — into that club's site, including the `/<slug>/` prefix in
+  multi-club mode, and into the fragment, because the app is a HashRouter.
+
+The **address** stays on the platform's verified sending domain. A grassroots
+club cannot verify a domain it does not own, and per-club sending domains are
+a separate piece of work. The display name is club-editable text going into a
+mail header, so `formatFrom()` strips anything that could open a new one.
+
+### What is sent
+
+| Trigger | Link goes to | Expires |
+|---------|--------------|---------|
+| Forgot password | `/#/reset-password?token=…` | 1 hour, single use |
+| Sign-up | `/api/auth/verify-email`, which redirects back to the club | 1 hour |
+| Player import creates an account | `/#/reset-password?token=…` | 7 days |
+
+The import invitation is a longer-lived reset token, minted by
+`createSetPasswordToken()`. That writes a `verification` row by hand, so it
+depends on two details of better-auth's storage — the `reset-password:<token>`
+identifier and ISO-string dates on SQLite. Both are asserted by
+`functions/__tests__/lib/set-password-token.test.ts`; read the comment there
+before changing it.
+
+### Failures are recorded, not raised
+
+A delivery failure in an auth flow is swallowed and sent to PostHog error
+tracking instead of surfacing. `sendResetPassword` only runs once a user has
+been found, so a 500 on some addresses and a cheerful "check your email" on
+others would tell an attacker which accounts exist. Sign-up verification is
+swallowed for a different reason: it runs inline inside sign-up, so a provider
+outage would otherwise stop people creating accounts.
+
+The player import is the exception that reports back — it returns `invited` and
+`inviteFailed` counts, and the import panel says plainly when nothing went out.
+
+### Email verification is recorded but not enforced
+
+`requireEmailVerification` is deliberately off. Every account that predates this
+— including every parent the FA import created — has `emailVerified = 0`, so
+turning it on would lock out the entire user base on deploy. Enforcing it needs
+a backfill first.
 
 ## API Secrets
 

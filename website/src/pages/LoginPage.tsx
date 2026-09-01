@@ -87,6 +87,11 @@ export function LoginPage() {
             <Button type="submit" loading={loading} fullWidth radius="xl" size="md">
               Log In
             </Button>
+            <Text size="sm" ta="center" c="dimmed">
+              <Anchor component={Link} to="/forgot-password" fw={600}>
+                Forgot your password?
+              </Anchor>
+            </Text>
           </Stack>
         </form>
       </Paper>

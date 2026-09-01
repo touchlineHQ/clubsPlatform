@@ -1,5 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { hashPwd, verifyPwd, createAuth } from '../../lib/auth';
+import { SIGNUP_LIMITS } from '../../lib/signup-validation';
+
+const sendResetPassword = vi.hoisted(() => vi.fn());
+const sendVerifyEmail = vi.hoisted(() => vi.fn());
+const reportEmailFailure = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/account-email', () => ({
+  RESET_TOKEN_TTL_SECONDS: 3600,
+  sendResetPassword,
+  sendVerifyEmail,
+  reportEmailFailure,
+}));
 
 // Mock better-auth so createAuth returns the raw config object.
 // This lets us inspect and call databaseHooks without a real DB or session layer.
@@ -103,5 +114,94 @@ describe('createAuth', () => {
     };
     await config.databaseHooks.user.create.after({ id: 'user-2' });
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+// ─── transactional email wiring ──────────────────────────────────────────────
+
+describe('createAuth email configuration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeDb() {
+    return {
+      prepare: vi.fn(() => ({
+        first: vi.fn().mockResolvedValue({ c: 5 }),
+        bind: vi.fn(() => ({ run: vi.fn() })),
+      })),
+    } as unknown as D1Database;
+  }
+
+  function config(env: Record<string, unknown> = {}) {
+    createAuth(
+      { DB: makeDb(), BETTER_AUTH_SECRET: 'test-secret', ...env } as Parameters<typeof createAuth>[0],
+      { baseURL: 'https://clubs.example' },
+    );
+    return mockBetterAuth.mock.calls.at(-1)![0] as Record<string, any>;
+  }
+
+  it('enables password reset by supplying sendResetPassword', () => {
+    expect(typeof config().emailAndPassword.sendResetPassword).toBe('function');
+  });
+
+  it('sends verification on sign-up', () => {
+    const emailVerification = config().emailVerification;
+    expect(emailVerification.sendOnSignUp).toBe(true);
+    expect(typeof emailVerification.sendVerificationEmail).toBe('function');
+  });
+
+  // Enforcing it would lock out every account that predates verification —
+  // including every parent the FA import created with emailVerified = 0.
+  it('does not require a verified email to sign in', () => {
+    expect(config().emailAndPassword.requireEmailVerification).toBeUndefined();
+  });
+
+  it('ends other sessions when a reset completes', () => {
+    expect(config().emailAndPassword.revokeSessionsOnPasswordReset).toBe(true);
+  });
+
+  it('holds a reset to the same password floor as sign-up', () => {
+    expect(config().emailAndPassword.minPasswordLength).toBe(SIGNUP_LIMITS.passwordMin);
+  });
+
+  it('routes a reset through the club-aware mailer', async () => {
+    await config().emailAndPassword.sendResetPassword({
+      user: { id: 'user_1', email: 'parent@example.com' },
+      token: 'tok123',
+    });
+    expect(sendResetPassword).toHaveBeenCalledWith(
+      expect.anything(),
+      { origin: 'https://clubs.example', userId: 'user_1', email: 'parent@example.com', token: 'tok123' },
+    );
+  });
+
+  // A throw here would answer "does this account exist?" — sendResetPassword
+  // only runs once a user has been found.
+  it('records a reset delivery failure instead of surfacing it', async () => {
+    sendResetPassword.mockRejectedValueOnce(new Error('provider down'));
+    await expect(config().emailAndPassword.sendResetPassword({
+      user: { id: 'user_1', email: 'parent@example.com' },
+      token: 'tok123',
+    })).resolves.toBeUndefined();
+    expect(reportEmailFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Error),
+      { kind: 'reset-password', userId: 'user_1' },
+    );
+  });
+
+  // This runs inline inside sign-up, so a throw would stop the account existing.
+  it('records a verification delivery failure instead of failing sign-up', async () => {
+    sendVerifyEmail.mockRejectedValueOnce(new Error('provider down'));
+    await expect(config().emailVerification.sendVerificationEmail({
+      user: { id: 'user_2', email: 'new@example.com' },
+      token: 'tok456',
+    })).resolves.toBeUndefined();
+    expect(reportEmailFailure).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(Error),
+      { kind: 'verify-email', userId: 'user_2' },
+    );
   });
 });

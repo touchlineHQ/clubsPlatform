@@ -21,7 +21,7 @@ interface ParsedPlayerRow {
 interface ImportResult {
   ok: boolean;
   players: { created: number; updated: number };
-  users: { created: number; skipped: number };
+  users: { created: number; skipped: number; invited: number; inviteFailed: number };
 
   errors: { fanId: string; reason: string }[];
 }
@@ -340,8 +340,37 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             <Stack gap={4}>
               <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
               <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
+              {result.users.created > 0 && (
+                <Text size="sm">
+                  Set-password invitations: <b>{result.users.invited}</b> sent
+                  {result.users.inviteFailed > 0 && <>, <b>{result.users.inviteFailed}</b> failed</>}
+                </Text>
+              )}
             </Stack>
           </Alert>
+
+          {/* An import can succeed in full while no invitation goes out — the
+              accounts exist and work, but nobody has been told. Say so rather
+              than leaving the admin to wonder why nobody signs in. */}
+          {result.users.created > 0 && result.users.invited === 0 && result.users.inviteFailed === 0 && (
+            <Alert color="yellow" radius="md" icon={<IconAlertCircle size={16} />} title="No invitations were sent">
+              <Text size="sm">
+                Transactional email is not configured for this deployment, so the
+                new accounts have not been told they exist. They can still be
+                reached with "Forgot your password?" on the sign-in page.
+              </Text>
+            </Alert>
+          )}
+
+          {result.users.inviteFailed > 0 && (
+            <Alert color="yellow" radius="md" icon={<IconAlertCircle size={16} />} title="Some invitations could not be sent">
+              <Text size="sm">
+                {result.users.inviteFailed} invitation{result.users.inviteFailed === 1 ? '' : 's'} were
+                rejected by the email provider. Those accounts were still created
+                and can be reached with "Forgot your password?" on the sign-in page.
+              </Text>
+            </Alert>
+          )}
 
           {result.errors.length > 0 && (
             <Paper withBorder radius="md" p="md">

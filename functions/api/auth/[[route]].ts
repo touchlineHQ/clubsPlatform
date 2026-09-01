@@ -1,15 +1,14 @@
 import { Hono } from "hono";
-import { createAuth } from "../../lib/auth";
+import { createAuth, type AuthEnv } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog } from "../../lib/posthog";
 import { isSignupRequest, validateSignupBody } from "../../lib/signup-validation";
 
-interface Env {
-  DB: D1Database;
-  BETTER_AUTH_SECRET: string;
+// Extends AuthEnv so the email and multi-club settings createAuth needs to
+// address a message to the right club reach it here too — this route is where
+// forget-password and sign-up verification are actually served from.
+interface Env extends AuthEnv {
   BETTER_AUTH_URL?: string;
-  POSTHOG_API_KEY?: string;
-  POSTHOG_HOST?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>();

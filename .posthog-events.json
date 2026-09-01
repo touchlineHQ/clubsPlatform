@@ -105,6 +105,34 @@
     ]
   },
   {
+    "event": "password reset completed",
+    "description": "A user set a new password from a reset link. Also covers an imported parent setting their password for the first time — both arrive with the same token.",
+    "files": [
+      "website/src/pages/ResetPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset failed",
+    "description": "A reset submission was rejected ('rejected', usually an expired or already-used link) or errored in transit ('error').",
+    "files": [
+      "website/src/pages/ResetPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset request failed",
+    "description": "The forget-password request itself failed to reach the API from the Forgot Password page.",
+    "files": [
+      "website/src/pages/ForgotPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset requested",
+    "description": "A visitor asked for a password reset link from the Forgot Password page. Fires whether or not the address has an account — the page cannot tell, by design.",
+    "files": [
+      "website/src/pages/ForgotPasswordPage.tsx"
+    ]
+  },
+  {
     "event": "payment completed",
     "description": "A player's GoCardless payment is confirmed and a subscription created.",
     "files": [
