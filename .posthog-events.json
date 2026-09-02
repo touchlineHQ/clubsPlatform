@@ -94,6 +94,7 @@
     "event": "login failed",
     "description": "A sign-in attempt did not succeed. The reason property distinguishes rejected credentials, a wrong-club account, and a thrown error.",
     "files": [
+      "website/src/components/LoginForm.tsx",
       "website/src/pages/LoginPage.tsx"
     ]
   },
@@ -101,7 +102,7 @@
     "event": "login succeeded",
     "description": "A user signed in successfully.",
     "files": [
-      "website/src/pages/LoginPage.tsx"
+      "website/src/components/LoginForm.tsx"
     ]
   },
   {

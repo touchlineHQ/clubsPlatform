@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
-import { renderWithMantine, mockLoggedOut } from '../test-utils';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { renderWithMantine, mockLoggedOut, mockAdmin, mockPlatformAdmin } from '../test-utils';
 import type { ClubEntry } from '../../types';
 
 vi.mock('../../auth-client', () => ({
@@ -9,12 +9,28 @@ vi.mock('../../auth-client', () => ({
   signOut: vi.fn(),
 }));
 
+// Modal uses react-remove-scroll which has a dual-React conflict; stub it out.
+vi.mock('@mantine/core', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@mantine/core')>();
+  return {
+    ...mod,
+    Modal: ({ children, opened, onClose }: { children: React.ReactNode; opened: boolean; onClose?: () => void }) =>
+      opened ? <div data-testid="modal"><button data-testid="modal-close" onClick={onClose}>Close</button>{children}</div> : null,
+  };
+});
+
 import { LandingPage } from '../../pages/LandingPage';
 
 const clubs: ClubEntry[] = [
   { id: 'c1', slug: 'test-fc', name: 'Test FC' },
   { id: 'c2', slug: 'demo', name: 'Demo Club' },
 ];
+
+/** mockAdmin's user belongs to 'test-club', which isn't in `clubs` above. */
+const adminOfTestFc = {
+  ...mockAdmin,
+  user: { ...mockAdmin.user, clubSlug: 'test-fc' },
+};
 
 describe('LandingPage', () => {
   it('renders the hero section with a heading', () => {
@@ -159,6 +175,64 @@ describe('LandingPage', () => {
     } else {
       expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);
     }
+  });
+
+  // A club admin whose site is still private has to be able to sign in from
+  // here — the platform root is where they land once their own club URL turns
+  // them away.
+  describe('header auth', () => {
+    it('offers a login button when signed out', () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+      expect(screen.getByRole('button', { name: /log in/i })).toBeTruthy();
+      expect(screen.queryByTestId('modal')).toBeNull();
+    });
+
+    it('opens the login modal when that button is clicked', () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+      fireEvent.click(screen.getByRole('button', { name: /log in/i }));
+      const modal = screen.getByTestId('modal');
+      expect(modal.querySelector('input[type="email"]')).toBeTruthy();
+      expect(modal.querySelector('input[type="password"]')).toBeTruthy();
+    });
+
+    it('shows nothing to sign in with while auth is still loading', () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, {
+        authValue: { ...mockLoggedOut, loading: true },
+      });
+      expect(screen.queryByRole('button', { name: /log in/i })).toBeNull();
+    });
+
+    it('swaps the login button for an account menu once signed in', () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: adminOfTestFc });
+      expect(screen.queryByRole('button', { name: /log in/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /Admin/ })).toBeTruthy();
+    });
+
+    it("links a signed-in user to their own club", async () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: adminOfTestFc });
+      fireEvent.click(screen.getByRole('button', { name: /Admin/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/Go to Test FC/).closest('a')?.getAttribute('href')).toBe('/test-fc/');
+      });
+    });
+
+    it('badges that link as private while the club has not gone live', async () => {
+      const privateClubs: ClubEntry[] = [{ id: 'c1', slug: 'test-fc', name: 'Test FC', published: false }];
+      renderWithMantine(<LandingPage clubs={privateClubs} />, { authValue: adminOfTestFc });
+      fireEvent.click(screen.getByRole('button', { name: /Admin/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/Go to Test FC/).closest('a')?.textContent).toContain('Private');
+      });
+    });
+
+    it('gives a platform admin no club link — they belong to none', async () => {
+      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockPlatformAdmin });
+      fireEvent.click(screen.getByRole('button', { name: /Super/ }));
+      await waitFor(() => {
+        expect(screen.getByText('Logout')).toBeTruthy();
+      });
+      expect(screen.queryByText(/Go to/)).toBeNull();
+    });
   });
 
   it('mouseEnter/Leave on AddClubCard triggers hover state without error', () => {

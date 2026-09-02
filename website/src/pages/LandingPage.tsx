@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import {
-  Anchor, Badge, Box, Button, Container, Group, Paper,
+  Anchor, Badge, Box, Button, Container, Group, Menu, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, PasswordInput,
   Title, Alert,
 } from '@mantine/core';
+import { useDisclosure } from '@mantine/hooks';
 import {
-  IconBallFootball, IconCalendar, IconCheck, IconChevronRight,
-  IconExternalLink, IconMail, IconMapPin, IconPlus,
-  IconShield, IconUsers,
+  IconArrowRight, IconBallFootball, IconCalendar, IconCheck, IconChevronRight,
+  IconExternalLink, IconLogout, IconMail, IconMapPin, IconPlus,
+  IconShield, IconUser, IconUsers,
 } from '@tabler/icons-react';
 import type { ClubEntry } from '../types';
-import { signUp } from '../auth-client';
+import { signUp, signOut } from '../auth-client';
+import { LoginForm } from '../components/LoginForm';
+import { useAuth, type AuthUser } from '../context/AuthContext';
 
 const DEMO_SLUG = 'demo';
 
@@ -40,7 +43,7 @@ interface LandingPageProps {
 
 export const LandingPage = ({ clubs }: LandingPageProps) => (
   <div style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-    <LandingHeader />
+    <LandingHeader clubs={clubs} />
     <HeroSection />
     <ClubDirectorySection clubs={clubs} />
     <GetStartedSection />
@@ -52,87 +55,190 @@ export const LandingPage = ({ clubs }: LandingPageProps) => (
 // ─────────────────────────────────────────────────────────────────────────────
 // LandingHeader
 // ─────────────────────────────────────────────────────────────────────────────
-const LandingHeader = () => (
-  <Box
-    component="nav"
-    style={{
-      position: 'sticky', top: 0, zIndex: 100,
-      background: 'rgba(255,255,255,0.95)',
-      backdropFilter: 'blur(12px)',
-      borderBottom: '1px solid var(--mantine-color-gray-2)',
-      height: 70,
-    }}
-  >
-    <Container size="xl" h="100%">
-      <Group h="100%" justify="space-between" wrap="nowrap" gap={0}>
-        {/* Brand */}
-        <Box component="a" href="#" style={{ flexShrink: 0, marginRight: 32, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/images/logoHQ.png" alt="touchlineHQ" height={40} style={{ display: 'block' }} />
-          <Stack gap={0}>
-            <Text fw={700} size="sm" lh={1.2} c={G6} style={{ whiteSpace: 'nowrap' }}>clubsPlatform</Text>
-            <Text size="xs" c="gray.5" lh={1.2} style={{ fontSize: '0.72rem' }}>by touchlineHQ</Text>
-          </Stack>
-        </Box>
+const LandingHeader = ({ clubs }: { clubs: ClubEntry[] }) => {
+  const { user, loading: authLoading } = useAuth();
+  const [loginOpen, { open: openLogin, close: closeLogin }] = useDisclosure(false);
 
-        {/* Centre nav links — hidden on mobile */}
-        <Group gap={2} wrap="nowrap" style={{ flex: 1 }} visibleFrom="md">
-          {[
-            { label: 'Directory', icon: <IconBallFootball size={14} />, href: '#clubs' },
-            { label: 'Features', icon: <IconShield size={14} />, href: '#features' },
-            { label: 'Get Started', icon: <IconUsers size={14} />, href: '#getstarted' },
-            { label: 'Contact', icon: <IconMail size={14} />, href: '#contact' },
-          ].map(({ label, icon, href }) => (
-            <Button
-              key={label}
-              component="a"
-              href={href}
-              variant="subtle"
-              size="compact-sm"
-              leftSection={icon}
-              color="gray"
-              onClick={e => { e.preventDefault(); scrollTo(href.slice(1)); }}
+  // A user belongs to exactly one club (user.clubSlug). The registry keeps
+  // unpublished clubs in the list on purpose, so this resolves for the very
+  // case this menu exists to serve: an admin whose site isn't live yet.
+  const userClub = user?.clubSlug
+    ? clubs.find(c => c.slug === user.clubSlug) ?? null
+    : null;
+
+  const handleLogout = async () => {
+    await signOut();
+    window.location.reload();
+  };
+
+  return (
+    <Box
+      component="nav"
+      style={{
+        position: 'sticky', top: 0, zIndex: 100,
+        background: 'rgba(255,255,255,0.95)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--mantine-color-gray-2)',
+        height: 70,
+      }}
+    >
+      <Container size="xl" h="100%">
+        <Group h="100%" justify="space-between" wrap="nowrap" gap={0}>
+          {/* Brand */}
+          <Box component="a" href="#" style={{ flexShrink: 0, marginRight: 32, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <img src="/images/logoHQ.png" alt="touchlineHQ" height={40} style={{ display: 'block' }} />
+            <Stack gap={0}>
+              <Text fw={700} size="sm" lh={1.2} c={G6} style={{ whiteSpace: 'nowrap' }}>clubsPlatform</Text>
+              <Text size="xs" c="gray.5" lh={1.2} style={{ fontSize: '0.72rem' }}>by touchlineHQ</Text>
+            </Stack>
+          </Box>
+
+          {/* Centre nav links — hidden on mobile */}
+          <Group gap={2} wrap="nowrap" style={{ flex: 1 }} visibleFrom="md">
+            {[
+              { label: 'Directory', icon: <IconBallFootball size={14} />, href: '#clubs' },
+              { label: 'Features', icon: <IconShield size={14} />, href: '#features' },
+              { label: 'Get Started', icon: <IconUsers size={14} />, href: '#getstarted' },
+              { label: 'Contact', icon: <IconMail size={14} />, href: '#contact' },
+            ].map(({ label, icon, href }) => (
+              <Button
+                key={label}
+                component="a"
+                href={href}
+                variant="subtle"
+                size="compact-sm"
+                leftSection={icon}
+                color="gray"
+                onClick={e => { e.preventDefault(); scrollTo(href.slice(1)); }}
+              >
+                {label}
+              </Button>
+            ))}
+            <Anchor
+              href="https://touchlinehq.co.uk"
+              target="_blank"
+              rel="noopener"
+              c={G6}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '5px 12px', borderRadius: 6,
+                fontSize: '0.82rem', fontWeight: 500, textDecoration: 'none',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = G1)}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
-              {label}
-            </Button>
-          ))}
-          <Anchor
-            href="https://touchlinehq.co.uk"
-            target="_blank"
-            rel="noopener"
-            c={G6}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '5px 12px', borderRadius: 6,
-              fontSize: '0.82rem', fontWeight: 500, textDecoration: 'none',
-              transition: 'background 0.15s',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.background = G1)}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          >
-            touchlineHQ
-            <IconExternalLink size={12} />
-          </Anchor>
-        </Group>
+              touchlineHQ
+              <IconExternalLink size={12} />
+            </Anchor>
+          </Group>
 
-        {/* Right actions */}
-        <Group gap={8} wrap="nowrap" style={{ marginLeft: 'auto', flexShrink: 0 }}>
-          <Button
-            component="a"
-            href="#getstarted"
-            variant="light"
-            color="orange"
-            size="compact-sm"
-            leftSection={<IconBallFootball size={14} />}
-            onClick={e => { e.preventDefault(); scrollTo('getstarted'); }}
-            visibleFrom="xs"
-          >
-            Create your club
-          </Button>
+          {/* Right actions */}
+          <Group gap={8} wrap="nowrap" style={{ marginLeft: 'auto', flexShrink: 0 }}>
+            {/* Not hidden on small screens the way "Create your club" is: an admin
+                whose club site is still private has no other way in from here. */}
+            {!authLoading && !user && (
+              <Button
+                variant="subtle"
+                color="gray"
+                size="compact-sm"
+                leftSection={<IconUser size={14} />}
+                onClick={openLogin}
+              >
+                Log in
+              </Button>
+            )}
+
+            {!authLoading && user && (
+              <Menu shadow="md" width={240} position="bottom-end">
+                <Menu.Target>
+                  <Button variant="subtle" color="gray" size="compact-sm" leftSection={<IconUser size={14} />}>
+                    {user.name}
+                  </Button>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {userClub && (
+                    <Menu.Item
+                      component="a"
+                      href={`/${userClub.slug}/`}
+                      leftSection={<IconArrowRight size={14} />}
+                      rightSection={userClub.published === false
+                        ? <Badge size="xs" color="orange" variant="light">Private</Badge>
+                        : undefined}
+                    >
+                      Go to {userClub.name}
+                    </Menu.Item>
+                  )}
+                  <Menu.Item leftSection={<IconLogout size={14} />} onClick={handleLogout} color="red">
+                    Logout
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            )}
+
+            <Button
+              component="a"
+              href="#getstarted"
+              variant="light"
+              color="orange"
+              size="compact-sm"
+              leftSection={<IconBallFootball size={14} />}
+              onClick={e => { e.preventDefault(); scrollTo('getstarted'); }}
+              visibleFrom="xs"
+            >
+              Create your club
+            </Button>
+          </Group>
         </Group>
-      </Group>
-    </Container>
-  </Box>
-);
+      </Container>
+
+      <LoginModal opened={loginOpen} onClose={closeLogin} />
+    </Box>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoginModal
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Signing in from the platform root. The landing page renders outside
+ * HashRouter and outside ClubContext, so LoginPage can't be mounted here — the
+ * shared LoginForm goes in a modal instead. The session cookie is set for the
+ * whole origin, so once signed in the user can walk straight into their club,
+ * private or not.
+ */
+const LoginModal = ({ opened, onClose }: { opened: boolean; onClose: () => void }) => {
+  const handleSuccess = async (user: AuthUser | null): Promise<string | null> => {
+    // Straight to the club they came for. A platform admin (clubSlug === null)
+    // has no single club to land on, so they stay here with the menu.
+    if (user?.clubSlug) {
+      window.location.assign(`/${user.clubSlug}/`);
+      return null;
+    }
+    onClose();
+    return null;
+  };
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="Log in" centered radius="md">
+      <Stack gap="md">
+        <LoginForm onSuccess={handleSuccess} />
+        <Text size="sm" ta="center" c="dimmed">
+          Don't have a club yet?{' '}
+          <Anchor
+            href="#getstarted"
+            fw={600}
+            c={O6}
+            onClick={e => { e.preventDefault(); onClose(); scrollTo('getstarted'); }}
+          >
+            Create one
+          </Anchor>
+        </Text>
+      </Stack>
+    </Modal>
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HeroSection

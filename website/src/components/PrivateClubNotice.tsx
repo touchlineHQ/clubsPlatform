@@ -1,31 +1,23 @@
-import { useEffect } from 'react';
 import { Anchor, Card, Center, Stack, Text, Title } from '@mantine/core';
 import { clubDesign } from '../theme';
 
 interface Props {
-  /** Multi-club deployments have a platform landing page at "/" to fall back to. */
+  /** Multi-club deployments have a platform landing page at "/" to link back to. */
   multiClub: boolean;
 }
 
 /**
  * What a visitor gets when a club's site hasn't gone live yet.
  *
- * On the multi-club platform they're sent to the landing page — a half-built
- * club site shouldn't be a dead end for someone who followed a link. A
- * single-club fork has no landing page to fall back to (redirecting to "/"
- * there would loop straight back into this component), so it shows a holding
- * card instead.
+ * The club's own admins never see this: they're let through the gate in
+ * App.tsx. Everyone else gets a holding card, and the "#/login" link stays
+ * reachable — an admin arriving cold on their own club's URL signs in from
+ * right here rather than being bounced somewhere that can't help them.
  *
- * The club's admins never see this: they're let through the gate in App.tsx.
- * #/login stays reachable so an admin can sign in from here.
+ * On the multi-club platform the card also links back to the landing page, so a
+ * half-built club site isn't a dead end for someone who followed a link.
  */
 export function PrivateClubNotice({ multiClub }: Props) {
-  useEffect(() => {
-    if (multiClub) window.location.replace('/');
-  }, [multiClub]);
-
-  if (multiClub) return null;
-
   return (
     <Center h="100vh" px="md">
       <Card withBorder radius="md" p="xl" maw={420}>
@@ -39,6 +31,11 @@ export function PrivateClubNotice({ multiClub }: Props) {
           <Anchor href="#/login" size="sm" mt="xs">
             Club admin? Log in
           </Anchor>
+          {multiClub && (
+            <Anchor href="/" size="sm">
+              Browse clubsPlatform
+            </Anchor>
+          )}
         </Stack>
       </Card>
     </Center>

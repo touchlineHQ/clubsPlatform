@@ -276,14 +276,17 @@ describe('App — private club', () => {
     value: { hash: '', pathname: '/test-club/', replace: vi.fn() },
   });
 
-  it('sends an anonymous visitor to the platform landing page', async () => {
+  it('holds an anonymous visitor on a notice instead of the site', async () => {
     atClubPath();
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     renderApp(<App />);
     await waitFor(() => {
-      expect(window.location.replace).toHaveBeenCalledWith('/');
+      expect(screen.getByText('Not live yet')).toBeTruthy();
     });
     expect(screen.queryByTestId('site-header')).toBeNull();
+    // Bouncing them to "/" would strand an admin on a landing page they'd have
+    // to find their own way back from.
+    expect(window.location.replace).not.toHaveBeenCalled();
   });
 
   it('never loads the club data for a visitor who cannot see the site', async () => {
@@ -291,7 +294,7 @@ describe('App — private club', () => {
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     renderApp(<App />);
     await waitFor(() => {
-      expect(window.location.replace).toHaveBeenCalled();
+      expect(screen.getByText('Not live yet')).toBeTruthy();
     });
     // GET /api/club answers 404 for them — asking would only hang the loader.
     expect(mockLoadAllData).not.toHaveBeenCalled();
@@ -303,8 +306,9 @@ describe('App — private club', () => {
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     renderApp(<App />);
     await waitFor(() => {
-      expect(window.location.replace).toHaveBeenCalledWith('/');
+      expect(screen.getByText('Not live yet')).toBeTruthy();
     });
+    expect(screen.queryByTestId('site-header')).toBeNull();
     expect(mockLoadAllData).not.toHaveBeenCalled();
   });
 
@@ -359,8 +363,9 @@ describe('App — private club', () => {
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     renderApp(<App />);
     await waitFor(() => {
-      expect(window.location.replace).toHaveBeenCalledWith('/');
+      expect(screen.getByText('Not live yet')).toBeTruthy();
     });
+    expect(screen.queryByTestId('site-header')).toBeNull();
   });
 
   it('shows a holding card instead of redirecting in single-club mode', async () => {
