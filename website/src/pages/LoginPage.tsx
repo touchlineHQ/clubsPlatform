@@ -1,17 +1,13 @@
-import { useState } from 'react';
-import { TextInput, PasswordInput, Button, Stack, Title, Text, Paper, Anchor, Alert, Box } from '@mantine/core';
+import { Stack, Title, Text, Paper, Anchor, Box } from '@mantine/core';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { signIn, signOut } from '../auth-client';
+import { signOut } from '../auth-client';
 import { captureEvent } from '../lib/posthog';
-import { useAuth } from '../context/AuthContext';
+import { LoginForm } from '../components/LoginForm';
+import { useAuth, type AuthUser } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
 import { clubDesign } from '../theme';
 
 export function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { refresh } = useAuth();
@@ -23,38 +19,18 @@ export function LoginPage() {
     ? rawRedirect
     : '/';
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      const result = await signIn.email({ email, password });
-      if (result.error) {
-        captureEvent('login failed', { reason: 'rejected' });
-        setError(result.error.message ?? 'Login failed');
-      } else {
-        const loggedInUser = await refresh();
-
-        // In multi-club mode, reject users who belong to a different club.
-        // Platform admins (clubSlug === null) are allowed everywhere.
-        if (isMultiClub && loggedInUser && loggedInUser.clubSlug !== null && loggedInUser.clubSlug !== currentClubSlug) {
-          await signOut();
-          await refresh();
-          captureEvent('login failed', { reason: 'wrong_club' });
-          setError('This account is not registered with this club. Please log in on the correct club page.');
-          return;
-        }
-
-        captureEvent('login succeeded');
-        navigate(redirectTo, { replace: true });
-      }
-    } catch {
-      captureEvent('login failed', { reason: 'error' });
-      setError('Login failed — please try again');
-    } finally {
-      setLoading(false);
+  const handleSuccess = async (loggedInUser: AuthUser | null): Promise<string | null> => {
+    // In multi-club mode, reject users who belong to a different club.
+    // Platform admins (clubSlug === null) are allowed everywhere.
+    if (isMultiClub && loggedInUser && loggedInUser.clubSlug !== null && loggedInUser.clubSlug !== currentClubSlug) {
+      await signOut();
+      await refresh();
+      captureEvent('login failed', { reason: 'wrong_club' });
+      return 'This account is not registered with this club. Please log in on the correct club page.';
     }
+
+    navigate(redirectTo, { replace: true });
+    return null;
   };
 
   return (
@@ -66,29 +42,7 @@ export function LoginPage() {
         </Text>
       </Box>
       <Paper p="xl" radius="md" withBorder>
-        <form onSubmit={handleSubmit}>
-          <Stack gap="md">
-            {error && <Alert color="red" variant="light" radius="md">{error}</Alert>}
-            <TextInput
-              label="Email"
-              type="email"
-              required
-              radius="md"
-              value={email}
-              onChange={e => setEmail(e.currentTarget.value)}
-            />
-            <PasswordInput
-              label="Password"
-              required
-              radius="md"
-              value={password}
-              onChange={e => setPassword(e.currentTarget.value)}
-            />
-            <Button type="submit" loading={loading} fullWidth radius="xl" size="md">
-              Log In
-            </Button>
-          </Stack>
-        </form>
+        <LoginForm onSuccess={handleSuccess} />
       </Paper>
       <Text size="sm" ta="center" c="dimmed">
         Don't have an account?{' '}
