@@ -11,7 +11,7 @@ interface Props {
    * multi-club guard uses that to sign a wrong-club user back out — or null
    * when the caller is happy for the sign-in to stand.
    */
-  onSuccess: (user: AuthUser | null) => Promise<string | null>;
+  onSuccess: (user: AuthUser) => Promise<string | null>;
 }
 
 /**
@@ -41,6 +41,12 @@ export function LoginForm({ onSuccess }: Props) {
       }
 
       const loggedInUser = await refresh();
+      if (!loggedInUser) {
+        captureEvent('login failed', { reason: 'error' });
+        setError('Login failed — please try again');
+        return;
+      }
+
       const rejection = await onSuccess(loggedInUser);
       if (rejection) {
         // onSuccess captures its own 'login failed' reason — it knows why.

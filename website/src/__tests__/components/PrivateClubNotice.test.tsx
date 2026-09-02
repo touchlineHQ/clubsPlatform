@@ -31,11 +31,11 @@ describe('PrivateClubNotice', () => {
 
   it('offers the platform as a way out on a multi-club deployment', () => {
     renderWithMantine(<PrivateClubNotice multiClub />);
-    expect(screen.getByText('Browse clubsPlatform').getAttribute('href')).toBe('/');
+    expect(screen.getByText('Browse clubs').getAttribute('href')).toBe('/');
   });
 
   it('omits the platform link on a single-club fork, which has no landing page', () => {
     renderWithMantine(<PrivateClubNotice multiClub={false} />);
-    expect(screen.queryByText('Browse clubsPlatform')).toBeNull();
+    expect(screen.queryByText('Browse clubs')).toBeNull();
   });
 });

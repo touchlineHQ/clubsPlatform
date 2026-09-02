@@ -33,7 +33,7 @@ export function PrivateClubNotice({ multiClub }: Props) {
           </Anchor>
           {multiClub && (
             <Anchor href="/" size="sm">
-              Browse clubsPlatform
+              Browse clubs
             </Anchor>
           )}
         </Stack>

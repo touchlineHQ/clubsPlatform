@@ -61,6 +61,20 @@ describe('LoginForm', () => {
     expect(mockCaptureEvent).toHaveBeenCalledWith('login succeeded');
   });
 
+  it('does not complete login when the session refresh returns no user', async () => {
+    const onSuccess = vi.fn(async () => null);
+    renderWithMantine(<LoginForm onSuccess={onSuccess} />, {
+      authValue: { ...authValue, refresh: vi.fn(async () => null) },
+    });
+    submit();
+    await waitFor(() => {
+      expect(screen.getByText('Login failed — please try again')).toBeTruthy();
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(mockCaptureEvent).toHaveBeenCalledWith('login failed', { reason: 'error' });
+    expect(mockCaptureEvent).not.toHaveBeenCalledWith('login succeeded');
+  });
+
   it('shows the rejection from the auth server', async () => {
     mockSignIn.mockResolvedValue({ error: { message: 'Invalid credentials' } });
     renderWithMantine(<LoginForm onSuccess={vi.fn(async () => null)} />, { authValue });
