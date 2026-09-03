@@ -12,6 +12,11 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: [
+      // `cloudflare:sockets` is a workerd built-in with no Node equivalent, and
+      // lib/smtp.ts imports it for real. Point it at a stub that throws, so a
+      // test that forgets to inject a scripted connect() fails loudly instead
+      // of dialling out.
+      { find: /^cloudflare:sockets$/, replacement: path.resolve('./functions/__tests__/stubs/cloudflare-sockets.ts') },
       { find: /^react\/jsx-dev-runtime$/, replacement: `${rootReact}/jsx-dev-runtime.js` },
       { find: /^react\/jsx-runtime$/, replacement: `${rootReact}/jsx-runtime.js` },
       { find: /^react-dom\/client$/, replacement: `${rootReactDom}/client.js` },
@@ -45,6 +50,7 @@ export default defineConfig({
       ],
       exclude: [
         'functions/**/*.test.ts',
+        'functions/__tests__/**',
         'website/src/**/*.test.{ts,tsx}',
         'website/src/api/schema.d.ts',
         'website/src/main.tsx',

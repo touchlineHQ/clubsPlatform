@@ -48,8 +48,12 @@ Set in `wrangler.toml` under `[vars]`:
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
 | `SECRETS_TRANSPORT_PUBLIC_KEY` | RSA-2048 SPKI public key sent to the browser | required for secrets |
 | `POSTHOG_HOST` | PostHog ingest host used by the Pages Functions | analytics disabled if unset |
-| `EMAIL_FROM` | Envelope sender for transactional email, on a domain verified with the provider | email disabled if unset |
-| `EMAIL_API_BASE` | Override the provider API base (tests, self-hosting) | `https://api.resend.com` |
+| `SMTP_HOST` | Hostname of the SMTP relay that sends transactional email | email disabled if unset |
+| `SMTP_PORT` | Relay port. Cloudflare blocks 25 — use 465 or 587 | `465` |
+| `SMTP_SECURE` | `true` for implicit TLS (465), `false` to upgrade with STARTTLS (587) | `true` |
+| `SMTP_USER` | Mailbox to authenticate as | email disabled if unset |
+| `SMTP_TIMEOUT_MS` | Give up on a relay that stops answering | `20000` |
+| `FROM_EMAIL` | Address messages are sent from | email disabled if unset |
 
 For local-only overrides without editing `wrangler.toml`, create a `.dev.vars` file (gitignored by Wrangler):
 
@@ -173,24 +177,69 @@ adding coverage at this volume.
 ## Transactional Email
 
 Password resets, sign-up verification and player-import invitations are sent
-through [Resend](https://resend.com) over its HTTP API — the Node SDK does not
-run on workerd.
+through **any SMTP relay** — the club's own mailbox provider, a transactional
+service's SMTP endpoint, whatever the committee already pays for.
 
 | Value | Where it is set |
 |-------|-----------------|
-| `EMAIL_API_KEY` | Pages **secret**, per environment. Cannot be set in the dashboard — same reason as `POSTHOG_API_KEY`. |
-| `EMAIL_FROM` | `wrangler.toml`, in **both** env blocks. |
+| `SMTP_PASSWORD` | Pages **secret**, per environment. Cannot be set in the dashboard — same reason as `POSTHOG_API_KEY`. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `FROM_EMAIL` | `wrangler.toml`, in **both** env blocks. |
 
 ```sh
-npx wrangler pages secret put EMAIL_API_KEY --project-name clubsplatform
-npx wrangler pages secret put EMAIL_API_KEY --project-name clubsplatform --env preview
+npx wrangler pages secret put SMTP_PASSWORD --project-name clubsplatform
+npx wrangler pages secret put SMTP_PASSWORD --project-name clubsplatform --env preview
 ```
 
-`getMailer()` returns `null` unless **both** `EMAIL_API_KEY` and `EMAIL_FROM`
-are set, and every call site is guarded. A missing value therefore disables
-sending silently — exactly like the PostHog pair above, and for the same
-reason: a club without mail configured should still be able to log in, import
-players and take payments. If resets stop arriving, check these first.
+For local dev, put the lot in `.dev.vars`:
+
+```
+SMTP_HOST=smtp.purelymail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=committee@yourdomain.com
+SMTP_PASSWORD=your_secure_password
+FROM_EMAIL=committee@yourdomain.com
+```
+
+`getMailer()` returns `null` unless `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
+and `FROM_EMAIL` are **all** set, and every call site is guarded. A missing
+value therefore disables sending silently — exactly like the PostHog pair
+above, and for the same reason: a club without mail configured should still be
+able to log in, import players and take payments. If resets stop arriving,
+check these first.
+
+### Why there is a hand-written SMTP client
+
+`functions/lib/smtp.ts` speaks SMTP over `cloudflare:sockets` in about 250
+lines. That is not a preference — nodemailer wants `net`, `tls` and `dns`, none
+of which exist on workerd, and Workers cannot use it. Raw TCP sockets are the
+supported route, so the protocol is ours to implement. It does exactly one
+thing: submit one already-formed message to one recipient through an
+authenticated relay. No pooling, no pipelining, no MX delivery, no bounce
+handling — the relay owns all of that.
+
+Three constraints worth knowing before you change any of it:
+
+- **Port 25 will not work.** Cloudflare blocks outbound connections on it from
+  Workers. 465 and 587 are open.
+- **Credentials never go out unencrypted.** With `SMTP_SECURE=true` the socket
+  is TLS from the first byte. With `false` it connects in the clear and
+  upgrades, and if the relay does not advertise STARTTLS the send is abandoned
+  rather than downgraded. Data buffered before the handshake aborts the session
+  too — that is the STARTTLS injection bug.
+- **Both bodies are base64, not quoted-printable.** It costs a third more bytes
+  and removes three problems at once: no line can exceed SMTP's 998-octet
+  limit, no line can begin with a bare `.` and need dot-stuffing, and non-ASCII
+  in a club's name survives intact.
+
+`AUTH PLAIN` is preferred over `AUTH LOGIN` — one round trip instead of three,
+and by then the channel is encrypted either way.
+
+Tests drive the client against a scripted fake socket
+(`functions/__tests__/lib/fake-smtp-socket.ts`) that plays a real server
+dialogue. `cloudflare:sockets` has no Node equivalent, so `vitest.config.ts`
+aliases it to a stub that throws: a test that forgets to inject a scripted
+`connect()` fails loudly instead of dialling out.
 
 ### Mail reads as the club, not the platform
 
@@ -202,9 +251,8 @@ each message is addressed from the club:
 - **Links** — into that club's site, including the `/<slug>/` prefix in
   multi-club mode, and into the fragment, because the app is a HashRouter.
 
-The **address** stays on the platform's verified sending domain. A grassroots
-club cannot verify a domain it does not own, and per-club sending domains are
-a separate piece of work. The display name is club-editable text going into a
+The **address** stays `FROM_EMAIL`, because that is the mailbox the relay will
+let us authenticate as. The display name is club-editable text going into a
 mail header, so `formatFrom()` strips anything that could open a new one.
 
 ### What is sent

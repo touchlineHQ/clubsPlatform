@@ -19,9 +19,13 @@ export interface Env {
   SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
-  EMAIL_API_KEY?: string; // transactional email provider key — Cloudflare secret
-  EMAIL_FROM?: string;
-  EMAIL_API_BASE?: string;
+  SMTP_HOST?: string;
+  SMTP_PORT?: string;
+  SMTP_SECURE?: string;
+  SMTP_USER?: string;
+  SMTP_PASSWORD?: string; // Cloudflare secret
+  SMTP_TIMEOUT_MS?: string;
+  FROM_EMAIL?: string;
 }
 
 /** Create a JSON Response with the appropriate Content-Type header. */

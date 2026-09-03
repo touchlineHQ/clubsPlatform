@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
 import {
   sendResetPassword,
@@ -7,12 +7,24 @@ import {
   reportEmailFailure,
   type AccountEmailEnv,
 } from '../../lib/account-email';
+import { SmtpError } from '../../lib/smtp';
 
 const captureExceptionImmediate = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/posthog', () => ({
   getPostHog: vi.fn((env: { POSTHOG_API_KEY?: string }) =>
     env.POSTHOG_API_KEY ? { captureExceptionImmediate } : null),
   clubGroups: vi.fn(() => ({})),
+}));
+
+/**
+ * Stop at the socket, not at the mailer: the real getMailer() and the real MIME
+ * builder still run, so these tests see the message a relay would actually be
+ * handed. lib/smtp.test.ts covers the protocol below this seam.
+ */
+const sendSmtpMessage = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../lib/smtp', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/smtp')>()),
+  sendSmtpMessage,
 }));
 
 /**
@@ -43,27 +55,46 @@ function clubOnlyDb(club: { name: string; data: string | null } | null): D1Datab
 function makeEnv(overrides: Partial<AccountEmailEnv> = {}): AccountEmailEnv {
   return {
     DB: makeDb('east-leake', { name: 'East Leake FC', data: JSON.stringify({ email: 'sec@elfc.com' }) }),
-    EMAIL_API_KEY: 'key_test',
-    EMAIL_FROM: 'no-reply@example.com',
-    EMAIL_API_BASE: 'https://mail.test',
+    SMTP_HOST: 'smtp.test',
+    SMTP_USER: 'committee@club.test',
+    SMTP_PASSWORD: 'hunter2hunter2',
+    FROM_EMAIL: 'committee@club.test',
     MULTI_CLUB: 'true',
     ...overrides,
   };
 }
 
-const fetchMock = vi.fn();
-
 beforeEach(() => {
-  fetchMock.mockReset();
-  fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
-  vi.stubGlobal('fetch', fetchMock);
+  sendSmtpMessage.mockReset();
+  sendSmtpMessage.mockResolvedValue(undefined);
   captureExceptionImmediate.mockReset();
 });
 
-afterEach(() => vi.unstubAllGlobals());
+/** The RFC 5322 message the mailer handed to the relay. */
+function sentMime(): string {
+  return (sendSmtpMessage.mock.calls[0] as unknown as [unknown, { content: string }])[1].content;
+}
 
-function sentBody() {
-  return JSON.parse(fetchMock.mock.calls[0][1].body);
+/** Envelope the relay was given, as distinct from the headers. */
+function sentEnvelope(): { from: string; to: string } {
+  return (sendSmtpMessage.mock.calls[0] as unknown as [unknown, { from: string; to: string }])[1];
+}
+
+function header(name: string): string | undefined {
+  return sentMime()
+    .split('\r\n\r\n')[0]
+    .split('\r\n')
+    .find((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}: `))
+    ?.slice(name.length + 2);
+}
+
+/** Decode one alternative part back to text. */
+function part(contentType: string): string {
+  const section = sentMime().split(/--=_cp_[^\r\n]+/).find((p) => p.includes(contentType))!;
+  const body = section.split('\r\n\r\n')[1] ?? '';
+  return new TextDecoder().decode(
+    Uint8Array.from(atob(body.replace(/\r\n/g, '')), (c) => c.charCodeAt(0)),
+  );
 }
 
 describe('sendResetPassword', () => {
@@ -76,10 +107,12 @@ describe('sendResetPassword', () => {
     });
 
     expect(sent).toBe(true);
-    const body = sentBody();
-    expect(body.from).toBe('East Leake FC <no-reply@example.com>');
-    expect(body.reply_to).toBe('sec@elfc.com');
-    expect(body.subject).toBe('Reset your East Leake FC password');
+    expect(header('From')).toBe('East Leake FC <committee@club.test>');
+    expect(header('Reply-To')).toBe('sec@elfc.com');
+    expect(header('Subject')).toBe('Reset your East Leake FC password');
+    // The envelope stays the authenticated mailbox — a relay will not accept
+    // a MAIL FROM it has not been told we own.
+    expect(sentEnvelope()).toMatchObject({ from: 'committee@club.test', to: 'parent@example.com' });
   });
 
   it('links into the club\'s own site with the token', async () => {
@@ -89,9 +122,8 @@ describe('sendResetPassword', () => {
       email: 'parent@example.com',
       token: 'tok123',
     });
-    const body = sentBody();
-    expect(body.html).toContain('https://clubs.example/east-leake/#/reset-password?token=tok123');
-    expect(body.text).toContain('https://clubs.example/east-leake/#/reset-password?token=tok123');
+    expect(part('text/html')).toContain('https://clubs.example/east-leake/#/reset-password?token=tok123');
+    expect(part('text/plain')).toContain('https://clubs.example/east-leake/#/reset-password?token=tok123');
   });
 
   it('falls back to the platform identity for a user with no club', async () => {
@@ -102,14 +134,13 @@ describe('sendResetPassword', () => {
       email: 'admin@example.com',
       token: 'tok123',
     });
-    const body = sentBody();
-    expect(body.from).toBe('Club Platform <no-reply@example.com>');
-    expect(body).not.toHaveProperty('reply_to');
-    expect(body.html).toContain('https://clubs.example/#/reset-password?token=tok123');
+    expect(header('From')).toBe('Club Platform <committee@club.test>');
+    expect(header('Reply-To')).toBeUndefined();
+    expect(part('text/html')).toContain('https://clubs.example/#/reset-password?token=tok123');
   });
 
   it('reports false and sends nothing when email is not configured', async () => {
-    const env = makeEnv({ EMAIL_API_KEY: undefined });
+    const env = makeEnv({ SMTP_PASSWORD: undefined });
     const sent = await sendResetPassword(env, {
       origin: 'https://clubs.example',
       userId: 'user_1',
@@ -117,17 +148,17 @@ describe('sendResetPassword', () => {
       token: 'tok123',
     });
     expect(sent).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendSmtpMessage).not.toHaveBeenCalled();
   });
 
-  it('propagates a provider failure to the caller', async () => {
-    fetchMock.mockResolvedValue(new Response('nope', { status: 500 }));
+  it('propagates a relay failure to the caller', async () => {
+    sendSmtpMessage.mockRejectedValue(new SmtpError(451, 'MAIL FROM', 'try again later'));
     await expect(sendResetPassword(makeEnv(), {
       origin: 'https://clubs.example',
       userId: 'user_1',
       email: 'parent@example.com',
       token: 'tok123',
-    })).rejects.toThrow(/500/);
+    })).rejects.toThrow(/451/);
   });
 });
 
@@ -141,10 +172,9 @@ describe('sendVerifyEmail', () => {
       email: 'parent@example.com',
       token: 'tok+123',
     });
-    const body = sentBody();
-    expect(body.html).toContain('https://clubs.example/api/auth/verify-email?token=tok%2B123');
-    expect(body.html).toContain(encodeURIComponent('https://clubs.example/east-leake/#/'));
-    expect(body.subject).toBe('Confirm your email for East Leake FC');
+    expect(part('text/html')).toContain('https://clubs.example/api/auth/verify-email?token=tok%2B123');
+    expect(part('text/html')).toContain(encodeURIComponent('https://clubs.example/east-leake/#/'));
+    expect(header('Subject')).toBe('Confirm your email for East Leake FC');
   });
 });
 
@@ -161,10 +191,9 @@ describe('sendImportWelcome', () => {
     });
 
     expect(sent).toBe(true);
-    const body = sentBody();
-    expect(body.subject).toBe('Set up your East Leake FC account');
-    expect(body.html).toContain('https://clubs.example/east-leake/#/reset-password?token=invite1');
-    expect(body.text).toContain('7 days');
+    expect(header('Subject')).toBe('Set up your East Leake FC account');
+    expect(part('text/html')).toContain('https://clubs.example/east-leake/#/reset-password?token=invite1');
+    expect(part('text/plain')).toContain('7 days');
   });
 
   it('drops the club prefix in single-club mode', async () => {
@@ -178,7 +207,7 @@ describe('sendImportWelcome', () => {
       email: 'parent@example.com',
       token: 'invite1',
     });
-    expect(sentBody().html).toContain('https://clubs.example/#/reset-password?token=invite1');
+    expect(part('text/html')).toContain('https://clubs.example/#/reset-password?token=invite1');
   });
 });
 
