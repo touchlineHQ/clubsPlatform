@@ -106,6 +106,34 @@
     ]
   },
   {
+    "event": "password reset completed",
+    "description": "Someone sets a new password from a reset or invitation link, completing the flow.",
+    "files": [
+      "website/src/pages/ResetPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset failed",
+    "description": "A reset submission was rejected — usually an expired, already-used or malformed token.",
+    "files": [
+      "website/src/pages/ResetPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset request failed",
+    "description": "The forgot-password request threw before returning. The form still shows its usual confirmation, so this is the only signal that something broke.",
+    "files": [
+      "website/src/pages/ForgotPasswordPage.tsx"
+    ]
+  },
+  {
+    "event": "password reset requested",
+    "description": "A visitor submits the forgot-password form. Captured whatever the outcome, since the form never reveals whether the address has an account.",
+    "files": [
+      "website/src/pages/ForgotPasswordPage.tsx"
+    ]
+  },
+  {
     "event": "payment completed",
     "description": "A player's GoCardless payment is confirmed and a subscription created.",
     "files": [

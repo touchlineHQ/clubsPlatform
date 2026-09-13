@@ -22,7 +22,7 @@ interface ImportResult {
   ok: boolean;
   players: { created: number; updated: number };
   users: { created: number; skipped: number };
-
+  invitations: { configured: boolean; sent: number; failed: number };
   errors: { fanId: string; reason: string }[];
 }
 
@@ -340,6 +340,22 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             <Stack gap={4}>
               <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
               <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
+              {/* A new account is unreachable until its owner is invited, so
+                  say plainly when nothing went out rather than leaving the
+                  count off the summary. */}
+              {result.users.created > 0 && (
+                result.invitations.configured ? (
+                  <Text size="sm">
+                    Invitations: <b>{result.invitations.sent}</b> sent
+                    {result.invitations.failed > 0 && <>, <b>{result.invitations.failed}</b> failed</>}
+                  </Text>
+                ) : (
+                  <Text size="sm" c="orange.8">
+                    No email provider is configured, so no set-password invitations were sent.
+                    These accounts cannot be signed into until one is.
+                  </Text>
+                )
+              )}
             </Stack>
           </Alert>
 

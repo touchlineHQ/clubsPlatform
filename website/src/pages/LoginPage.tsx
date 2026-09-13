@@ -44,6 +44,13 @@ export function LoginPage() {
       <Paper p="xl" radius="md" withBorder>
         <LoginForm onSuccess={handleSuccess} />
       </Paper>
+      {/* Lives here rather than in LoginForm: the platform landing page mounts
+          that form in a modal with no HashRouter to link through. */}
+      <Text size="sm" ta="center" c="dimmed" mt={-8}>
+        <Anchor component={Link} to="/forgot-password" fw={600}>
+          Forgot your password?
+        </Anchor>
+      </Text>
       <Text size="sm" ta="center" c="dimmed">
         Don't have an account?{' '}
         <Anchor
