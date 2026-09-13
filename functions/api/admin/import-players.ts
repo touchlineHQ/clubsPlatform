@@ -1,7 +1,11 @@
-import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
+import { invitationMessage } from "../../lib/account-email";
+import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs, isMultiClubMode } from "../../lib/api-helpers";
 import { hashPwd } from "../../lib/auth";
+import { clubLink, getClubIdentity } from "../../lib/club-identity";
+import { getMailer } from "../../lib/email";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
+import { SET_PASSWORD_TOKEN_TTL_MS, createSetPasswordToken } from "../../lib/set-password-token";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -17,8 +21,17 @@ interface ImportResult {
   ok: boolean;
   players: { created: number; updated: number };
   users: { created: number; skipped: number };
+  /**
+   * What happened to the set-password invitations. `configured` is false when
+   * no mail provider is set up, which is the difference between "nobody needed
+   * inviting" and "nothing went out and nobody knows their account exists".
+   */
+  invitations: { configured: boolean; sent: number; failed: number };
   errors: { fanId: string; reason: string }[];
 }
+
+/** How many invitations are in flight at once. */
+const INVITE_BATCH_SIZE = 10;
 
 export const IMPORT_LIMITS = {
   maxRows: 5000,
@@ -89,14 +102,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0, updated: 0 },
     users: { created: 0, skipped: 0 },
+    invitations: { configured: false, sent: 0, failed: 0 },
     errors: [],
   };
 
   // ── 1. Pre-process: build email→player maps ──────────────────────────────
   // email → Map<fanId, relationship>
   const emailRelMap = new Map<string, Map<string, "self" | "guardian">>();
-  // email that appears as player's own email → that player's fanId (for password)
-  const selfEmailToFan = new Map<string, string>();
 
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
@@ -106,7 +118,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (playerEmail) {
       if (!emailRelMap.has(playerEmail)) emailRelMap.set(playerEmail, new Map());
       emailRelMap.get(playerEmail)!.set(fanId, "self");
-      selfEmailToFan.set(playerEmail, fanId);
     }
 
     for (const raw of row.parentEmails ?? []) {
@@ -120,19 +131,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 2. Determine password FAN for each email ─────────────────────────────
-  const emailToPasswordFan = new Map<string, string>();
-  for (const [email, fanMap] of emailRelMap) {
-    if (selfEmailToFan.has(email)) {
-      emailToPasswordFan.set(email, selfEmailToFan.get(email)!);
-    } else {
-      // Guardian-only: use numerically smallest FAN
-      const sorted = [...fanMap.keys()].sort((a, b) => Number(a) - Number(b));
-      if (sorted.length > 0) emailToPasswordFan.set(email, sorted[0]);
-    }
-  }
-
-  // ── 3. Upsert players + registrations ────────────────────────────────────
+  // ── 2. Upsert players + registrations ────────────────────────────────────
   const fanIdToPlayerId = new Map<string, string>();
 
   for (const row of rows) {
@@ -194,7 +193,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 4. Upsert users + user_player links ──────────────────────────────────
+  // ── 3. Upsert users + user_player links ──────────────────────────────────
+  // Accounts created here are invited afterwards, in one batched pass.
+  const invitees: { email: string; userId: string }[] = [];
+
   for (const [email, fanMap] of emailRelMap) {
     try {
       // Find or create user
@@ -207,8 +209,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         importResult.users.skipped++;
       } else {
         const userId = randomId("user");
-        const passwordFan = emailToPasswordFan.get(email) ?? "";
-        const hashedPassword = passwordFan ? await hashPwd(passwordFan) : await hashPwd(crypto.randomUUID());
+        // An unguessable placeholder nobody is expected to know or use. This
+        // used to be the player's FAN ID, which is printed on team sheets and
+        // known to every coach in the age group — a guessable password on an
+        // account its owner had never been told about. The invitation below is
+        // how the account is actually reached.
+        const hashedPassword = await hashPwd(`${crypto.randomUUID()}${crypto.randomUUID()}`);
 
         await context.env.DB
           .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
@@ -222,6 +228,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
         userRow = { id: userId };
         importResult.users.created++;
+        invitees.push({ email, userId });
       }
 
       // Upsert user_player links
@@ -240,6 +247,65 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   const posthog = getPostHog(context.env);
+
+  // ── 4. Invite the accounts just created ──────────────────────────────────
+  // A provider failure here is recorded and reported back, never raised: the
+  // players and registrations are already written, and losing that work
+  // because a mail relay was down would be the worse outcome by far.
+  const mailer = getMailer(context.env);
+  importResult.invitations.configured = mailer !== null;
+
+  if (mailer && invitees.length > 0) {
+    const identity = await getClubIdentity(context.env.DB, clubSlug);
+    const clubName = identity?.name ?? "Your club";
+    const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
+    const multiClub = isMultiClubMode(context.env);
+    const expiryDays = Math.round(SET_PASSWORD_TOKEN_TTL_MS / (24 * 60 * 60 * 1000));
+
+    // Batched rather than one big Promise.all: an import can create hundreds of
+    // accounts, and firing that many outbound requests at once is how a worker
+    // hits its subrequest ceiling mid-import.
+    for (let i = 0; i < invitees.length; i += INVITE_BATCH_SIZE) {
+      const batch = invitees.slice(i, i + INVITE_BATCH_SIZE);
+      const outcomes = await Promise.allSettled(
+        batch.map(async ({ email, userId }) => {
+          const token = await createSetPasswordToken(context.env.DB, userId);
+          const link = clubLink(
+            baseURL,
+            clubSlug,
+            `/reset-password?token=${encodeURIComponent(token)}`,
+            multiClub,
+          );
+          const message = invitationMessage(clubName, link, expiryDays);
+          await mailer.send({
+            to: email,
+            subject: message.subject,
+            html: message.html,
+            text: message.text,
+            fromName: clubName,
+            ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
+          });
+        }),
+      );
+
+      for (const outcome of outcomes) {
+        if (outcome.status === "fulfilled") {
+          importResult.invitations.sent++;
+        } else {
+          importResult.invitations.failed++;
+        }
+      }
+    }
+
+    if (importResult.invitations.failed > 0 && posthog) {
+      await posthog.captureExceptionImmediate(
+        new Error(`${importResult.invitations.failed} import invitation(s) could not be sent`),
+        adminId,
+        { source: "import-players-invite", club_slug: clubSlug },
+      );
+    }
+  }
+
   if (posthog) {
     await posthog.captureImmediate({
       distinctId: adminId,
@@ -252,6 +318,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         players_updated: importResult.players.updated,
         users_created: importResult.users.created,
         users_skipped: importResult.users.skipped,
+        invitations_sent: importResult.invitations.sent,
+        invitations_failed: importResult.invitations.failed,
+        mail_configured: importResult.invitations.configured,
         error_count: importResult.errors.length,
       },
     });

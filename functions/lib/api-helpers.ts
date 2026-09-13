@@ -13,6 +13,8 @@ export interface Env {
   SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
+  RESEND_API_KEY?: string; // Cloudflare secret — transactional mail is disabled without it
+  FROM_EMAIL?: string;
 }
 
 /** Create a JSON Response with the appropriate Content-Type header. */

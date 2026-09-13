@@ -105,6 +105,42 @@ Note that `vars` is non-inheritable for Pages: because both `[env.production]`
 and `[env.preview]` override it, a variable added only to the top-level
 `[vars]` block will not reach either deployment. Add it to both env blocks.
 
+## Transactional email
+
+Password resets, sign-up verification and player-import invitations are sent
+through [Resend](https://resend.com). Two values configure it:
+
+| Value | Where it is set | Notes |
+|-------|-----------------|-------|
+| `RESEND_API_KEY` | Pages **secret**, per environment | Cannot be set in the dashboard UI — same reason as `POSTHOG_API_KEY` above. |
+| `FROM_EMAIL` | `wrangler.toml`, in **both** env blocks | Must be on a domain verified with Resend. |
+
+```sh
+npx wrangler pages secret put RESEND_API_KEY --project-name clubsplatform
+npx wrangler pages secret put RESEND_API_KEY --project-name clubsplatform --env preview
+```
+
+`getMailer()` returns `null` unless **both** are present, and every call site
+is guarded. A deployment without them keeps working and simply cannot send —
+a password reset returns its usual "check your email" and nothing arrives,
+rather than failing with a 500. If mail stops going out, check these first.
+
+**Mail is addressed as the club, not the platform.** The display name comes
+from `club_config.name` and the reply-to from the club's own contact address,
+which lives inside the `data` JSON blob rather than in a column of its own —
+a club that has not filled in its contact details gets no reply-to, which is
+why every send treats it as optional. The **address** stays `FROM_EMAIL`,
+because that is the domain the provider will authenticate.
+
+Links point into the club's own site, including the `/<slug>/` prefix in
+multi-club mode and the `#` the HashRouter needs. Without the prefix a reset
+link lands the recipient on the platform directory instead of their club.
+
+**Email verification is recorded but not enforced.** `requireEmailVerification`
+is deliberately off: every account that exists today has `emailVerified = 0`,
+including every parent created by the FA import, so turning it on would lock
+out the entire user base at deploy. Enforcing it needs a backfill first.
+
 ### Source maps
 
 The frontend ships as one minified chunk, so an exception captured in

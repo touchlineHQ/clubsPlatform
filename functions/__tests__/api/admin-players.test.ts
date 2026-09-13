@@ -320,6 +320,97 @@ describe('import-players POST', () => {
     expect(body.error).toMatch(/parentEmails/i);
   });
 
+  // ── invitations ────────────────────────────────────────────────────────────
+
+  /** One row whose parent gets a brand new account. */
+  const oneNewParent = {
+    rows: [
+      {
+        fanId: 'FAN010',
+        ageGroup: 'U11',
+        teamName: 'U11 Boys',
+        registrationExpiry: '2026-07-31',
+        registrationStatus: 'active',
+        playerEmail: null,
+        parentEmails: ['parent@example.com'],
+      },
+    ],
+  };
+
+  function importCtx(db: unknown, env: Record<string, unknown> = {}) {
+    return makeContext(
+      postReq('/api/admin/import-players', oneNewParent, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any, ...env } },
+    ) as any;
+  }
+
+  const MAIL_ENV = { RESEND_API_KEY: 'test-key', FROM_EMAIL: 'noreply@platform.example' };
+
+  it('invites the accounts it creates', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      // Every .first() is null (nothing pre-exists) except the club lookup,
+      // which the invitation pass makes last.
+      const db = makeDb({ first: [null, null, null, { slug: 'test-club', name: 'Test Club', data: null }] });
+      const res = await importPlayersPost(importCtx(db, MAIL_ENV));
+
+      const body = await res.json() as any;
+      expect(body.invitations).toEqual({ configured: true, sent: 1, failed: 0 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const sent = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(sent.to).toEqual(['parent@example.com']);
+      expect(sent.subject).toBe('Set up your Test Club account');
+      expect(sent.text).toMatch(/#\/reset-password\?token=/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports when no provider is configured, rather than looking successful', async () => {
+    const db = makeDb({ first: null });
+    const res = await importPlayersPost(importCtx(db));
+
+    const body = await res.json() as any;
+    expect(body.ok).toBe(true);
+    expect(body.users.created).toBe(1);
+    expect(body.invitations).toEqual({ configured: false, sent: 0, failed: 0 });
+  });
+
+  it('completes the import when the provider fails, counting what did not go out', async () => {
+    const fetchMock = vi.fn(async () => new Response('relay down', { status: 502 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const db = makeDb({ first: [null, null, null, { slug: 'test-club', name: 'Test Club', data: null }] });
+      const res = await importPlayersPost(importCtx(db, MAIL_ENV));
+
+      // The players and registrations are already written; losing them because
+      // a mail relay was down would be the worse outcome by far.
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body.ok).toBe(true);
+      expect(body.players.created).toBe(1);
+      expect(body.invitations).toEqual({ configured: true, sent: 0, failed: 1 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('gives a created account an unguessable password, never the FAN ID', async () => {
+    const db = makeDb({ first: null });
+    await importPlayersPost(importCtx(db));
+
+    // hashPwd is mocked at the top of this file, so the argument is what the
+    // account password would have been derived from.
+    const { hashPwd } = await import('../../lib/auth');
+    for (const call of vi.mocked(hashPwd).mock.calls) {
+      expect(call[0]).not.toContain('FAN010');
+      expect((call[0] as string).length).toBeGreaterThanOrEqual(32);
+    }
+    expect(vi.mocked(hashPwd)).toHaveBeenCalled();
+  });
+
   it('returns 400 when rows exceed the max', async () => {
     const db = makeDb();
     const rows = Array.from({ length: 5001 }, (_, i) => ({
