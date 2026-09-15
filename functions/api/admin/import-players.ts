@@ -362,6 +362,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   // ── 8. Apply players + registrations ─────────────────────────────────────
   for (const plan of rowPlans) {
+    // The counters are a forecast made while planning. A write that fails has to
+    // take its own count back down, or the totals contradict the error list
+    // printed beside them.
+    const uncountRegistration = () => {
+      if (plan.existingRegId) importResult.registrations.updated--;
+      else importResult.registrations.created--;
+    };
+
     try {
       if (plan.createPlayer) {
         await db
@@ -374,7 +382,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           .bind(nowMs(), plan.playerId)
           .run();
       }
+    } catch (err) {
+      if (plan.createPlayer) {
+        importResult.players.created--;
+        // The player row was never written, so drop the mapping too: otherwise
+        // the user pass links an account to a player that does not exist and
+        // reports a second, spurious failure for the same row.
+        fanIdToPlayerId.delete(plan.fanId);
+      }
+      // Its registration never gets attempted below.
+      uncountRegistration();
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+      continue;
+    }
 
+    try {
       if (plan.existingRegId) {
         await db
           .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
@@ -387,6 +409,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           .run();
       }
     } catch (err) {
+      uncountRegistration();
       importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
     }
   }

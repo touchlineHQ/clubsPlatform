@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { renderWithMantine, mockAdmin } from '../../test-utils';
 
 // The panel reads the workbook with SheetJS. Stubbing it keeps these tests
@@ -49,14 +49,27 @@ const previewBody = (over: Record<string, unknown> = {}) => ({
 /** Build the minimal successful fetch response used by these tests. */
 const jsonOk = (body: unknown) => ({ ok: true, json: async () => body });
 
+/**
+ * Render the panel and return a `select` that picks a workbook. The dropzone
+ * unmounts once a file is parsed, so selecting a second one means re-querying
+ * the input after "Change file" has brought it back.
+ */
+function renderPanel() {
+  const { container } = renderWithMantine(<ImportPlayersPanel />, { authValue: mockAdmin });
+  const select = (name = 'players.xlsx') => {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['x'], name, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+  };
+  return { container, select };
+}
+
 /** Render the panel and select a representative player workbook. */
 function dropFile() {
-  const { container } = renderWithMantine(<ImportPlayersPanel />, { authValue: mockAdmin });
-  const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-  const file = new File(['x'], 'players.xlsx', {
-    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  });
-  fireEvent.change(input, { target: { files: [file] } });
+  const { container, select } = renderPanel();
+  select();
   return container;
 }
 
@@ -145,5 +158,38 @@ describe('ImportPlayersPanel preview', () => {
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
     expect(JSON.parse(mockFetch.mock.calls[1][1].body).dryRun).toBeUndefined();
+  });
+
+  it('ignores a superseded preview that resolves after the current one', async () => {
+    // Two previews in flight, resolving in reverse order. If the abandoned one
+    // is allowed to land, the admin approves one file's stale list and commits
+    // a different file's rows.
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    mockFetch
+      .mockReturnValueOnce(new Promise(r => { resolveFirst = r; }))
+      .mockReturnValueOnce(new Promise(r => { resolveSecond = r; }));
+
+    const { select } = renderPanel();
+    select('first.xlsx');
+
+    // Abandon it mid-flight and pick another file.
+    fireEvent.click(await screen.findByRole('button', { name: /Change file/ }));
+    select('second.xlsx');
+
+    await act(async () => {
+      resolveSecond(jsonOk(previewBody({ registrations: { created: 7, updated: 8 } })));
+    });
+    expect(await screen.findByText('7 to create')).toBeInTheDocument();
+
+    // The abandoned request now answers. It must change nothing.
+    await act(async () => {
+      resolveFirst(jsonOk(previewBody({ registrations: { created: 1, updated: 1 } })));
+    });
+
+    expect(screen.getByText('7 to create')).toBeInTheDocument();
+    expect(screen.getByText('8 to update')).toBeInTheDocument();
+    expect(screen.queryByText('1 to create')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Import 2 players/ })).not.toBeDisabled();
   });
 });

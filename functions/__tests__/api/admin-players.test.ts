@@ -350,9 +350,27 @@ function prepared(db: any): { sql: string; bindings: unknown[] }[] {
   }));
 }
 
-/** Return only the mutating statements prepared by the import handler. */
+/**
+ * Tables the import handler is allowed to touch. Naming them keeps the
+ * assertion independent of anything a shared helper might prepare — today
+ * test-utils mocks ensure-tables, so its COLUMN_MIGRATIONS never run, but the
+ * assertion should not quietly depend on that staying true.
+ */
+const IMPORT_TABLES = [
+  'player',
+  'player_registration',
+  'club_import_log',
+  'user',
+  'account',
+  'user_player',
+];
+
+/** Return only the mutating statements the import handler aims at its own tables. */
 const writes = (db: any) =>
-  prepared(db).filter(p => /^\s*(INSERT|UPDATE|DELETE)/i.test(p.sql));
+  prepared(db).filter(p =>
+    /^\s*(INSERT|UPDATE|DELETE)/i.test(p.sql)
+    && IMPORT_TABLES.some(t => new RegExp(`"${t}"`).test(p.sql)),
+  );
 
 /** A row as the FA report would give it to us. */
 const row = (over: Record<string, unknown> = {}) => ({
@@ -527,6 +545,54 @@ describe('import-players POST — counters and the import stamp', () => {
     expect(body.players.created).toBe(0);
     expect(body.registrations.created).toBe(0);
     expect(body.registrations.updated).toBe(1);
+  });
+
+  /**
+   * makeDb's `run` is one shared mock, so it cannot fail a single statement.
+   * This builds the smallest D1 stand-in that throws for one SQL pattern and
+   * behaves normally for everything else.
+   */
+  function dbFailingOn(pattern: RegExp, held: unknown[] = []) {
+    const prepare = vi.fn((sql: string) => {
+      const bound = {
+        all: vi.fn(async () => ({ results: held, success: true, meta: {} })),
+        first: vi.fn(async () => null),
+        run: vi.fn(async () => {
+          if (pattern.test(sql)) throw new Error('D1_ERROR: constraint failed');
+          return { results: [], success: true, meta: { changes: 1 } };
+        }),
+      };
+      return { ...bound, bind: vi.fn(() => bound) };
+    });
+    return { prepare, exec: vi.fn(async () => ({})), batch: vi.fn(async () => []) };
+  }
+
+  it('takes back the count when a registration write fails', async () => {
+    const db = dbFailingOn(/INSERT INTO "player_registration"/);
+    const { body } = await runImport(db, [row()], false);
+
+    // Planning forecast one creation; the write failed, so the total must not
+    // still claim it alongside the error.
+    expect(body.registrations.created).toBe(0);
+    expect(body.players.created).toBe(1);
+    expect(body.errors).toHaveLength(1);
+    expect(body.errors[0].fanId).toBe('FAN001');
+  });
+
+  it('takes back both counts when the player write fails, and skips its links', async () => {
+    const db = dbFailingOn(/INSERT INTO "player" \(/);
+    const { body } = await runImport(
+      db,
+      [row({ parentEmails: ['parent@example.com'] })],
+      false,
+    );
+
+    expect(body.players.created).toBe(0);
+    expect(body.registrations.created).toBe(0);
+    // One failure, reported once — not a second FK error from a link to a
+    // player row that was never written.
+    expect(body.errors).toHaveLength(1);
+    expect(prepared(db).some(p => /user_player/.test(p.sql))).toBe(false);
   });
 
   it('stamps club_import_log on a real import', async () => {

@@ -187,9 +187,22 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState('');
+  /**
+   * Which preview request the panel is currently showing.
+   *
+   * Picking a second file while the first is still in flight would otherwise let
+   * the first response land against the second file's rows: the counts and the
+   * stale list on screen would describe a file the admin is no longer importing,
+   * and the commit button would enable on that basis. Every response checks it
+   * still owns this counter before touching state.
+   */
+  const previewRequestVersion = useRef(0);
 
   /** Ask the server what this file would do, without letting it do any of it. */
   async function runPreview(parsed: ParsedPlayerRow[]) {
+    const requestVersion = ++previewRequestVersion.current;
+    const isCurrent = () => requestVersion === previewRequestVersion.current;
+
     setPreviewing(true);
     setPreviewError('');
     setPreview(null);
@@ -203,16 +216,21 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
         const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
         throw new Error(err.error ?? `HTTP ${res.status}`);
       }
-      setPreview(await res.json() as ImportResult);
+      const data = await res.json() as ImportResult;
+      if (isCurrent()) setPreview(data);
     } catch (err) {
-      setPreviewError(String(err));
+      if (isCurrent()) setPreviewError(String(err));
     } finally {
-      setPreviewing(false);
+      // A superseded request must not clear the flag: the request that replaced
+      // it is still running, and the commit button reads this.
+      if (isCurrent()) setPreviewing(false);
     }
   }
 
   /** Reset all state derived from the server-side import preview. */
   function clearPreview() {
+    // Abandons any in-flight preview, so a late response cannot revive it.
+    previewRequestVersion.current += 1;
     setPreview(null);
     setPreviewError('');
     setPreviewing(false);
