@@ -1,0 +1,27 @@
+{
+  // Pages Functions are a separate TypeScript project from website/: they run
+  // on workerd, not in a browser, and they resolve their dependencies (hono,
+  // better-auth, posthog-node) from the ROOT package.json — esbuild resolves
+  // upward from functions/ at deploy time and never looks in
+  // website/node_modules. Keeping this config here means `tsc` resolves them
+  // the same way the real bundle does.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    // Deliberately no "DOM". @cloudflare/workers-types supplies Request,
+    // Response, crypto, btoa/atob and TextEncoder, plus the ambient
+    // PagesFunction and D1Database these routes are written against. Adding
+    // DOM alongside it redeclares all of those and buries the real errors
+    // under a wall of duplicate-identifier noise.
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"]
+  },
+  "include": ["**/*.ts"],
+  // Tests are not typechecked yet: they resolve @testing-library and vitest
+  // from the root node_modules, which needs a third project to model.
+  "exclude": ["__tests__"]
+}

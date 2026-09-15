@@ -15,6 +15,31 @@ export interface Env {
   POSTHOG_HOST?: string;
 }
 
+/**
+ * The session better-auth hands back once a request is authenticated.
+ *
+ * Derived from createAuth rather than written out by hand so it keeps tracking
+ * better-auth's own shape across upgrades.
+ */
+type Session = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof createAuth>["api"]["getSession"]>>
+>;
+
+/**
+ * What an auth guard returns: either a ready-to-send error Response, or the
+ * success payload the caller asked for.
+ *
+ * This union has to be written out rather than inferred. Left to inference,
+ * TypeScript normalises the two return shapes into
+ * `{ error: Response; session?: undefined } | { session: Session; error?: undefined }`
+ * — every arm carries an `error` key, so `if ("error" in result)` stops
+ * discriminating, `result.error` widens to `Response | undefined`, and every
+ * handler that returns it infers `Promise<Response | undefined>` and no longer
+ * satisfies `PagesFunction`. That was 54 of the 56 errors the first typecheck
+ * of functions/ reported, across 30 route files.
+ */
+export type Guard<T> = { error: Response } | T;
+
 /** Create a JSON Response with the appropriate Content-Type header. */
 export function json(res: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(res), {
@@ -57,7 +82,7 @@ export function getClubSlug(request: Request): string | null {
  */
 export async function requireAdmin(
   context: EventContext<Env, string, unknown>,
-) {
+): Promise<Guard<{ session: Session }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
@@ -99,7 +124,7 @@ export async function requireAdmin(
  */
 export async function requireManagerOrAdmin(
   context: EventContext<Env, string, unknown>,
-) {
+): Promise<Guard<{ session: Session; role: string }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
@@ -136,7 +161,9 @@ export async function requireManagerOrAdmin(
 }
 
 /** Verify the request has valid authentication and return the session. Returns an error response for unauthenticated users. */
-export async function requireAuth(context: EventContext<Env, string, unknown>) {
+export async function requireAuth(
+  context: EventContext<Env, string, unknown>,
+): Promise<Guard<{ session: Session; role: string }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });

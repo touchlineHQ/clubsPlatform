@@ -73,7 +73,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   }
 
   const base = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : defaultClub(row.slug, row.name);
-  const club = { ...base, slug: row.slug, name: row.name };
+  // Annotated because `base` is a union — stored JSON or the default shape —
+  // and spreading it gives a union that declares neither colour column, so the
+  // two optional overrides below have nowhere to land. This is only ever
+  // serialised by json(), so the open record loses nothing.
+  const club: Record<string, unknown> = { ...base, slug: row.slug, name: row.name };
   if (row.primaryColor) club.primaryColor = row.primaryColor;
   if (row.secondaryColor) club.secondaryColor = row.secondaryColor;
 
