@@ -176,6 +176,13 @@
     ]
   },
   {
+    "event": "players import previewed",
+    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind — no writes happen. Counts only; no FAN numbers.",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
     "event": "players imported",
     "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts.",
     "files": [

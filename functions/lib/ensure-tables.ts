@@ -62,6 +62,8 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_clubSlug" ON "admin_audit_log" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_targetId" ON "admin_audit_log" ("targetId")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_createdAt" ON "admin_audit_log" ("createdAt")`,
+  `CREATE TABLE IF NOT EXISTS "club_import_log" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "importedAt" INTEGER NOT NULL, "rowCount" INTEGER NOT NULL, "adminId" TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_import_log_clubSlug_importedAt" ON "club_import_log" ("clubSlug", "importedAt")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [

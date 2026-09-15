@@ -18,12 +18,23 @@ interface ParsedPlayerRow {
   parentEmails: string[];
 }
 
+/** A registration the club holds that the uploaded file no longer mentions. */
+interface StaleRegistration {
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
+}
+
+// Mirrors the server's ImportResult in functions/api/admin/import-players.ts.
+// There is no shared module between functions/ and website/, so the two are
+// kept in step by hand.
 interface ImportResult {
   ok: boolean;
-  players: { created: number; updated: number };
+  players: { created: number };
+  registrations: { created: number; updated: number };
   users: { created: number; skipped: number };
-
   errors: { fanId: string; reason: string }[];
+  stale: { count: number; rows: StaleRegistration[] };
 }
 
 const KNOWN_HEADERS: Record<string, keyof ColIndex> = {
@@ -121,6 +132,42 @@ function summarise(rows: ParsedPlayerRow[]) {
   return { uniqueFans: uniqueFans.size, uniqueTeams: uniqueTeams.size, allEmails: allEmails.size, guardianOnlyEmails: guardianOnlyEmails.size };
 }
 
+/**
+ * Registrations the club holds for a team in the file, for players the file
+ * does not list. Nothing here is deleted — an admin decides what to do.
+ */
+function StaleTable({ rows }: { rows: StaleRegistration[] }) {
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Title order={6} ff={clubDesign.font.heading} fw={800} mb={4}>
+        No longer in the file
+      </Title>
+      <Text size="xs" c="dimmed" mb="xs">
+        These registrations are not in the file but stay in the club’s records. Nothing is
+        removed automatically.
+      </Text>
+      <Table fz="xs">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>FAN ID</Table.Th>
+            <Table.Th>Team</Table.Th>
+            <Table.Th>Current status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((r, i) => (
+            <Table.Tr key={i}>
+              <Table.Td>{r.fanId}</Table.Td>
+              <Table.Td>{r.teamName}</Table.Td>
+              <Table.Td>{r.registrationStatus || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Paper>
+  );
+}
+
 interface ImportPlayersPanelProps {
   onImported?: () => void;
 }
@@ -136,12 +183,45 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [apiError, setApiError] = useState('');
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+
+  /** Ask the server what this file would do, without letting it do any of it. */
+  async function runPreview(parsed: ParsedPlayerRow[]) {
+    setPreviewing(true);
+    setPreviewError('');
+    setPreview(null);
+    try {
+      const res = await fetch('/api/admin/import-players', {
+        method: 'POST',
+        headers: { ...clubHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: parsed, dryRun: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      setPreview(await res.json() as ImportResult);
+    } catch (err) {
+      setPreviewError(String(err));
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  function clearPreview() {
+    setPreview(null);
+    setPreviewError('');
+    setPreviewing(false);
+  }
 
   function handleFile(file: File) {
     setResult(null);
     setApiError('');
     setParseErrors([]);
     setRows(null);
+    clearPreview();
     setFileName(file.name);
 
     const reader = new FileReader();
@@ -156,6 +236,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           setParseErrors(errors);
         } else {
           setRows(parsed);
+          void runPreview(parsed);
         }
       } catch (err) {
         setParseErrors([`Failed to read file: ${String(err)}`]);
@@ -171,7 +252,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   }
 
   async function handleConfirm() {
-    if (!rows) return;
+    if (!rows || !preview) return;
     setImporting(true);
     setApiError('');
     try {
@@ -187,6 +268,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       const data = await res.json() as ImportResult;
       setResult(data);
       setRows(null);
+      clearPreview();
       onImported?.();
     } catch (err) {
       setApiError(String(err));
@@ -267,7 +349,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               <Title order={5} ff={clubDesign.font.heading} fw={800}>{fileName}</Title>
               <Text size="sm" c="dimmed">Preview — review before importing</Text>
             </Box>
-            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setRows(null); setFileName(''); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setRows(null); setFileName(''); clearPreview(); }}>
               Change file
             </Button>
           </Group>
@@ -308,6 +390,44 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             </ScrollArea>
           </Paper>
 
+          {previewing && (
+            <Group gap="xs">
+              <Loader size={14} />
+              <Text size="sm" c="dimmed">Checking this file against the club’s records…</Text>
+            </Group>
+          )}
+
+          {previewError && (
+            <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not preview this import">
+              <Text size="sm">{previewError}</Text>
+              <Button mt="sm" size="xs" radius="xl" variant="outline" onClick={() => void runPreview(rows)}>
+                Try again
+              </Button>
+            </Alert>
+          )}
+
+          {preview && (
+            <Stack gap="md">
+              <Group gap="xs">
+                <Badge color="green" radius="xl" variant="light">
+                  {preview.registrations.created} to create
+                </Badge>
+                <Badge color="blue" radius="xl" variant="light">
+                  {preview.registrations.updated} to update
+                </Badge>
+                <Badge
+                  color={preview.stale.count ? 'orange' : 'gray'}
+                  radius="xl"
+                  variant="light"
+                >
+                  {preview.stale.count} no longer in file
+                </Badge>
+              </Group>
+
+              {preview.stale.count > 0 && <StaleTable rows={preview.stale.rows} />}
+            </Stack>
+          )}
+
           <Box>
             <Button
               radius="xl"
@@ -315,7 +435,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               leftSection={importing ? <Loader size={14} color="white" /> : <IconUsers size={16} />}
               onClick={handleConfirm}
               loading={importing}
-              disabled={importing}
+              disabled={importing || previewing || !preview}
             >
               Import {rows.length} player{rows.length !== 1 ? 's' : ''}
             </Button>
@@ -338,10 +458,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             title={result.errors.length ? 'Import completed with warnings' : 'Import successful'}
           >
             <Stack gap={4}>
-              <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
+              <Text size="sm">New players: <b>{result.players.created}</b></Text>
+              <Text size="sm">Registrations: <b>{result.registrations.created}</b> created, <b>{result.registrations.updated}</b> updated</Text>
               <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
+              <Text size="sm">No longer in the file: <b>{result.stale.count}</b></Text>
             </Stack>
           </Alert>
+
+          {result.stale.count > 0 && <StaleTable rows={result.stale.rows} />}
 
           {result.errors.length > 0 && (
             <Paper withBorder radius="md" p="md">
@@ -366,7 +490,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           )}
 
           <Box>
-            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); clearPreview(); }}>
               Import another file
             </Button>
           </Box>

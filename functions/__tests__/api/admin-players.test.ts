@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
 import { makeContext, makeDb, adminSession, getReq, postReq, patchReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -336,6 +336,206 @@ describe('import-players POST', () => {
     expect(res.status).toBe(400);
     const body = await res.json() as { error: string };
     expect(body.error).toMatch(/too many/i);
+  });
+});
+
+// ─── import-players.ts: dry-run preview and the stale list ────────────────────
+
+/** Every statement the handler prepared, with what it was bound to. */
+function prepared(db: any): { sql: string; bindings: unknown[] }[] {
+  const prepare = db.prepare as Mock;
+  return prepare.mock.calls.map((call: unknown[], i: number) => ({
+    sql: call[0] as string,
+    bindings: prepare.mock.results[i].value.bind.mock.calls[0] ?? [],
+  }));
+}
+
+const writes = (db: any) =>
+  prepared(db).filter(p => /^\s*(INSERT|UPDATE|DELETE)/i.test(p.sql));
+
+/** A row as the FA report would give it to us. */
+const row = (over: Record<string, unknown> = {}) => ({
+  fanId: 'FAN001',
+  ageGroup: 'U11',
+  teamName: 'U11 Boys',
+  registrationExpiry: '2025-07-31',
+  registrationStatus: 'Active',
+  playerEmail: '',
+  parentEmails: [],
+  ...over,
+});
+
+/** A registration as D1 already holds it. */
+const heldRow = (over: Record<string, unknown> = {}) => ({
+  id: 'preg_1',
+  playerId: 'player_1',
+  fanId: 'FAN001',
+  teamName: 'U11 Boys',
+  registrationStatus: 'Active',
+  ...over,
+});
+
+/**
+ * `all` is queue-of-queues in makeDb — passing the rows directly would hand back
+ * the first row rather than the list.
+ */
+const dbHolding = (held: unknown[]) =>
+  makeDb({ all: [held], first: null, run: { meta: { changes: 1 } } });
+
+async function runImport(db: any, rows: unknown[], dryRun?: boolean) {
+  const payload: Record<string, unknown> = { rows };
+  if (dryRun !== undefined) payload.dryRun = dryRun;
+  const req = postReq('/api/admin/import-players', payload, { 'X-Club-Slug': 'test-club' });
+  const ctx = makeContext(req, { env: { DB: db as any } });
+  const res = await importPlayersPost(ctx as any);
+  return { res, body: await res.json() as any };
+}
+
+describe('import-players POST — preview', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('writes nothing when dryRun is true', async () => {
+    const db = dbHolding([heldRow()]);
+    const { res, body } = await runImport(
+      db,
+      [row(), row({ fanId: 'FAN002', playerEmail: 'parent@example.com' })],
+      true,
+    );
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(writes(db)).toEqual([]);
+    // The import stamp is a write too — a preview must not move it.
+    expect(prepared(db).some(p => /club_import_log/.test(p.sql))).toBe(false);
+  });
+
+  it('reports the same counts a real import would, including repeated FANs', async () => {
+    // One player, two teams, and the first team listed twice. The duplicate is
+    // the case that used to double-count: in the old handler the first row's
+    // INSERT was what made the second row's SELECT find the record.
+    const rows = [
+      row({ fanId: 'FAN003', teamName: 'Team A' }),
+      row({ fanId: 'FAN003', teamName: 'Team B' }),
+      row({ fanId: 'FAN003', teamName: 'Team A' }),
+    ];
+
+    const { body: dry } = await runImport(dbHolding([]), rows, true);
+    const { body: real } = await runImport(dbHolding([]), rows, false);
+
+    expect(dry.players).toEqual(real.players);
+    expect(dry.registrations).toEqual(real.registrations);
+    expect(dry.users).toEqual(real.users);
+
+    expect(dry.players.created).toBe(1);
+    expect(dry.registrations.created).toBe(2);
+    expect(dry.registrations.updated).toBe(1);
+  });
+
+  it('rejects a non-boolean dryRun', async () => {
+    const { res, body } = await runImport(dbHolding([]), [row()], 'yes' as any);
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/dryRun/i);
+  });
+});
+
+describe('import-players POST — stale registrations', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('lists a registration the file no longer mentions', async () => {
+    const db = dbHolding([
+      heldRow(),
+      heldRow({ id: 'preg_2', playerId: 'player_2', fanId: 'FAN999', registrationStatus: 'Cancelled' }),
+    ]);
+    const { body } = await runImport(db, [row({ fanId: 'FAN001' })], true);
+
+    expect(body.stale.count).toBe(1);
+    expect(body.stale.rows).toEqual([
+      { fanId: 'FAN999', teamName: 'U11 Boys', registrationStatus: 'Cancelled' },
+    ]);
+  });
+
+  it('does not list a registration whose team name differs only by whitespace', async () => {
+    const db = dbHolding([heldRow({ teamName: 'U11  Boys' })]);
+    const { body } = await runImport(db, [row({ teamName: 'U11 Boys' })], true);
+
+    expect(body.stale.count).toBe(0);
+    // ...and it is matched as an update rather than imported a second time.
+    expect(body.registrations.updated).toBe(1);
+    expect(body.registrations.created).toBe(0);
+  });
+
+  it('does not list a submitted row that has no existing registration', async () => {
+    const db = dbHolding([]);
+    const { body } = await runImport(db, [row()], true);
+
+    expect(body.stale.count).toBe(0);
+    expect(body.registrations.created).toBe(1);
+  });
+
+  it('is empty when the file covers every registration', async () => {
+    const db = dbHolding([
+      heldRow(),
+      heldRow({ id: 'preg_2', playerId: 'player_2', fanId: 'FAN002' }),
+    ]);
+    const { body } = await runImport(
+      db,
+      [row({ fanId: 'FAN001' }), row({ fanId: 'FAN002' })],
+      true,
+    );
+
+    expect(body.stale.count).toBe(0);
+  });
+
+  it('ignores teams the file does not cover, so a partial export is safe', async () => {
+    const db = dbHolding([
+      heldRow(),
+      heldRow({ id: 'preg_2', playerId: 'player_2', fanId: 'FAN500', teamName: 'U15 Girls' }),
+    ]);
+    const { body } = await runImport(db, [row({ fanId: 'FAN001', teamName: 'U11 Boys' })], true);
+
+    expect(body.stale.count).toBe(0);
+  });
+});
+
+describe('import-players POST — counters and the import stamp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  it('counts a new team for an existing player as a registration, not a player', async () => {
+    const db = dbHolding([heldRow()]);
+    const { body } = await runImport(db, [row({ teamName: 'U13 Boys' })], true);
+
+    expect(body.players.created).toBe(0);
+    expect(body.registrations.created).toBe(1);
+    expect(body.registrations.updated).toBe(0);
+  });
+
+  it('counts an unchanged squad as updates with nothing created', async () => {
+    const db = dbHolding([heldRow()]);
+    const { body } = await runImport(db, [row()], true);
+
+    expect(body.players.created).toBe(0);
+    expect(body.registrations.created).toBe(0);
+    expect(body.registrations.updated).toBe(1);
+  });
+
+  it('stamps club_import_log on a real import', async () => {
+    const db = dbHolding([]);
+    await runImport(db, [row(), row({ fanId: 'FAN002' })], false);
+
+    const stamp = prepared(db).find(p => /INSERT INTO "club_import_log"/.test(p.sql));
+    expect(stamp).toBeDefined();
+    expect(stamp!.bindings).toEqual(
+      expect.arrayContaining(['test-club', 2, 'user_1']),
+    );
   });
 });
 
