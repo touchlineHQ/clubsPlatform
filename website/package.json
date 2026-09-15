@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "api:gen": "openapi-typescript ../openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {

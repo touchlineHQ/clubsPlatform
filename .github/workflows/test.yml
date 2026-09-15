@@ -27,6 +27,12 @@ jobs:
         run: npm ci
         working-directory: website
 
+      # Before the suite, not after: a type error surfaces in seconds instead
+      # of behind a full vitest run. functions/ has no other compiler gate —
+      # vitest strips its types with esbuild and never checks them.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Run tests with coverage
         run: npm run test:coverage
 

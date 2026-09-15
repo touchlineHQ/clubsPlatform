@@ -34,6 +34,35 @@ make db-migrate-local   # Apply migrations to local D1
 make db-migrate-prod    # Apply migrations to production D1
 ```
 
+### Checks
+
+```bash
+npm run typecheck    # tsc over functions/ and website/src
+npm run test         # vitest, both halves
+npm run test:coverage   # same, with the 80% thresholds enforced
+```
+
+Both run in CI on every pull request, and again on the job that gates
+deployment — a failure in either stops the release.
+
+**`functions/` and `website/` are separate TypeScript projects**, and have to
+be. Pages Functions run on workerd rather than in a browser, so
+`functions/tsconfig.json` builds against `@cloudflare/workers-types` with no
+`DOM` lib — that package supplies its own `Request`, `Response`, `crypto` and
+`TextEncoder`, and adding `DOM` alongside it redeclares all of them. They also
+resolve `hono`, `better-auth` and `posthog-node` from the **root**
+`package.json`, because esbuild resolves upward from `functions/` at deploy
+time and never looks in `website/node_modules`. Keeping the config at
+`functions/` makes `tsc` resolve them the same way the real bundle does.
+
+**Test files are not typechecked yet.** Root `package.json` carries
+`@mantine/*`, `react-router-dom` and `@testing-library/*` as devDependencies so
+vitest can run the website's tests from the repo root — so website *source*
+resolves against `website/node_modules` while website *tests* resolve against
+the root one. Covering tests means a third project to reconcile that split.
+
+There is no `npm run lint` yet — no linter is configured in this repo.
+
 ## Environment Variables
 
 Set in `wrangler.toml` under `[vars]`:

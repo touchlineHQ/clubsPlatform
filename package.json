@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "typecheck": "tsc -p functions/tsconfig.json && cd website && npm run typecheck",
     "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
@@ -36,6 +37,7 @@
     "dayjs": "^1.11.20",
     "jsdom": "^25.0.0",
     "react-router-dom": "^7.13.2",
+    "typescript": "^5.4.0",
     "vitest": "^2.0.0",
     "wrangler": "^4.112.0",
     "xlsx": "^0.18.5"

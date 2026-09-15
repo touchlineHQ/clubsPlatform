@@ -31,6 +31,10 @@ jobs:
       - name: Install website dependencies
         run: npm ci
         working-directory: website
+      # Same gate as test.yml. Deploy depends on this job, so a type error
+      # stops the release rather than shipping.
+      - name: Typecheck
+        run: npm run typecheck
       - name: Run tests with coverage
         run: npm run test:coverage
 
