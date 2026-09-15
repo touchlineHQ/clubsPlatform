@@ -662,6 +662,7 @@ function exportRegistrationsToXlsx(
   XLSX.writeFile(wb, filename);
 }
 
+/** Display personal or club registrations and the latest player-import time. */
 export function RegistrationsPage() {
   const { clubSlug } = useClub();
   const [personal, setPersonal] = useState<RegistrationRow[]>([]);
@@ -684,6 +685,7 @@ export function RegistrationsPage() {
   const [unmarkPaidError, setUnmarkPaidError] = useState('');
   const [lastImportedAt, setLastImportedAt] = useState<number | null>(null);
 
+  /** Reload the registrations and import timestamp for the active club. */
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -844,6 +846,7 @@ export function RegistrationsPage() {
     }
   }, [clubSlug, refresh]);
 
+  /** Close the import dialog and reload the newly imported registrations. */
   const handleImported = () => {
     closeImport();
     refresh();

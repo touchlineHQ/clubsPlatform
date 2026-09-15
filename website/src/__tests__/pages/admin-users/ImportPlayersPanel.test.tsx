@@ -26,6 +26,8 @@ import { ImportPlayersPanel } from '../../../pages/admin-users/ImportPlayersPane
  */
 class SyncFileReader {
   onload: ((e: { target: { result: ArrayBuffer } }) => void) | null = null;
+
+  /** Deliver a small buffer synchronously to the registered load callback. */
   readAsArrayBuffer() {
     this.onload?.({ target: { result: new ArrayBuffer(8) } });
   }
@@ -33,6 +35,7 @@ class SyncFileReader {
 
 const mockFetch = vi.fn();
 
+/** Build a successful preview response with optional field overrides. */
 const previewBody = (over: Record<string, unknown> = {}) => ({
   ok: true,
   players: { created: 1 },
@@ -43,8 +46,10 @@ const previewBody = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** Build the minimal successful fetch response used by these tests. */
 const jsonOk = (body: unknown) => ({ ok: true, json: async () => body });
 
+/** Render the panel and select a representative player workbook. */
 function dropFile() {
   const { container } = renderWithMantine(<ImportPlayersPanel />, { authValue: mockAdmin });
   const input = container.querySelector('input[type="file"]') as HTMLInputElement;

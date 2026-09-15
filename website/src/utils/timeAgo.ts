@@ -4,6 +4,7 @@ const DAY = 24 * HOUR;
 const MONTH = 30 * DAY;
 const YEAR = 365 * DAY;
 
+/** Format a past quantity with the appropriate singular or plural unit. */
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
 
 /**

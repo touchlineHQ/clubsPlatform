@@ -108,6 +108,7 @@ interface HeldRegistration {
 const regKey = (fanId: string, teamName: string) =>
   JSON.stringify([fanId, normaliseTeamName(teamName)]);
 
+/** Preview or commit a player import for the authenticated club administrator. */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;

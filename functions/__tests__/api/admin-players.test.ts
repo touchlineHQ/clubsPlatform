@@ -350,6 +350,7 @@ function prepared(db: any): { sql: string; bindings: unknown[] }[] {
   }));
 }
 
+/** Return only the mutating statements prepared by the import handler. */
 const writes = (db: any) =>
   prepared(db).filter(p => /^\s*(INSERT|UPDATE|DELETE)/i.test(p.sql));
 
@@ -382,6 +383,7 @@ const heldRow = (over: Record<string, unknown> = {}) => ({
 const dbHolding = (held: unknown[]) =>
   makeDb({ all: [held], first: null, run: { meta: { changes: 1 } } });
 
+/** Invoke the import handler with the supplied rows and return its JSON response. */
 async function runImport(db: any, rows: unknown[], dryRun?: boolean) {
   const payload: Record<string, unknown> = { rows };
   if (dryRun !== undefined) payload.dryRun = dryRun;

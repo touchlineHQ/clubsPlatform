@@ -172,6 +172,7 @@ interface ImportPlayersPanelProps {
   onImported?: () => void;
 }
 
+/** Parse, preview, and commit an FA player report selected by an administrator. */
 export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug };
@@ -210,12 +211,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     }
   }
 
+  /** Reset all state derived from the server-side import preview. */
   function clearPreview() {
     setPreview(null);
     setPreviewError('');
     setPreviewing(false);
   }
 
+  /** Parse a selected workbook and request a dry-run preview for its rows. */
   function handleFile(file: File) {
     setResult(null);
     setApiError('');
@@ -245,12 +248,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     reader.readAsArrayBuffer(file);
   }
 
+  /** Pass the first dropped file through the normal workbook-selection flow. */
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
   }
 
+  /** Commit the previously previewed import and display its result. */
   async function handleConfirm() {
     if (!rows || !preview) return;
     setImporting(true);
