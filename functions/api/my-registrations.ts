@@ -190,6 +190,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       personal: personalRows.results,
       club: null,
       scope: "user",
+      lastImportedAt: null,
     });
   }
 
@@ -238,10 +239,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     clubRows.results,
   );
 
+  // Lets the page say how old the numbers on screen are. Dry-run previews write
+  // no log row, so this only ever moves on a committed import.
+  const lastImport = await context.env.DB
+    .prepare(`SELECT MAX(importedAt) AS importedAt FROM "club_import_log" WHERE clubSlug = ?`)
+    .bind(clubSlug)
+    .first<{ importedAt: number | null }>();
+
   return json({
     personal: personalRows.results,
     club,
     scope: "admin",
+    lastImportedAt: lastImport?.importedAt ?? null,
   });
 };
 

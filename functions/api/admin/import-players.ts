@@ -2,6 +2,7 @@ import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../.
 import { hashPwd } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
+import { normaliseTeamName } from "../../lib/team-name";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -13,11 +14,21 @@ export interface ParsedPlayerRow {
   parentEmails: string[]; // split and trimmed
 }
 
+/** A registration held in D1 that the uploaded file no longer mentions. */
+export interface StaleRegistration {
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
+}
+
 interface ImportResult {
   ok: boolean;
-  players: { created: number; updated: number };
+  /** Player identity rows inserted. A returning player counts in neither field. */
+  players: { created: number };
+  registrations: { created: number; updated: number };
   users: { created: number; skipped: number };
   errors: { fanId: string; reason: string }[];
+  stale: { count: number; rows: StaleRegistration[] };
 }
 
 export const IMPORT_LIMITS = {
@@ -53,6 +64,51 @@ function validateImportRow(row: unknown): string | null {
   return null;
 }
 
+/**
+ * What one uploaded row resolves to, worked out without touching the database.
+ *
+ * `createPlayer` / `existingRegId` are decided once, in the read-only planning
+ * pass, so that a dry run and the real import agree on every count. Doing the
+ * decision inline with the writes (as this handler used to) makes that
+ * impossible: the first row's INSERT is what made the second row's SELECT find
+ * the player, so a read-only pass would count the same creation twice.
+ */
+interface RowPlan {
+  fanId: string;
+  playerId: string;
+  createPlayer: boolean;
+  teamName: string;
+  ageGroup: string | null;
+  expiry: string | null;
+  status: string | null;
+  /** Set when the registration already exists (or an earlier row will create it). */
+  existingRegId: string | null;
+  /** Set when this row is the one that inserts the registration. */
+  newRegId: string | null;
+}
+
+interface UserPlan {
+  email: string;
+  existingUserId: string | null;
+  newUserId: string;
+  passwordFan: string;
+  fanMap: Map<string, "self" | "guardian">;
+}
+
+/** A registration as D1 currently holds it. */
+interface HeldRegistration {
+  id: string;
+  playerId: string;
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
+}
+
+/** Key for "this player, this team", on the normalised team name. */
+const regKey = (fanId: string, teamName: string) =>
+  JSON.stringify([fanId, normaliseTeamName(teamName)]);
+
+/** Preview or commit a player import for the authenticated club administrator. */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
@@ -63,8 +119,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
   let rows: ParsedPlayerRow[];
+  let dryRun: boolean;
   try {
-    const body = await context.request.json() as { rows?: unknown };
+    const body = await context.request.json() as { rows?: unknown; dryRun?: unknown };
     if (!Array.isArray(body.rows)) {
       return json({ error: "Expected { rows: [] }" }, { status: 400 });
     }
@@ -74,6 +131,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         { status: 400 },
       );
     }
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return json({ error: "dryRun must be a boolean" }, { status: 400 });
+    }
     for (let i = 0; i < body.rows.length; i++) {
       const err = validateImportRow(body.rows[i]);
       if (err) {
@@ -81,15 +141,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       }
     }
     rows = body.rows as ParsedPlayerRow[];
+    dryRun = body.dryRun === true;
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const db = context.env.DB;
   const importResult: ImportResult = {
     ok: true,
-    players: { created: 0, updated: 0 },
+    players: { created: 0 },
+    registrations: { created: 0, updated: 0 },
     users: { created: 0, skipped: 0 },
     errors: [],
+    stale: { count: 0, rows: [] },
   };
 
   // ── 1. Pre-process: build email→player maps ──────────────────────────────
@@ -132,8 +196,41 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 3. Upsert players + registrations ────────────────────────────────────
+  // ── 3. Read what the club already holds ──────────────────────────────────
+  // One query serves two jobs: it is the index the upsert matches against, and
+  // it is the set the stale list is subtracted from. Doing both from the same
+  // rows is what keeps the two consistent — matching registrations on the raw
+  // team name while computing staleness on the normalised one would quietly
+  // create a duplicate registration for every "Under  13"/"Under 13" variant
+  // and then report neither as stale.
+  const heldRegistrations = await db
+    .prepare(
+      `SELECT pr.id AS id, pr.playerId AS playerId, p.fanId AS fanId,
+              pr.teamName AS teamName, pr.registrationStatus AS registrationStatus
+         FROM "player_registration" pr
+         JOIN "player" p ON p.id = pr.playerId
+        WHERE pr.clubSlug = ?
+        ORDER BY pr.teamName ASC, p.fanId ASC`,
+    )
+    .bind(clubSlug)
+    .all<HeldRegistration>();
+
+  const held = heldRegistrations.results ?? [];
+  const heldByKey = new Map<string, HeldRegistration>();
   const fanIdToPlayerId = new Map<string, string>();
+  for (const reg of held) {
+    heldByKey.set(regKey(reg.fanId, reg.teamName), reg);
+    // A player with a registration at this club certainly exists, so this saves
+    // a per-row SELECT for the common case of a returning squad.
+    fanIdToPlayerId.set(reg.fanId, reg.playerId);
+  }
+
+  // ── 4. Plan players + registrations (reads only) ─────────────────────────
+  const rowPlans: RowPlan[] = [];
+  // Registrations an earlier row has already decided to insert. Consulting
+  // these is what keeps a file that lists the same FAN and team twice from
+  // counting one creation twice.
+  const plannedRegIds = new Map<string, string>();
 
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
@@ -143,62 +240,57 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     try {
-      // Upsert player (identity — no club, no registration info)
-      const existingPlayer = await context.env.DB
-        .prepare(`SELECT id FROM "player" WHERE fanId = ? LIMIT 1`)
-        .bind(fanId)
-        .first<{ id: string }>();
+      // Resolve the player identity (no club, no registration info)
+      let playerId = fanIdToPlayerId.get(fanId);
+      let createPlayer = false;
+      if (!playerId) {
+        const existingPlayer = await db
+          .prepare(`SELECT id FROM "player" WHERE fanId = ? LIMIT 1`)
+          .bind(fanId)
+          .first<{ id: string }>();
 
-      let playerId: string;
-      if (existingPlayer) {
-        playerId = existingPlayer.id;
-        await context.env.DB
-          .prepare(`UPDATE "player" SET updatedAt = ? WHERE id = ?`)
-          .bind(nowMs(), playerId)
-          .run();
-      } else {
-        playerId = randomId("player");
-        await context.env.DB
-          .prepare(`INSERT INTO "player" (id, fanId, createdAt, updatedAt) VALUES (?, ?, ?, ?)`)
-          .bind(playerId, fanId, nowMs(), nowMs())
-          .run();
-        importResult.players.created++;
+        if (existingPlayer) {
+          playerId = existingPlayer.id;
+        } else {
+          playerId = randomId("player");
+          createPlayer = true;
+          importResult.players.created++;
+        }
+        fanIdToPlayerId.set(fanId, playerId);
       }
-      fanIdToPlayerId.set(fanId, playerId);
 
-      // Upsert player_registration
       const teamName = String(row.teamName ?? "").trim();
       const ageGroup = String(row.ageGroup ?? "").trim() || null;
       const expiry = String(row.registrationExpiry ?? "").trim() || null;
       const status = String(row.registrationStatus ?? "").trim() || null;
 
-      const existingReg = await context.env.DB
-        .prepare(`SELECT id FROM "player_registration" WHERE clubSlug = ? AND playerId = ? AND teamName = ? LIMIT 1`)
-        .bind(clubSlug, playerId, teamName)
-        .first<{ id: string }>();
+      const key = regKey(fanId, teamName);
+      const existingRegId =
+        heldByKey.get(key)?.id ?? plannedRegIds.get(key) ?? null;
 
-      if (existingReg) {
-        await context.env.DB
-          .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
-          .bind(ageGroup, expiry, status, nowMs(), existingReg.id)
-          .run();
-        importResult.players.updated++;
+      let newRegId: string | null = null;
+      if (existingRegId) {
+        importResult.registrations.updated++;
       } else {
-        await context.env.DB
-          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(randomId("preg"), clubSlug, playerId, teamName, ageGroup, expiry, status, nowMs(), nowMs())
-          .run();
+        newRegId = randomId("preg");
+        plannedRegIds.set(key, newRegId);
+        importResult.registrations.created++;
       }
+
+      rowPlans.push({
+        fanId, playerId, createPlayer, teamName,
+        ageGroup, expiry, status, existingRegId, newRegId,
+      });
     } catch (err) {
       importResult.errors.push({ fanId, reason: String(err) });
     }
   }
 
-  // ── 4. Upsert users + user_player links ──────────────────────────────────
+  // ── 5. Plan users (reads only) ───────────────────────────────────────────
+  const userPlans: UserPlan[] = [];
   for (const [email, fanMap] of emailRelMap) {
     try {
-      // Find or create user
-      let userRow = await context.env.DB
+      const userRow = await db
         .prepare(`SELECT id FROM "user" WHERE email = ? LIMIT 1`)
         .bind(email)
         .first<{ id: string }>();
@@ -206,40 +298,169 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       if (userRow) {
         importResult.users.skipped++;
       } else {
-        const userId = randomId("user");
-        const passwordFan = emailToPasswordFan.get(email) ?? "";
-        const hashedPassword = passwordFan ? await hashPwd(passwordFan) : await hashPwd(crypto.randomUUID());
-
-        await context.env.DB
-          .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
-          .bind(userId, email, clubSlug, nowMs(), nowMs())
-          .run();
-
-        await context.env.DB
-          .prepare(`INSERT INTO "account" (id, accountId, providerId, userId, password, createdAt, updatedAt) VALUES (?, ?, 'credential', ?, ?, ?, ?)`)
-          .bind(randomId("acc"), email, userId, hashedPassword, nowMs(), nowMs())
-          .run();
-
-        userRow = { id: userId };
         importResult.users.created++;
       }
 
-      // Upsert user_player links
-      for (const [fanId, relationship] of fanMap) {
-        const playerId = fanIdToPlayerId.get(fanId);
-        if (!playerId) continue;
-        await context.env.DB
-          .prepare(`INSERT OR IGNORE INTO "user_player" (id, userId, playerId, relationship, createdAt) VALUES (?, ?, ?, ?, ?)`)
-          .bind(randomId("up"), userRow.id, playerId, relationship, nowMs())
-          .run();
-      }
+      userPlans.push({
+        email,
+        existingUserId: userRow?.id ?? null,
+        newUserId: randomId("user"),
+        passwordFan: emailToPasswordFan.get(email) ?? "",
+        fanMap,
+      });
     } catch (err) {
       importResult.errors.push({ fanId: email, reason: String(err) });
     }
   }
 
+  // ── 6. Work out what the file leaves behind ──────────────────────────────
+  // Only teams the file actually covers can go stale. Without that guard a
+  // single-team export would report every other team in the club as missing.
+  const submittedTeams = new Set<string>();
+  const submittedKeys = new Set<string>();
+  for (const row of rows) {
+    const fanId = String(row.fanId ?? "").trim();
+    if (!fanId) continue;
+    const team = normaliseTeamName(String(row.teamName ?? ""));
+    submittedTeams.add(team);
+    submittedKeys.add(regKey(fanId, team));
+  }
+
+  for (const reg of held) {
+    const team = normaliseTeamName(reg.teamName ?? "");
+    if (!submittedTeams.has(team)) continue;
+    if (submittedKeys.has(regKey(reg.fanId, team))) continue;
+    importResult.stale.rows.push({
+      fanId: reg.fanId,
+      teamName: reg.teamName,
+      registrationStatus: reg.registrationStatus ?? null,
+    });
+  }
+  importResult.stale.count = importResult.stale.rows.length;
+
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   const posthog = getPostHog(context.env);
+
+  // ── 7. Preview stops here — nothing above this line writes ───────────────
+  if (dryRun) {
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: adminId,
+        event: 'players import previewed',
+        ...clubGroups(clubSlug),
+        properties: {
+          club_slug: clubSlug,
+          rows_submitted: rows.length,
+          to_create: importResult.registrations.created,
+          to_update: importResult.registrations.updated,
+          stale_count: importResult.stale.count,
+        },
+      });
+    }
+    return json(importResult);
+  }
+
+  // ── 8. Apply players + registrations ─────────────────────────────────────
+  for (const plan of rowPlans) {
+    // The counters are a forecast made while planning. A write that fails has to
+    // take its own count back down, or the totals contradict the error list
+    // printed beside them.
+    const uncountRegistration = () => {
+      if (plan.existingRegId) importResult.registrations.updated--;
+      else importResult.registrations.created--;
+    };
+
+    try {
+      if (plan.createPlayer) {
+        await db
+          .prepare(`INSERT INTO "player" (id, fanId, createdAt, updatedAt) VALUES (?, ?, ?, ?)`)
+          .bind(plan.playerId, plan.fanId, nowMs(), nowMs())
+          .run();
+      } else {
+        await db
+          .prepare(`UPDATE "player" SET updatedAt = ? WHERE id = ?`)
+          .bind(nowMs(), plan.playerId)
+          .run();
+      }
+    } catch (err) {
+      if (plan.createPlayer) {
+        importResult.players.created--;
+        // The player row was never written, so drop the mapping too: otherwise
+        // the user pass links an account to a player that does not exist and
+        // reports a second, spurious failure for the same row.
+        fanIdToPlayerId.delete(plan.fanId);
+      }
+      // Its registration never gets attempted below.
+      uncountRegistration();
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+      continue;
+    }
+
+    try {
+      if (plan.existingRegId) {
+        await db
+          .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
+          .bind(plan.ageGroup, plan.expiry, plan.status, nowMs(), plan.existingRegId)
+          .run();
+      } else {
+        await db
+          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(plan.newRegId, clubSlug, plan.playerId, plan.teamName, plan.ageGroup, plan.expiry, plan.status, nowMs(), nowMs())
+          .run();
+      }
+    } catch (err) {
+      uncountRegistration();
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+    }
+  }
+
+  // ── 9. Apply users + user_player links ───────────────────────────────────
+  for (const plan of userPlans) {
+    try {
+      let userId = plan.existingUserId;
+
+      if (!userId) {
+        userId = plan.newUserId;
+        const hashedPassword = plan.passwordFan
+          ? await hashPwd(plan.passwordFan)
+          : await hashPwd(crypto.randomUUID());
+
+        await db
+          .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
+          .bind(userId, plan.email, clubSlug, nowMs(), nowMs())
+          .run();
+
+        await db
+          .prepare(`INSERT INTO "account" (id, accountId, providerId, userId, password, createdAt, updatedAt) VALUES (?, ?, 'credential', ?, ?, ?, ?)`)
+          .bind(randomId("acc"), plan.email, userId, hashedPassword, nowMs(), nowMs())
+          .run();
+      }
+
+      // Upsert user_player links
+      for (const [fanId, relationship] of plan.fanMap) {
+        const playerId = fanIdToPlayerId.get(fanId);
+        if (!playerId) continue;
+        await db
+          .prepare(`INSERT OR IGNORE INTO "user_player" (id, userId, playerId, relationship, createdAt) VALUES (?, ?, ?, ?, ?)`)
+          .bind(randomId("up"), userId, playerId, relationship, nowMs())
+          .run();
+      }
+    } catch (err) {
+      importResult.errors.push({ fanId: plan.email, reason: String(err) });
+    }
+  }
+
+  // ── 10. Stamp the import so the Registrations page can age the data ───────
+  try {
+    await db
+      .prepare(`INSERT INTO "club_import_log" (id, clubSlug, importedAt, rowCount, adminId) VALUES (?, ?, ?, ?, ?)`)
+      .bind(randomId("imp"), clubSlug, nowMs(), rows.length, adminId)
+      .run();
+  } catch (err) {
+    // A missing stamp is not worth failing an otherwise good import over.
+    importResult.errors.push({ fanId: "(import log)", reason: String(err) });
+  }
+
   if (posthog) {
     await posthog.captureImmediate({
       distinctId: adminId,
@@ -249,10 +470,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         club_slug: clubSlug,
         rows_submitted: rows.length,
         players_created: importResult.players.created,
-        players_updated: importResult.players.updated,
+        registrations_created: importResult.registrations.created,
+        registrations_updated: importResult.registrations.updated,
         users_created: importResult.users.created,
         users_skipped: importResult.users.skipped,
         error_count: importResult.errors.length,
+        stale_count: importResult.stale.count,
       },
     });
   }

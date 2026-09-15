@@ -15,6 +15,7 @@ import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 import { captureError, captureEvent } from '../lib/posthog';
+import { timeAgo } from '../utils/timeAgo';
 
 interface RegistrationRow {
   registrationId: string;
@@ -43,6 +44,8 @@ interface Response {
   personal: RegistrationRow[];
   club: RegistrationRow[] | null;
   scope: 'admin' | 'user';
+  /** Epoch ms of the club's most recent committed player import; admins only. */
+  lastImportedAt: number | null;
 }
 
 const DEFAULT_VALUE = '__default__';
@@ -659,6 +662,7 @@ function exportRegistrationsToXlsx(
   XLSX.writeFile(wb, filename);
 }
 
+/** Display personal or club registrations and the latest player-import time. */
 export function RegistrationsPage() {
   const { clubSlug } = useClub();
   const [personal, setPersonal] = useState<RegistrationRow[]>([]);
@@ -679,7 +683,9 @@ export function RegistrationsPage() {
   const [manualBusyId, setManualBusyId] = useState<string | null>(null);
   const [manualError, setManualError] = useState('');
   const [unmarkPaidError, setUnmarkPaidError] = useState('');
+  const [lastImportedAt, setLastImportedAt] = useState<number | null>(null);
 
+  /** Reload the registrations and import timestamp for the active club. */
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -692,6 +698,7 @@ export function RegistrationsPage() {
       setPersonal(data.personal);
       setClub(data.club);
       setScope(data.scope);
+      setLastImportedAt(data.lastImportedAt ?? null);
     } catch (e) {
       captureError(e, { op: 'registrations.refresh' });
       setError('Failed to load registrations');
@@ -839,6 +846,7 @@ export function RegistrationsPage() {
     }
   }, [clubSlug, refresh]);
 
+  /** Close the import dialog and reload the newly imported registrations. */
   const handleImported = () => {
     closeImport();
     refresh();
@@ -958,6 +966,19 @@ export function RegistrationsPage() {
         subtitle={isAdmin
           ? 'Your linked registrations, plus all registrations across the club.'
           : 'Player registrations linked to your account.'}
+        below={isAdmin ? (
+          <Box px={{ base: 'md', sm: 'xl' }} py="xs">
+            <Text size="xs" c="dimmed">
+              {lastImportedAt === null ? (
+                'Player data has never been imported.'
+              ) : (
+                <Tooltip label={new Date(lastImportedAt).toLocaleString()} withArrow>
+                  <span>Player data last imported {timeAgo(lastImportedAt)}</span>
+                </Tooltip>
+              )}
+            </Text>
+          </Box>
+        ) : undefined}
       />
 
       {error && <Alert color="red" variant="light">{error}</Alert>}

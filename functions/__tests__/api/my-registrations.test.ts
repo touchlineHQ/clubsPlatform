@@ -146,8 +146,10 @@ describe('onRequestGet', () => {
       { env: { DB: db as any } },
     );
     await onRequestGet(ctx as any);
-    // Personal + club queries only — no third lookup.
-    expect((db.prepare as any).mock.calls.length).toBe(2);
+    // Name the query rather than counting statements — the handler also reads
+    // club_import_log for the "last imported" stamp, which is unrelated.
+    const sql = (db.prepare as any).mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(sql.some((s: string) => /admin_audit_log/.test(s))).toBe(false);
   });
 
   it('hides the manual override from players but keeps it for admins', async () => {
