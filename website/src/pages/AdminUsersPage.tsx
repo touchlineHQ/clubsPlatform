@@ -9,6 +9,7 @@ import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { dedupeOptions } from '../utils/selectOptions';
 
 interface UserRow {
   id: string;
@@ -224,10 +225,11 @@ export function AdminUsersPage({ liveTeams }: Props) {
     label: `${t.name} (${t.league})`,
   }));
 
-  const teamOptions = [
+  // liveTeams comes from the external feed, which can repeat a team.
+  const teamOptions = dedupeOptions([
     ...definedTeamOptions,
     { group: 'Dynamic Teams', items: dynamicTeamOptions },
-  ];
+  ]);
 
   const roleOptions = [
     { value: 'coach', label: 'Coach' },
