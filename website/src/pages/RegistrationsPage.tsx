@@ -12,11 +12,13 @@ import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
+import { StatTileRow } from '../components/club/StatTile';
 import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 import { captureError, captureEvent } from '../lib/posthog';
 import { timeAgo } from '../utils/timeAgo';
 import { getSubscriptionStatus } from '../utils/subscriptionStatus';
+import { summariseRegistrations } from '../utils/registrationSummary';
 
 interface RegistrationRow {
   registrationId: string;
@@ -574,6 +576,26 @@ function EmptyState({ isAdmin, scope }: { isAdmin: boolean; scope: 'personal' | 
   );
 }
 
+/** Counts over the filtered rows; registrations and players differ for a multi-team player. */
+function RegistrationsSummary({ rows }: { rows: RegistrationRow[] }) {
+  const summary = useMemo(() => summariseRegistrations(rows), [rows]);
+
+  return (
+    <Box role="group" aria-label="Registrations summary">
+      <StatTileRow
+        cols={5}
+        items={[
+          { value: summary.registrations, label: 'Registrations' },
+          { value: summary.players, label: 'Players' },
+          { value: summary.paying, label: 'Paying' },
+          { value: summary.outstanding, label: 'Outstanding' },
+          { value: summary.noLevel, label: 'No level assigned' },
+        ]}
+      />
+    </Box>
+  );
+}
+
 function buildPaymentLink(origin: string, clubSlug: string, fanId: string): string {
   return `${origin}/${clubSlug}/payments/SUBS/${encodeURIComponent(fanId)}`;
 }
@@ -899,6 +921,8 @@ export function RegistrationsPage() {
       </Group>
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
       {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
+      {/* Same rows as the Export button; zeroes when a filter matches nothing. */}
+      {club.length > 0 && <RegistrationsSummary rows={filteredClub ?? club} />}
       {club.length === 0 ? (
         <EmptyState isAdmin={isAdmin} scope="club" />
       ) : filteredClub && filteredClub.length === 0 ? (
