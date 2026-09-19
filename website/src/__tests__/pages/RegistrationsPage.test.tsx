@@ -39,6 +39,27 @@ const sampleRow = {
 };
 
 describe('RegistrationsPage', () => {
+  /** Renders as an admin and switches to the Club Registrations tab. */
+  async function renderClubTab(club: unknown[]) {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ personal: [], club, scope: 'admin' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    // The team name also appears in the filter dropdown, so key off the
+    // toolbar instead to know the club table has rendered.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+  }
+
   it('renders personal registrations returned by API', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -181,27 +202,6 @@ describe('RegistrationsPage', () => {
       manualPaidAt: 1755000000000,
       manualNote: 'cash at training',
     };
-
-    /** Renders as an admin and switches to the Club Registrations tab. */
-    async function renderClubTab(club: unknown[]) {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({ personal: [], club, scope: 'admin' }),
-      });
-
-      renderWithMantine(<RegistrationsPage />, {
-        authValue: mockAdmin,
-        clubValue: mockSingleClub,
-      });
-
-      await waitFor(() => {
-        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-      });
-      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
-      // The team name also appears in the filter dropdown, so key off the
-      // toolbar instead to know the club table has rendered.
-      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
-    }
 
     it('shows a manually paid registration as Paid in full, with a marker for the admin', async () => {
       await renderClubTab([manualRow]);
@@ -358,6 +358,103 @@ describe('RegistrationsPage', () => {
       await waitFor(() => {
         expect(screen.getByText('Could not undo this payment')).toBeTruthy();
       });
+    });
+  });
+
+  // ─── Summary strip ──────────────────────────────────────────────────────────
+
+  describe('summary strip', () => {
+    // FAN-1 plays for two teams, so registrations (4) and players (3) differ.
+    const summaryClub = [
+      { ...sampleRow, registrationId: 'reg_1', fanId: 'FAN-1', teamName: 'First XI', paymentStatus: 'active' },
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'FAN-1', teamName: 'Reserves', paymentStatus: 'completed' },
+      { ...sampleRow, registrationId: 'reg_3', fanId: 'FAN-2', teamName: 'First XI', paymentStatus: null },
+      {
+        ...sampleRow,
+        registrationId: 'reg_4',
+        fanId: 'FAN-3',
+        teamName: 'Reserves',
+        paymentStatus: null,
+        subscriptionLevelId: null,
+        subscriptionLevelName: null,
+      },
+    ];
+
+    /** Reads a tile's number by its label — StatTile renders value and label as siblings. */
+    function statValue(label: string): string {
+      const strip = screen.getByRole('group', { name: /registrations summary/i });
+      return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
+    }
+
+    /** Picks an option from one of the filter Selects. */
+    async function chooseFilter(filter: RegExp, option: string) {
+      fireEvent.click(screen.getByRole('combobox', { name: filter }));
+      // Click inside the retry: Mantine closes the dropdown a tick after it opens.
+      await waitFor(() => {
+        const opt = screen.queryByRole('option', { name: option });
+        expect(opt).toBeTruthy();
+        fireEvent.click(opt!);
+      });
+    }
+
+    it('counts the club rows above the table', async () => {
+      await renderClubTab(summaryClub);
+
+      expect(statValue('Registrations')).toBe('4');
+      expect(statValue('Players')).toBe('3');
+      expect(statValue('Paying')).toBe('2');
+      expect(statValue('Outstanding')).toBe('1');
+      expect(statValue('No level assigned')).toBe('1');
+    });
+
+    it('recomputes when the team filter changes', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by team/i, 'Reserves');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('2'));
+      expect(statValue('Players')).toBe('2');
+      expect(statValue('Paying')).toBe('1');
+      expect(statValue('No level assigned')).toBe('1');
+    });
+
+    it('recomputes when the subscription status filter changes', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by subscription/i, 'Paying');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('1'));
+      expect(statValue('Paying')).toBe('1');
+      expect(statValue('Outstanding')).toBe('0');
+    });
+
+    it('renders zeroes rather than blanks when no row matches the filters', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by subscription/i, 'Cancelled');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('0'));
+      for (const label of ['Players', 'Paying', 'Outstanding', 'No level assigned']) {
+        expect(statValue(label)).toBe('0');
+      }
+      expect(screen.getByText(/No registrations match the current filters/i)).toBeTruthy();
+    });
+
+    it('makes no further network calls when the filters change', async () => {
+      await renderClubTab(summaryClub);
+      const callsAfterLoad = mockFetch.mock.calls.length;
+
+      await chooseFilter(/filter by team/i, 'Reserves');
+      await waitFor(() => expect(statValue('Registrations')).toBe('2'));
+
+      expect(mockFetch.mock.calls.length).toBe(callsAfterLoad);
+    });
+
+    it('leaves the empty state alone when the club has no registrations', async () => {
+      await renderClubTab([]);
+
+      expect(screen.queryByRole('group', { name: /registrations summary/i })).toBeNull();
+      expect(screen.getByText(/No registrations yet for this club/i)).toBeTruthy();
     });
   });
 
