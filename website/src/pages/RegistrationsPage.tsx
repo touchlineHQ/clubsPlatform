@@ -16,6 +16,7 @@ import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 import { captureError, captureEvent } from '../lib/posthog';
 import { timeAgo } from '../utils/timeAgo';
+import { getSubscriptionStatus } from '../utils/subscriptionStatus';
 
 interface RegistrationRow {
   registrationId: string;
@@ -56,42 +57,6 @@ type SortDir = 'asc' | 'desc';
 interface SortState {
   key: SortKey;
   dir: SortDir;
-}
-
-type SubStatus = 'paid' | 'paying' | 'setup' | 'outstanding' | 'cancelled';
-
-interface SubStatusInfo {
-  status: SubStatus;
-  label: string;
-  color: string;
-}
-
-/**
- * `row.paymentStatus` is the token /api/my-registrations collapses a
- * registration's payment rows into; the canonical list of the underlying
- * database statuses lives in functions/lib/payment-status.ts.
- *
- * Green means the season is paid for and nothing more is owed. Blue means a
- * Direct Debit is collecting without error, which is the state a treasurer
- * needs to tell apart from a finished one.
- */
-function getSubscriptionStatus(row: RegistrationRow): SubStatusInfo {
-  switch (row.paymentStatus) {
-    case 'completed':
-    // A manual admin override is a paid player — identical badge, so filtering,
-    // sorting and the export all treat them the same. Only the admin table adds
-    // a marker showing who overrode it.
-    case 'manual':
-      return { status: 'paid', label: 'Paid in full', color: 'green' };
-    case 'active':
-      return { status: 'paying', label: 'Paying', color: 'blue' };
-    case 'pending':
-      return { status: 'setup', label: 'Mandate set up', color: 'cyan' };
-    case 'inactive':
-      return { status: 'cancelled', label: 'Cancelled', color: 'red' };
-    default:
-      return { status: 'outstanding', label: 'Outstanding', color: 'orange' };
-  }
 }
 
 function compareValues(a: string | null | undefined, b: string | null | undefined): number {
