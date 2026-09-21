@@ -24,6 +24,8 @@ export function FileDropzone({ onFile, hint }: FileDropzoneProps) {
       withBorder
       radius="md"
       p="xl"
+      role="button"
+      tabIndex={0}
       style={{
         borderStyle: 'dashed',
         cursor: 'pointer',
@@ -38,6 +40,11 @@ export function FileDropzone({ onFile, hint }: FileDropzoneProps) {
       }}
       onDragOver={e => e.preventDefault()}
       onClick={() => inputRef.current?.click()}
+      onKeyDown={e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        if (e.key === ' ') e.preventDefault();
+        inputRef.current?.click();
+      }}
       onMouseEnter={e => {
         e.currentTarget.style.borderColor = 'var(--mantine-primary-color-filled)';
       }}

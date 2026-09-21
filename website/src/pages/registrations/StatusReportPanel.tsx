@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Alert, Badge, Button, Checkbox, Group, Stack, Text, Title } from '@mantine/core';
 import { IconAlertCircle, IconFileSpreadsheet } from '@tabler/icons-react';
 import * as XLSX from 'xlsx';
@@ -45,6 +45,7 @@ export function StatusReportPanel({
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [includeCancelled, setIncludeCancelled] = useState(false);
+  const readSequence = useRef(0);
 
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
@@ -61,6 +62,7 @@ export function StatusReportPanel({
 
   /** Parse a chosen workbook; nothing leaves the browser. */
   function handleFile(file: File) {
+    const readToken = ++readSequence.current;
     setFaRows(null);
     setParseErrors([]);
     setWarnings([]);
@@ -68,6 +70,7 @@ export function StatusReportPanel({
 
     const reader = new FileReader();
     reader.onload = (e) => {
+      if (readToken !== readSequence.current) return;
       try {
         const { parsed, errors, warnings: found } = parseReportSheet(readWorkbookRows(e.target?.result));
         if (errors.length) {

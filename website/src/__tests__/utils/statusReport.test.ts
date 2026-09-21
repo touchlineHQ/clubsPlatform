@@ -210,6 +210,20 @@ describe('buildStatusReport', () => {
       expect(rows.map(r => r.fanId)).toEqual(['FAN002']);
     });
 
+    it('keeps matched FA details when only the registration satisfies the page filter', () => {
+      const rows = buildStatusReport(
+        [fa({ registrationStatus: 'Active' })],
+        [reg({ registrationStatus: 'Pending' })],
+        { faFilter: { registrationStatus: 'Pending' } },
+      );
+
+      expect(rows[0]).toMatchObject({
+        match: 'Matched',
+        surname: 'Lovelace',
+        registrationStatus: 'Active',
+      });
+    });
+
     it('drops FA-only rows entirely when a subscription filter is active', () => {
       // A player with no registration has no subscription status, so no
       // subscription filter can meaningfully include them.

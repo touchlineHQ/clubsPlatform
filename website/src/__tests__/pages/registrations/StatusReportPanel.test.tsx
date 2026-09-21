@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent } from '@testing-library/react';
+import { act, screen, fireEvent } from '@testing-library/react';
 import { renderWithMantine, mockAdmin } from '../../test-utils';
 
 // The panel reads and writes workbooks with SheetJS. Stubbing it keeps these
@@ -46,6 +46,21 @@ class SyncFileReader {
 
   /** Deliver a small buffer synchronously to the registered load callback. */
   readAsArrayBuffer() {
+    this.onload?.({ target: { result: new ArrayBuffer(8) } });
+  }
+}
+
+class DeferredFileReader {
+  static instances: DeferredFileReader[] = [];
+  onload: ((e: { target: { result: ArrayBuffer } }) => void) | null = null;
+
+  constructor() {
+    DeferredFileReader.instances.push(this);
+  }
+
+  readAsArrayBuffer() {}
+
+  resolve() {
     this.onload?.({ target: { result: new ArrayBuffer(8) } });
   }
 }
@@ -98,6 +113,7 @@ describe('StatusReportPanel', () => {
     jsonToSheet.mockClear();
     bookAppendSheet.mockClear();
     captureEvent.mockClear();
+    sheetToJson.mockReset();
     sheetToJson.mockReturnValue(SHEET);
   });
 
@@ -109,6 +125,36 @@ describe('StatusReportPanel', () => {
     select();
 
     expect(screen.getByRole('button', { name: /Download status report/ })).toBeEnabled();
+  });
+
+  it('opens the file picker with Enter and Space and prevents Space scrolling', () => {
+    const { container } = renderPanel();
+    const dropzone = screen.getByRole('button', { name: /Drop a file here or click to browse/ });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const click = vi.fn();
+    input.click = click;
+
+    expect(dropzone).toHaveAttribute('tabindex', '0');
+    expect(fireEvent.keyDown(dropzone, { key: 'Enter' })).toBe(true);
+    expect(fireEvent.keyDown(dropzone, { key: ' ' })).toBe(false);
+    expect(click).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a stale file read after a newer file has finished', () => {
+    DeferredFileReader.instances = [];
+    vi.stubGlobal('FileReader', DeferredFileReader);
+    const { select } = renderPanel();
+
+    select('first.xlsx');
+    select('second.xlsx');
+    act(() => {
+      DeferredFileReader.instances[1].resolve();
+      DeferredFileReader.instances[0].resolve();
+    });
+
+    expect(screen.getByText('second.xlsx')).toBeInTheDocument();
+    expect(screen.queryByText('Could not parse file')).not.toBeInTheDocument();
+    expect(sheetToJson).toHaveBeenCalledTimes(1);
   });
 
   it('previews the three classifications', () => {

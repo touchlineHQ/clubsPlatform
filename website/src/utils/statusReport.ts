@@ -111,14 +111,11 @@ function compare(a: string, b: string): number {
 
 const text = (value: string | null | undefined): string => value ?? '';
 
-/** Whether an FA row survives the exclusion rule and the page's filters. */
+/** Whether an unconsumed FA row survives the page's filters. */
 function faRowIncluded(
   row: StatusReportFaRow,
-  { includeCancelled, faFilter }: StatusReportOptions,
+  { faFilter }: StatusReportOptions,
 ): boolean {
-  if (!includeCancelled && EXCLUDED_FA_STATUSES.includes(text(row.registrationStatus).trim().toLowerCase())) {
-    return false;
-  }
   if (faFilter?.team && normaliseTeam(row.teamName) !== normaliseTeam(faFilter.team)) return false;
   if (faFilter?.registrationStatus && text(row.registrationStatus) !== faFilter.registrationStatus) {
     return false;
@@ -144,7 +141,8 @@ export function buildStatusReport(
   // registrations" step this report replaces.
   const faByKey = new Map<string, StatusReportFaRow>();
   for (const row of faRows) {
-    if (!faRowIncluded(row, options)) continue;
+    const status = text(row.registrationStatus).trim().toLowerCase();
+    if (!options.includeCancelled && EXCLUDED_FA_STATUSES.includes(status)) continue;
     const key = joinKey(row.fanId, row.teamName);
     if (!faByKey.has(key)) faByKey.set(key, row);
   }
@@ -179,7 +177,7 @@ export function buildStatusReport(
 
   if (!options.faFilter?.dropFaOnly) {
     for (const [key, fa] of faByKey) {
-      if (consumed.has(key)) continue;
+      if (consumed.has(key) || !faRowIncluded(fa, options)) continue;
       out.push({
         match: 'No subs record',
         fanId: fa.fanId,
