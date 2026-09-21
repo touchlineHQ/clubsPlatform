@@ -432,6 +432,16 @@ describe('import-players POST — preview', () => {
     expect(prepared(db).some(p => /club_import_log/.test(p.sql))).toBe(false);
   });
 
+  it('never touches registration_merge, so an admin‘s merges survive re-import', async () => {
+    // This is the whole reason merges live in a side table: the importer upserts
+    // by (clubSlug, playerId, teamName) and knows nothing about billing groups,
+    // so re-importing cannot overwrite a decision only the club can make.
+    const db = dbHolding([heldRow()]);
+    await runImport(db, [row(), row({ fanId: 'FAN002' })], false);
+
+    expect(prepared(db).some(p => /registration_merge/.test(p.sql))).toBe(false);
+  });
+
   it('reports the same counts a real import would, including repeated FANs', async () => {
     // One player, two teams, and the first team listed twice. The duplicate is
     // the case that used to double-count: in the old handler the first row's

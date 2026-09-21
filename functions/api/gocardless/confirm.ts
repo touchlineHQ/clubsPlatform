@@ -8,11 +8,19 @@ import {
   resolveSubscriptionStartDate,
   fetchNextPossibleChargeDate,
 } from '../../lib/gocardless-link';
-import { buildDbReference } from '../../lib/payment-reference';
+import {
+  buildDbReference,
+  buildLogicalReference,
+  paymentTypeFromReference,
+} from '../../lib/payment-reference';
 import {
   PAID_IN_FULL_STATUSES,
   subscriptionStatusToPaymentStatus,
 } from '../../lib/payment-status';
+import {
+  billingRegistrationJoinSql,
+  subscriptionLevelJoinSql,
+} from '../../lib/registration-merge';
 
 /**
  * Inserts or updates a player_payment record for a completed GoCardless flow.
@@ -144,10 +152,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   // Server-side authoritative values — set in gocardless-link.ts when the
   // billing request was created. URL params for these are ignored.
-  const registrationId = br.metadata?.registration_id ?? '';
-  const reference = br.metadata?.reference ?? urlReference;
+  const linkedRegistrationId = br.metadata?.registration_id ?? '';
+  const linkedReference = br.metadata?.reference ?? urlReference;
 
-  if (!registrationId) {
+  if (!linkedRegistrationId) {
     // Legacy link created before metadata stamping (PR 2). The grace period
     // is intentionally short — by the time these matter, payers have re-clicked.
     return Response.redirect(`${origin}/#/payment-cancelled?reason=legacy_link`, 302);
@@ -157,33 +165,46 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // registration id (the only authoritative identifier we get from metadata).
   // clubSlug must come from the DB, not the URL, so an attacker can't write
   // a payment row against a club they don't own.
+  //
+  // The join resolves through any merge. The link may have been minted before
+  // this registration became a secondary — a payer's inbox holds it for hours —
+  // and everything downstream must hang off the group's *primary*, or the player
+  // is charged a second time against a registration nobody reads any more.
   const pricing = await env.DB
     .prepare(
-      `SELECT pr.clubSlug, sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate
-         FROM player_registration pr
-         LEFT JOIN registration_subscription_level rsl
-                ON rsl.registrationId = pr.id
-         LEFT JOIN team_status_subscription_level tssl
-                ON tssl.clubSlug = pr.clubSlug
-               AND tssl.teamName = pr.teamName
-               AND tssl.registrationStatus = pr.registrationStatus
-         LEFT JOIN status_subscription_level ssl
-                ON ssl.clubSlug = pr.clubSlug
-               AND ssl.registrationStatus = pr.registrationStatus
-         LEFT JOIN team_subscription_level tsl
-                ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-         LEFT JOIN subscription_level sl
-                ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
-        WHERE pr.id = ?`
+      `SELECT pr.id AS registrationId, pr.clubSlug, pr.teamName, p.fanId,
+              sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate
+         FROM player_registration src
+         ${billingRegistrationJoinSql('src', 'pr')}
+         JOIN player p ON p.id = pr.playerId
+         ${subscriptionLevelJoinSql('pr')}
+        WHERE src.id = ?`
     )
-    .bind(registrationId)
+    .bind(linkedRegistrationId)
     .first<{
+      registrationId: string;
       clubSlug: string;
+      teamName: string;
+      fanId: string;
       yearlyPriceInPence: number | null;
       intervalCount: number | null;
       intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
       startDate: string | null;
     }>();
+
+  const registrationId = pricing?.registrationId ?? linkedRegistrationId;
+
+  // Re-derived rather than taken from metadata, for the same reason. For an
+  // unmerged registration this reproduces the stamped value exactly; for a
+  // merged one it swaps the secondary's team name for the primary's, keeping the
+  // group's reference stable so the subscription match below still fires.
+  //
+  // payment_type has been stamped since merging shipped; the parse is the
+  // fallback for links minted before that.
+  const paymentType = br.metadata?.payment_type ?? paymentTypeFromReference(linkedReference);
+  const reference = pricing
+    ? buildLogicalReference(pricing.teamName, pricing.fanId, paymentType)
+    : linkedReference;
 
   if (
     !pricing ||
@@ -234,22 +255,31 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   // Cross-mandate dedupe: GC's per-mandate subscription idempotency below only
   // catches replays against the *same* mandate. If the player completes the
-  // flow twice (timeout, retry hours apart) they end up with two mandates. We
-  // store player_payment.reference as `<reference>-<last-8-of-billing-request>`
-  // — match the logical prefix to detect a prior successful setup against a
-  // different mandate. If found, cancel the new mandate and reuse the existing
-  // subscription so the player isn't double-charged.
+  // flow twice (timeout, retry hours apart) they end up with two mandates. Find
+  // a prior successful setup against a different mandate, cancel the new
+  // mandate and reuse the existing subscription so the player isn't
+  // double-charged.
+  //
+  // This used to also require `reference LIKE '<reference>-________'`, matching
+  // the logical prefix of the stored `<reference>-<last-8-of-billing-request>`.
+  // That clause is gone because it defeats the merge case: a link minted before
+  // the merge carries the *secondary's* team-derived reference while the stored
+  // row carries the primary's, so the LIKE fails and the dedupe never fires —
+  // exactly when it is most needed. The billing registration id is the stronger
+  // key anyway. api/admin/manual-payment.ts documents relying on its `MANUAL-`
+  // prefix to stay out of this match; it no longer needs to, because manual rows
+  // are 'manual' (or 'inactive' after an undo) and the status filter excludes
+  // both.
   const priorPayment = await env.DB
     .prepare(
       `SELECT mandateId, subscriptionId, status FROM "player_payment"
          WHERE clubSlug = ?
            AND registrationId = ?
-           AND reference LIKE ? || '-________'
            AND status IN ('active', 'mandate_only')
          ORDER BY updatedAt DESC
          LIMIT 1`
     )
-    .bind(clubSlug, registrationId, reference)
+    .bind(clubSlug, registrationId)
     .first<{ mandateId: string; subscriptionId: string | null; status: string }>();
 
   if (

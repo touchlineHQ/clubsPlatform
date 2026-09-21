@@ -171,8 +171,14 @@ describe('GET /api/gocardless/confirm', () => {
 
   // Default pricing row returned by the DB pricing query in confirm.ts:
   // £100/year over 12 monthly payments → £10/month per payment.
+  // registrationId, teamName and fanId come from the same row: the query
+  // resolves through any merge, so what it returns is the *billing*
+  // registration, and the logical reference is rebuilt from its team name.
   const defaultPricingRow = {
+    registrationId: 'reg_1',
     clubSlug: 'test-club',
+    teamName: 'U11s',
+    fanId: 'FAN001',
     yearlyPriceInPence: 12000,
     intervalCount: 12,
     intervalUnit: 'monthly' as const,
@@ -197,7 +203,7 @@ describe('GET /api/gocardless/confirm', () => {
       mandateId = 'MND-1',
       existingSubscriptions = [],
       newSubscription = { id: 'SUB-1', status: 'active' },
-      brMetadata = { registration_id: 'reg_1', reference: 'REF-1' },
+      brMetadata = { registration_id: 'reg_1', reference: 'U11S-FAN001-SUBS', payment_type: 'SUBS' },
       capturedSubscriptionBody,
       mandate,
       mandateStatus,
@@ -321,7 +327,9 @@ describe('GET /api/gocardless/confirm', () => {
     const existingSub = {
       id: 'SUB-EXISTING',
       status: 'active',
-      metadata: { reference: 'REF-1' },
+      // confirm.ts rebuilds the reference from the billing registration, so an
+      // existing subscription only matches when it carries that same value.
+      metadata: { reference: 'U11S-FAN001-SUBS' },
       links: { mandate: 'MND-1' },
     };
     const fetchMock = makeFetchMock({ existingSubscriptions: [existingSub] });
@@ -340,13 +348,150 @@ describe('GET /api/gocardless/confirm', () => {
     vi.unstubAllGlobals();
   });
 
+  // ── Merged registrations ───────────────────────────────────────────────────
+
+  describe('a link minted before the registration was merged', () => {
+    // The payer's inbox holds a link for hours. If the registration it names has
+    // since become a secondary, everything downstream must hang off the group's
+    // primary — otherwise the player is charged a second time against a
+    // registration nothing reads any more.
+
+    /** What the pricing query returns once the join has resolved reg_2 → reg_1. */
+    const resolvedPricingRow = {
+      registrationId: 'reg_1',
+      clubSlug: 'test-club',
+      teamName: 'U11s',
+      fanId: 'FAN001',
+      yearlyPriceInPence: 12000,
+      intervalCount: 12,
+      intervalUnit: 'monthly' as const,
+    };
+
+    it('resolves the registration id through the merge before doing anything else', async () => {
+      const fetchMock = makeFetchMock({
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({ first: resolvedPricingRow, run: { meta: { changes: 1 } } });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      await confirmOnRequestGet(makeContext(new Request(makeConfirmUrl()), { env }) as any);
+
+      const prepare = db.prepare as Mock;
+      const pricingIdx = prepare.mock.calls.findIndex(
+        (c: unknown[]) => String(c[0]).includes('yearlyPriceInPence'),
+      );
+      // Looked up by the id from the link, resolved by the join, not by a
+      // second round trip.
+      expect(String(prepare.mock.calls[pricingIdx][0])).toContain('registration_merge');
+      expect(prepare.mock.results[pricingIdx].value.bind.mock.calls[0]).toEqual(['reg_2']);
+
+      // The payment row is written against the primary.
+      const upsertIdx = prepare.mock.calls.findIndex(
+        (c: unknown[]) => String(c[0]).includes('INSERT INTO "player_payment"'),
+      );
+      const binds = prepare.mock.results[upsertIdx].value.bind.mock.calls[0] ?? [];
+      expect(binds).toContain('reg_1');
+      expect(binds).not.toContain('reg_2');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('rebuilds the reference from the primary, so the group keeps one identity', async () => {
+      // The reference is what the GoCardless subscription match below keys on.
+      // Letting a stale link's reference through would fail that match on the
+      // same mandate and create a second subscription.
+      const fetchMock = makeFetchMock({
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({ first: resolvedPricingRow, run: { meta: { changes: 1 } } });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      const res = await confirmOnRequestGet(
+        makeContext(new Request(makeConfirmUrl()), { env }) as any,
+      );
+
+      expect(res.headers.get('location')).toContain('ref=U11S-FAN001-SUBS');
+      expect(res.headers.get('location')).not.toContain('SUNDAYVETS');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('reuses the group‘s existing subscription instead of creating a second one', async () => {
+      // The regression that matters: pay through team A, merge B into A, then
+      // complete a link that was already open for B.
+      const existingSub = {
+        id: 'SUB-GROUP',
+        status: 'active',
+        metadata: { reference: 'U11S-FAN001-SUBS' },
+        links: { mandate: 'MND-1' },
+      };
+      const fetchMock = makeFetchMock({
+        existingSubscriptions: [existingSub],
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({ first: resolvedPricingRow, run: { meta: { changes: 1 } } });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      const res = await confirmOnRequestGet(
+        makeContext(new Request(makeConfirmUrl()), { env }) as any,
+      );
+
+      expect(res.headers.get('location')).toContain('existing=1');
+      expect(res.headers.get('location')).toContain('subscription=SUB-GROUP');
+      // No POST /subscriptions — the whole point.
+      const subCreate = (fetchMock as Mock).mock.calls.find(
+        (c: any[]) => String(c[0]).endsWith('/subscriptions') && c[1]?.method === 'POST',
+      );
+      expect(subCreate).toBeUndefined();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('dedupes across mandates on the billing registration alone, not the reference', async () => {
+      // The prior row carries the primary's reference; a stale link carries the
+      // secondary's. Matching on the reference too would miss exactly the case
+      // the dedupe exists for.
+      const fetchMock = makeFetchMock({
+        mandateId: 'MND-NEW',
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({
+        first: [
+          resolvedPricingRow,
+          { mandateId: 'MND-OLD', subscriptionId: 'SUB-OLD', status: 'active' },
+        ],
+        run: { meta: { changes: 1 } },
+      });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      const res = await confirmOnRequestGet(
+        makeContext(new Request(makeConfirmUrl()), { env }) as any,
+      );
+
+      const dedupe = (db.prepare as Mock).mock.calls.find(
+        (c: unknown[]) => String(c[0]).includes(`status IN ('active', 'mandate_only')`),
+      );
+      expect(String(dedupe![0])).not.toContain('reference LIKE');
+      expect(res.headers.get('location')).toContain('subscription=SUB-OLD');
+      expect(res.headers.get('location')).toContain('existing=1');
+
+      vi.unstubAllGlobals();
+    });
+  });
+
   it('records a reused finished subscription as paid in full, not active', async () => {
     // The finder only skips subscriptions that will never collect, so a
     // 'finished' one matches — and it means the plan is already paid in full.
     const existingSub = {
       id: 'SUB-DONE',
       status: 'finished',
-      metadata: { reference: 'REF-1' },
+      // confirm.ts rebuilds the reference from the billing registration, so an
+      // existing subscription only matches when it carries that same value.
+      metadata: { reference: 'U11S-FAN001-SUBS' },
       links: { mandate: 'MND-1' },
     };
     const fetchMock = makeFetchMock({ existingSubscriptions: [existingSub] });
@@ -740,6 +885,8 @@ describe('GET /api/gocardless/confirm', () => {
 describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
   const sampleRegistration = {
     registrationId: 'reg_1',
+    // Its own id: unmerged, so it is the primary of a group of one.
+    billingRegistrationId: 'reg_1',
     fanId: 'FAN001',
     teamName: 'U11s',
     levelId: 'level_1',
@@ -979,6 +1126,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
 
   const reg2 = {
     registrationId: 'reg_2',
+    billingRegistrationId: 'reg_2',
     fanId: 'FAN001',
     teamName: 'Sunday Vets',
     levelId: 'level_2',
@@ -1226,6 +1374,147 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     const html = await (await paymentRedirectOnRequestGet(ctx as any)).text();
     expect(html).toContain('Subscription active');
     expect(html).not.toContain('Paid in full');
+  });
+
+  // ── Merged registrations ───────────────────────────────────────────────────
+
+  describe('merged registrations', () => {
+    // reg_2 is billed through reg_1: one payment, two teams.
+    const mergedReg2 = { ...reg2, billingRegistrationId: 'reg_1' };
+
+    function payerCtx(db: any, url = 'https://example.com/test-club/payments/SUBS/FAN001') {
+      return makeContext(
+        new Request(url),
+        {
+          env: makeEnv({ DB: db as any }),
+          params: { clubSlug: 'test-club', paymentType: 'SUBS', fanId: 'FAN001' },
+        },
+      );
+    }
+
+    it('shows one card naming both teams instead of two cards', async () => {
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [[sampleRegistration, mergedReg2], []],
+      });
+
+      const res = await paymentRedirectOnRequestGet(payerCtx(db) as any);
+
+      // One group left, and a single group with no ?reg= skips the selection
+      // page entirely — there is nothing to choose between.
+      expect(res.status).toBe(302);
+      expect(mockCreateGoCardlessLink).toHaveBeenCalledOnce();
+      const arg = mockCreateGoCardlessLink.mock.calls[0][0];
+      expect(arg.registrationId).toBe('reg_1');
+      expect(arg.description).toContain('U11s + Sunday Vets');
+    });
+
+    it('prices the group off the primary, never the secondary', async () => {
+      // reg_1 is £120/year over 12; reg_2 would be £60 over 6. The group pays
+      // what the admin chose by picking the primary.
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [[sampleRegistration, mergedReg2], []],
+      });
+
+      await paymentRedirectOnRequestGet(payerCtx(db) as any);
+
+      const arg = mockCreateGoCardlessLink.mock.calls[0][0];
+      expect(arg.amountInPence).toBe(1000);
+      expect(arg.count).toBe(12);
+    });
+
+    it('prices off the primary even when the secondary is listed first', async () => {
+      // The query floats levelled registrations first, so a secondary can be
+      // seen before its primary. Pricing off whichever arrived first is the bug
+      // this guards.
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [[mergedReg2, sampleRegistration], []],
+      });
+
+      await paymentRedirectOnRequestGet(payerCtx(db) as any);
+
+      const arg = mockCreateGoCardlessLink.mock.calls[0][0];
+      expect(arg.registrationId).toBe('reg_1');
+      expect(arg.amountInPence).toBe(1000);
+    });
+
+    it('resolves ?reg= pointing at a secondary forward to the primary', async () => {
+      // Links exported before the merge, and links in payers' inboxes, name the
+      // secondary. It is a registration this player really holds, so resolve it
+      // rather than calling it invalid.
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [[sampleRegistration, mergedReg2], []],
+      });
+
+      const res = await paymentRedirectOnRequestGet(
+        payerCtx(db, 'https://example.com/test-club/payments/SUBS/FAN001?reg=reg_2') as any,
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).not.toContain('invalid_reg');
+      expect(mockCreateGoCardlessLink.mock.calls[0][0].registrationId).toBe('reg_1');
+    });
+
+    it('still rejects a ?reg= this player does not hold', async () => {
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [[sampleRegistration, mergedReg2], []],
+      });
+
+      const res = await paymentRedirectOnRequestGet(
+        payerCtx(db, 'https://example.com/test-club/payments/SUBS/FAN001?reg=reg_elsewhere') as any,
+      );
+
+      expect(res.headers.get('location')).toContain('invalid_reg');
+      expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+    });
+
+    it('treats a payment stranded on a secondary as settling the whole group', async () => {
+      // A flow already in flight when the merge happened can leave a row on a
+      // secondary. The gating read covers every member, so the group is still
+      // "sorted" and nobody is asked to pay again.
+      const db = makeDb({
+        first: [{ slug: 'test-club' }, { reference: 'U11S-FAN001-SUBS-abcd1234' }],
+        all: [[sampleRegistration, mergedReg2], []],
+      });
+
+      const res = await paymentRedirectOnRequestGet(payerCtx(db) as any);
+
+      expect(res.status).toBe(302);
+      expect(res.headers.get('location')).toContain('/payment-success');
+      expect(res.headers.get('location')).toContain('existing=1');
+      expect(mockCreateGoCardlessLink).not.toHaveBeenCalled();
+    });
+
+    it('badges a group settled through one member on the selection page', async () => {
+      // A third, unmerged registration keeps the selection page in play.
+      const reg3 = {
+        ...reg2,
+        registrationId: 'reg_3',
+        billingRegistrationId: 'reg_3',
+        teamName: 'Walking Football',
+      };
+      const db = makeDb({
+        first: { slug: 'test-club' },
+        all: [
+          [sampleRegistration, mergedReg2, reg3],
+          // The row sits on the secondary, not the primary.
+          [{ registrationId: 'reg_2', status: 'active' }],
+        ],
+      });
+
+      const html = await (await paymentRedirectOnRequestGet(payerCtx(db) as any)).text();
+
+      expect(html).toContain('U11s + Sunday Vets');
+      expect(html).toContain('One payment covering 2 teams');
+      expect(html).toContain('Subscription active');
+      expect(html).toContain('Already set up');
+      // The unmerged one is still offered.
+      expect(html).toContain('Walking Football');
+    });
   });
 });
 

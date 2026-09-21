@@ -1,4 +1,9 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import {
+  SUBSCRIPTION_LEVEL_ID_SQL,
+  mergeColumnsSql,
+  subscriptionLevelJoinSql,
+} from "../../lib/registration-merge";
 
 interface PlayerRegistrationRow {
   fanId: string;
@@ -15,6 +20,12 @@ interface PlayerRegistrationRow {
   intervalCount: number | null;
   intervalUnit: string | null;
   startDate: string | null;
+  /** The registration whose payment covers this one — itself, unless merged. */
+  billingRegistrationId: string;
+  /** This registration's primary's team, when it is a secondary. */
+  billedWithTeamName: string | null;
+  /** The other teams this registration is billed for, when it is a primary. */
+  mergedTeamNames: string | null;
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -33,30 +44,19 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          pr.registrationExpiry,
          pr.registrationStatus,
          GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts,
-         COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId) AS subscriptionLevelId,
+         ${SUBSCRIPTION_LEVEL_ID_SQL} AS subscriptionLevelId,
          rsl.subscriptionLevelId            AS overrideLevelId,
          sl.name                            AS subscriptionLevelName,
          sl.yearlyPriceInPence              AS yearlyPriceInPence,
          sl.intervalCount                   AS intervalCount,
          sl.intervalUnit                    AS intervalUnit,
-         sl.startDate                       AS startDate
+         sl.startDate                       AS startDate,
+         ${mergeColumnsSql('pr')}
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
        LEFT JOIN "user" u ON u.id = up.userId
-       LEFT JOIN registration_subscription_level rsl
-              ON rsl.registrationId = pr.id
-       LEFT JOIN team_status_subscription_level tssl
-              ON tssl.clubSlug = pr.clubSlug
-             AND tssl.teamName = pr.teamName
-             AND tssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN status_subscription_level ssl
-              ON ssl.clubSlug = pr.clubSlug
-             AND ssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN team_subscription_level tsl
-              ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+       ${subscriptionLevelJoinSql('pr')}
        WHERE pr.clubSlug = ?
        GROUP BY pr.id
        ORDER BY pr.teamName ASC, p.fanId ASC`

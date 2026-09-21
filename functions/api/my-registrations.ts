@@ -1,4 +1,10 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
+import {
+  billingRegistrationIdSql,
+  mergeColumnsSql,
+  subscriptionLevelJoinSql,
+} from "../lib/registration-merge";
+import { GC_BLOCKING_STATUSES } from "../lib/payment-status";
 
 interface RegistrationRow {
   registrationId: string;
@@ -13,6 +19,12 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+  /** The registration whose payment covers this one — itself, unless merged. */
+  billingRegistrationId: string;
+  /** This registration's primary's team, when it is a secondary. */
+  billedWithTeamName: string | null;
+  /** The other teams this registration is billed for, when it is a primary. */
+  mergedTeamNames: string | null;
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
   manualNote?: string | null;
@@ -43,6 +55,10 @@ interface RegistrationRow {
  */
 function paymentStatusSubquery(distinguishManual: boolean): string {
   const manualBranch = distinguishManual ? `'manual'` : `'completed'`;
+  // Keyed on the *billing* registration, not `pr.id`: merged registrations are
+  // one payment, so every member of a group reports the primary's status. An
+  // attribution read, per the rule in lib/registration-merge.ts — the group has
+  // exactly one authoritative record and this reads it.
   return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
@@ -52,7 +68,7 @@ function paymentStatusSubquery(distinguishManual: boolean): string {
     WHEN COUNT(pp.id) > 0 THEN 'inactive'
     ELSE NULL
   END
-  FROM "player_payment" pp WHERE pp.registrationId = pr.id
+  FROM "player_payment" pp WHERE pp.registrationId = ${billingRegistrationIdSql('pr')}
 ) AS paymentStatus`;
 }
 
@@ -60,10 +76,16 @@ const PERSONAL_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(false);
 const CLUB_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(true);
 
 interface ManualAttributionRow {
+  /** The registration the manual row hangs off — a group's primary. */
   registrationId: string;
   manualPaidBy: string | null;
   manualPaidAt: number;
   manualNote: string | null;
+}
+
+interface MergeRow {
+  registrationId: string;
+  primaryRegistrationId: string;
 }
 
 /**
@@ -104,9 +126,22 @@ async function attachManualAttribution(
     if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
   }
 
+  // A manual row always hangs off its group's primary, so a secondary has to
+  // look the attribution up through that. Without this, a merged registration
+  // shows "Paid in full" with nobody's name against it.
+  const { results: merges } = await db
+    .prepare(
+      `SELECT "registrationId", "primaryRegistrationId" FROM "registration_merge"
+        WHERE "clubSlug" = ?`
+    )
+    .bind(clubSlug)
+    .all<MergeRow>();
+
+  const primaryOf = new Map(merges.map((m) => [m.registrationId, m.primaryRegistrationId]));
+
   return rows.map((r) => {
     const attribution = r.paymentStatus === "manual"
-      ? latest.get(r.registrationId)
+      ? latest.get(primaryOf.get(r.registrationId) ?? r.registrationId)
       : undefined;
     return attribution
       ? {
@@ -162,23 +197,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
+         ${mergeColumnsSql('pr')},
          ${PERSONAL_PAYMENT_STATUS_SUBQUERY}
        FROM user_player up
        JOIN player p ON p.id = up.playerId
        JOIN player_registration pr ON pr.playerId = p.id
-       LEFT JOIN registration_subscription_level rsl
-              ON rsl.registrationId = pr.id
-       LEFT JOIN team_status_subscription_level tssl
-              ON tssl.clubSlug = pr.clubSlug
-             AND tssl.teamName = pr.teamName
-             AND tssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN status_subscription_level ssl
-              ON ssl.clubSlug = pr.clubSlug
-             AND ssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN team_subscription_level tsl
-              ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+       ${subscriptionLevelJoinSql('pr')}
        WHERE up.userId = ? AND pr.clubSlug = ?
        ORDER BY pr.teamName ASC, p.fanId ASC`
     )
@@ -208,24 +232,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
+         ${mergeColumnsSql('pr')},
          ${CLUB_PAYMENT_STATUS_SUBQUERY}
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id
        LEFT JOIN "user" u ON u.id = up.userId
-       LEFT JOIN registration_subscription_level rsl
-              ON rsl.registrationId = pr.id
-       LEFT JOIN team_status_subscription_level tssl
-              ON tssl.clubSlug = pr.clubSlug
-             AND tssl.teamName = pr.teamName
-             AND tssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN status_subscription_level ssl
-              ON ssl.clubSlug = pr.clubSlug
-             AND ssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN team_subscription_level tsl
-              ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+       ${subscriptionLevelJoinSql('pr')}
        WHERE pr.clubSlug = ?
        GROUP BY pr.id
        ORDER BY pr.teamName ASC, p.fanId ASC`
@@ -271,6 +284,57 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const registrationId = url.searchParams.get("registrationId");
   if (!registrationId) {
     return json({ error: "registrationId is required" }, { status: 400 });
+  }
+
+  // Deleting a registration cascades its player_payment rows away, which is the
+  // only record that GoCardless is still collecting. Refuse while a live mandate
+  // exists — a pre-existing hazard this endpoint never guarded, and one that
+  // merging makes worse because the row may cover several teams.
+  const livePayment = await context.env.DB
+    .prepare(
+      `SELECT status FROM "player_payment"
+        WHERE registrationId = ?
+          AND clubSlug = ?
+          AND status IN (${GC_BLOCKING_STATUSES.map(() => '?').join(',')})
+          AND mandateId != ''
+        LIMIT 1`
+    )
+    .bind(registrationId, clubSlug, ...GC_BLOCKING_STATUSES)
+    .first<{ status: string }>();
+
+  if (livePayment) {
+    return json(
+      {
+        error: "This registration has a live GoCardless payment. Cancel the subscription "
+          + "on the Payments tab before removing it.",
+        status: livePayment.status,
+      },
+      { status: 409 },
+    );
+  }
+
+  // registration_merge.primaryRegistrationId is ON DELETE RESTRICT, so this would
+  // fail as a raw FK violation (a 500). Catch it here and say what to do: a
+  // primary carries the whole group's billing, and removing it would leave every
+  // other member unpaid with no record of why.
+  const dependants = await context.env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM "registration_merge"
+        WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?`
+    )
+    .bind(registrationId, clubSlug)
+    .first<{ n: number }>();
+
+  if ((dependants?.n ?? 0) > 0) {
+    return json(
+      {
+        error: `This registration is billed for ${dependants!.n} other `
+          + `${dependants!.n === 1 ? "registration" : "registrations"}. `
+          + "Unmerge the group before removing it.",
+        mergedCount: dependants!.n,
+      },
+      { status: 409 },
+    );
   }
 
   const result = await context.env.DB

@@ -3,6 +3,10 @@ import type { Env } from '../../../lib/api-helpers';
 import { createGoCardlessLink } from '../../../lib/gocardless-link';
 import { getPostHog, clubGroups } from '../../../lib/posthog';
 import { SETTLED_STATUSES } from '../../../lib/payment-status';
+import {
+  billingRegistrationIdSql,
+  subscriptionLevelJoinSql,
+} from '../../../lib/registration-merge';
 
 const ALLOWED_TYPES = new Set(['SUBS']);
 
@@ -27,6 +31,8 @@ const SETTLED_STATUS_LABEL: Record<string, string> = {
 
 type RegistrationRow = {
   registrationId: string;
+  /** The registration this one's money hangs off — itself, unless merged. */
+  billingRegistrationId: string;
   teamName: string;
   fanId: string;
   levelId: string | null;
@@ -35,6 +41,80 @@ type RegistrationRow = {
   intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
   startDate: string | null;
 };
+
+/**
+ * One billable thing: a registration, or a merged group of them.
+ *
+ * `registrationId` is always the primary's — it is what the payment hangs off,
+ * what `?reg=` resolves to, and whose subscription level prices the group.
+ * `teamNames` carries every member's team so the card can name them all.
+ */
+type RegistrationGroup = Omit<RegistrationRow, 'billingRegistrationId'> & {
+  teamNames: string[];
+  memberIds: string[];
+};
+
+/**
+ * Collapse rows into billable groups, keyed on the billing registration.
+ *
+ * The group takes the *primary's* row — its level, its price, its team name for
+ * the reference — because that is the registration the payment is created
+ * against. A secondary's own level is deliberately not consulted: the group pays
+ * once, and api/admin/registration-merges.ts made the admin choose which.
+ *
+ * Input order is preserved (levelled registrations first, then team name), and a
+ * group sorts where its first-seen member did.
+ */
+function groupRegistrations(rows: RegistrationRow[]): RegistrationGroup[] {
+  const byBillingId = new Map<string, RegistrationGroup>();
+  const primaries = new Map<string, RegistrationRow>();
+
+  // Fall back to the row's own id rather than trusting the column to be there.
+  // A null would otherwise key every registration to the same group and collapse
+  // unrelated teams into one card.
+  const billingIdOf = (row: RegistrationRow) => row.billingRegistrationId || row.registrationId;
+
+  for (const row of rows) {
+    if (row.registrationId === billingIdOf(row)) primaries.set(row.registrationId, row);
+  }
+
+  for (const row of rows) {
+    const billingId = billingIdOf(row);
+    const existing = byBillingId.get(billingId);
+
+    if (existing) {
+      existing.teamNames.push(row.teamName);
+      existing.memberIds.push(row.registrationId);
+      continue;
+    }
+
+    // Prefer the primary's own row for everything but the team list. A
+    // secondary can be seen first — the ORDER BY floats levelled rows — and
+    // pricing a group off a secondary is exactly the bug this avoids.
+    const source = primaries.get(billingId) ?? row;
+    byBillingId.set(billingId, {
+      registrationId: billingId,
+      teamName: source.teamName,
+      fanId: source.fanId,
+      levelId: source.levelId,
+      yearlyPriceInPence: source.yearlyPriceInPence,
+      intervalCount: source.intervalCount,
+      intervalUnit: source.intervalUnit,
+      startDate: source.startDate,
+      teamNames: [row.teamName],
+      memberIds: [row.registrationId],
+    });
+  }
+
+  // Name the primary's team first, then the rest alphabetically, so the card
+  // reads the same way every time regardless of row order.
+  for (const group of byBillingId.values()) {
+    const others = group.teamNames.filter(t => t !== group.teamName).sort();
+    group.teamNames = [group.teamName, ...others];
+  }
+
+  return [...byBillingId.values()];
+}
 
 /**
  * Public landing URL for a player to set up their team subscription.
@@ -73,17 +153,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=unknown_club`, 302);
   }
 
-  const { results: registrations } = await env.DB
+  const { results: registrationRows } = await env.DB
     .prepare(
-      // Resolution precedence (highest → lowest):
-      //   1. registration_subscription_level (per-player override)
-      //   2. team_status_subscription_level  (team + status)
-      //   3. status_subscription_level       (club-wide status)
-      //   4. team_subscription_level         (team default)
-      // Mirrors the COALESCE chains in functions/api/my-registrations.ts,
-      // functions/api/admin/player-registrations.ts, and
-      // functions/api/gocardless/confirm.ts. Keep them in sync.
+      // Level resolution precedence (highest → lowest) lives in
+      // lib/registration-merge.ts: per-registration override, then team+status,
+      // then club-wide status, then team default.
+      //
+      // billingRegistrationId is the registration this one's money hangs off:
+      // itself when unmerged or primary, its primary when a secondary.
       `SELECT pr.id            AS registrationId,
+              ${billingRegistrationIdSql('pr')} AS billingRegistrationId,
               pr.teamName,
               p.fanId,
               sl.id             AS levelId,
@@ -93,24 +172,17 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
               sl.startDate
          FROM player_registration pr
          JOIN player p ON p.id = pr.playerId
-         LEFT JOIN registration_subscription_level rsl
-                ON rsl.registrationId = pr.id
-         LEFT JOIN team_status_subscription_level tssl
-                ON tssl.clubSlug = pr.clubSlug
-               AND tssl.teamName = pr.teamName
-               AND tssl.registrationStatus = pr.registrationStatus
-         LEFT JOIN status_subscription_level ssl
-                ON ssl.clubSlug = pr.clubSlug
-               AND ssl.registrationStatus = pr.registrationStatus
-         LEFT JOIN team_subscription_level tsl
-                ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-         LEFT JOIN subscription_level sl
-                ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+         ${subscriptionLevelJoinSql('pr')}
         WHERE pr.clubSlug = ? AND p.fanId = ?
         ORDER BY (sl.id IS NULL) ASC, pr.teamName ASC`
     )
     .bind(clubSlug, fanId)
     .all<RegistrationRow>();
+
+  // Merged registrations are one thing to pay for. Collapse them into groups
+  // keyed on the billing registration, so a player billed once sees one card
+  // rather than being invited to pay twice for the same set of subs.
+  const registrations = groupRegistrations(registrationRows);
 
   if (registrations.length === 0) {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=player_not_found`, 302);
@@ -131,33 +203,41 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     });
   }
 
-  // Resolve which registration to use
-  let registration: RegistrationRow;
+  // Resolve which group to use. One group means one thing to pay for, even when
+  // it spans several registrations.
+  let registration: RegistrationGroup;
 
   if (registrations.length === 1 && !regParam) {
     registration = registrations[0];
   } else if (regParam) {
-    const match = registrations.find(r => r.registrationId === regParam);
+    // A link minted before the merge — or exported from the admin table — can
+    // name a secondary. Resolve it forward to its group rather than treating it
+    // as invalid; it is a registration this player really holds.
+    const match = registrations.find(r => r.memberIds.includes(regParam));
     if (!match) {
       return Response.redirect(`${origin}/#/payment-cancelled?reason=invalid_reg`, 302);
     }
     registration = match;
   } else {
-    // Multiple registrations, no ?reg= — show selection page
+    // Several groups, no ?reg= — show selection page
     return selectionPage(env.DB, clubSlug, fanId, registrations, origin, paymentType);
   }
 
   // Anything already collecting or already paid means the player is sorted, so
   // never send them into the mandate flow again. 'completed' is the one that
   // bites: a plan that has collected in full would otherwise be charged twice.
+  //
+  // This is a *gating* read, so it covers every member of the group, not just
+  // the primary: a payment flow that was in flight when the merge happened can
+  // have left a row on a secondary, and that still means "do not charge again".
   const existingPayment = await env.DB
     .prepare(
       `SELECT reference FROM "player_payment"
-        WHERE registrationId = ?
+        WHERE registrationId IN (${registration.memberIds.map(() => '?').join(', ')})
           AND status IN (${SETTLED_STATUSES.map(() => '?').join(', ')})
         LIMIT 1`
     )
-    .bind(registration.registrationId, ...SETTLED_STATUSES)
+    .bind(...registration.memberIds, ...SETTLED_STATUSES)
     .first<{ reference: string }>();
 
   if (existingPayment?.reference) {
@@ -198,7 +278,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     intervalUnit: registration.intervalUnit,
     count: registration.intervalCount,
     startDate: registration.startDate,
-    description: `${registration.teamName} subscription — FAN ${registration.fanId}`,
+    // Names every team the group covers, so the GoCardless mandate page tells
+    // the payer what the one payment is actually for.
+    description: `${registration.teamNames.join(' + ')} subscription — FAN ${registration.fanId}`,
     origin,
   });
 
@@ -222,33 +304,39 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 /**
- * Renders an HTML page for multi-team players to choose which registration to pay for.
+ * Renders an HTML page for players with several things to pay for, to choose
+ * which one.
  *
- * Shows each team with its subscription pricing and badges payments already in
- * place. Disabled cards are shown for registrations without a level or that are
- * already paid, by Direct Debit or by an admin's manual override.
+ * One card per billable group, not per registration: merged registrations are
+ * one payment, so they appear once, naming every team they cover. Each card
+ * shows its subscription pricing and badges payments already in place. Disabled
+ * cards are shown for groups without a level or that are already paid, by Direct
+ * Debit or by an admin's manual override.
  */
 async function selectionPage(
   db: D1Database,
   clubSlug: string,
   fanId: string,
-  registrations: RegistrationRow[],
+  registrations: RegistrationGroup[],
   origin: string,
   paymentType: string,
 ): Promise<Response> {
-  // Check for already-active payments so we can badge them
-  const placeholders = registrations.map(() => '?').join(',');
+  // Check for already-active payments so we can badge them. This is a gating
+  // read — it decides whether a card is offered — so it covers every member of
+  // every group, not just the primaries.
+  const allMemberIds = registrations.flatMap(r => r.memberIds);
+  const placeholders = allMemberIds.map(() => '?').join(',');
   const { results: existingPayments } = await db
     .prepare(
       `SELECT registrationId, status FROM "player_payment"
         WHERE registrationId IN (${placeholders})
           AND reference LIKE '%-SUBS%'`
     )
-    .bind(...registrations.map(r => r.registrationId))
+    .bind(...allMemberIds)
     .all<{ registrationId: string; status: string }>();
 
   // Every settled status disables the card; SETTLED_STATUS_RANK decides which
-  // one the pill describes when a registration carries more than one row.
+  // one the pill describes when a group carries more than one row.
   const paidStatusByRegistration = new Map<string, string>();
   for (const p of existingPayments) {
     const rank = SETTLED_STATUS_RANK[p.status];
@@ -259,9 +347,22 @@ async function selectionPage(
     }
   }
 
+  /** The highest-ranked settled status anywhere in the group, if any. */
+  const settledStatusForGroup = (group: RegistrationGroup): string | undefined => {
+    let best: string | undefined;
+    for (const id of group.memberIds) {
+      const status = paidStatusByRegistration.get(id);
+      if (status === undefined) continue;
+      if (best === undefined || SETTLED_STATUS_RANK[status] > SETTLED_STATUS_RANK[best]) {
+        best = status;
+      }
+    }
+    return best;
+  };
+
   const cards = registrations.map(r => {
     const hasLevel = r.levelId != null && r.yearlyPriceInPence != null;
-    const paidStatus = paidStatusByRegistration.get(r.registrationId);
+    const paidStatus = settledStatusForGroup(r);
     const isSettled = paidStatus != null;
     const href = (hasLevel && !isSettled)
       ? `${origin}/${clubSlug}/payments/${paymentType}/${fanId}?reg=${encodeURIComponent(r.registrationId)}`
@@ -277,10 +378,17 @@ async function selectionPage(
         })()
       : null;
 
+    // A merged group is one payment covering several teams — say so on the card,
+    // or the payer wonders where their other team went.
+    const teamLine = r.teamNames.length > 1
+      ? `<div class="card-team">${escHtml(r.teamNames.join(' + '))}</div>
+         <div class="card-merged">One payment covering ${r.teamNames.length} teams</div>`
+      : `<div class="card-team">${escHtml(r.teamName)}</div>`;
+
     return `
     <div class="card${(hasLevel && !isSettled) ? '' : ' card--disabled'}">
       <div class="card-body">
-        <div class="card-team">${escHtml(r.teamName)}</div>
+        ${teamLine}
         ${amountText
           ? `<div class="card-amount">${escHtml(amountText)}</div>`
           : `<div class="card-no-level">No subscription level assigned — contact your club admin</div>`
@@ -320,6 +428,7 @@ async function selectionPage(
     .card-team { font-weight: 600; font-size: 1rem; }
     .card-amount { color: #475569; font-size: .875rem; margin-top: .2rem; }
     .card-no-level { color: #94a3b8; font-size: .8rem; margin-top: .2rem; font-style: italic; }
+    .card-merged { color: #64748b; font-size: .78rem; margin-top: .15rem; }
     .badge-active {
       display: inline-block; margin-top: .35rem;
       background: #dcfce7; color: #166534;

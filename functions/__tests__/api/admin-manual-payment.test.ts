@@ -139,9 +139,42 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     const guard = findSql(db, `mandateId != ''`);
     expect(guard).toBeDefined();
     expect(guard!.sql).toContain('status IN');
+    // reg_1 twice: the guard covers the whole billing group, and the member
+    // subquery binds the primary's id once for itself and once to find any
+    // registrations merged into it.
     expect(guard!.bindings).toEqual([
-      'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
+      'reg_1', 'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
     ]);
+  });
+
+  it('covers every member of a billing group, not just the primary', async () => {
+    // A payment flow already in flight when the merge happened can leave a live
+    // row on a secondary. That still means "do not override".
+    const db = makeDb({ first: [REGISTRATION, null, null] });
+    await onRequestPost(markPaidCtx(db) as any);
+
+    const guard = findSql(db, `mandateId != ''`);
+    expect(guard!.sql).toContain('registration_merge');
+    expect(guard!.sql).toContain('primaryRegistrationId');
+  });
+
+  it('resolves a secondary to its primary before writing', async () => {
+    // loadRegistration joins through the merge, so the row it returns — and
+    // everything written from it — is the group's primary.
+    const db = makeDb({ first: [REGISTRATION, null, null] });
+    await onRequestPost(
+      markPaidCtx(db, { registrationId: 'reg_secondary' }) as any,
+    );
+
+    const load = findSql(db, 'AS registrationId');
+    expect(load!.sql).toContain('registration_merge');
+    expect(load!.bindings).toEqual(['reg_secondary', 'test-club', 'test-club']);
+
+    // REGISTRATION.registrationId is reg_1 — the primary the join resolved to —
+    // so the insert hangs off that, not off the id the admin clicked.
+    const insert = findSql(db, 'INSERT INTO "player_payment"');
+    expect(insert!.bindings).toContain('reg_1');
+    expect(insert!.bindings).not.toContain('reg_secondary');
   });
 });
 
