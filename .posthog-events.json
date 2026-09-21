@@ -225,6 +225,13 @@
     ]
   },
   {
+    "event": "status report generated",
+    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only — no names, dates of birth or FAN numbers leave the page.",
+    "files": [
+      "website/src/pages/registrations/StatusReportPanel.tsx"
+    ]
+  },
+  {
     "event": "subscription level created",
     "description": "An admin creates a new subscription level for a club.",
     "files": [

@@ -1,22 +1,13 @@
 import { useRef, useState } from 'react';
 import {
-  Alert, Badge, Box, Button, Center, Group, Loader,
+  Alert, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Table, Text, Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconCheck, IconFileUpload, IconUsers } from '@tabler/icons-react';
-import * as XLSX from 'xlsx';
+import { IconAlertCircle, IconCheck, IconUsers } from '@tabler/icons-react';
 import { useClub } from '../../context/ClubContext';
 import { clubDesign } from '../../theme';
-
-interface ParsedPlayerRow {
-  fanId: string;
-  ageGroup: string;
-  teamName: string;
-  registrationExpiry: string;
-  registrationStatus: string;
-  playerEmail: string;
-  parentEmails: string[];
-}
+import { FileDropzone } from '../../components/club/FileDropzone';
+import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../utils/faPlayerReport';
 
 /** A registration the club holds that the uploaded file no longer mentions. */
 interface StaleRegistration {
@@ -35,91 +26,6 @@ interface ImportResult {
   users: { created: number; skipped: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
-}
-
-const KNOWN_HEADERS: Record<string, keyof ColIndex> = {
-  'fan id':                     'fanId',
-  'age group':                  'ageGroup',
-  'team':                       'teamName',
-  'registration expiry':        'registrationExpiry',
-  'registration status':        'registrationStatus',
-  'email address':              'playerEmail',
-  'parent/carer email address': 'parentEmail',
-};
-
-interface ColIndex {
-  fanId: number;
-  ageGroup: number;
-  teamName: number;
-  registrationExpiry: number;
-  registrationStatus: number;
-  playerEmail: number;
-  parentEmail: number;
-}
-
-function formatCellDate(value: unknown): string {
-  if (!value && value !== 0) return '';
-  if (value instanceof Date) {
-    const dd = String(value.getDate()).padStart(2, '0');
-    const mm = String(value.getMonth() + 1).padStart(2, '0');
-    return `${dd}/${mm}/${value.getFullYear()}`;
-  }
-  if (typeof value === 'number') {
-    const d = XLSX.SSF.parse_date_code(value);
-    if (d) return `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}`;
-  }
-  return String(value).trim();
-}
-
-function parseSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]; errors: string[] } {
-  const errors: string[] = [];
-
-  const headerRowIdx = rows.findIndex(r =>
-    r.some(cell => String(cell ?? '').trim().toLowerCase() === 'fan id')
-  );
-  if (headerRowIdx === -1) {
-    return { parsed: [], errors: ['Could not find a header row containing "FAN ID". Is this an FA Club Player Report?'] };
-  }
-
-  const headerRow = rows[headerRowIdx].map(c => String(c ?? '').trim().toLowerCase());
-  const colIndex = {} as ColIndex;
-  for (const [headerText, key] of Object.entries(KNOWN_HEADERS)) {
-    const idx = headerRow.indexOf(headerText);
-    if (idx !== -1) colIndex[key] = idx;
-  }
-
-  const required: (keyof ColIndex)[] = ['fanId', 'teamName'];
-  for (const k of required) {
-    if (colIndex[k] === undefined) {
-      errors.push(`Required column not found: ${k}`);
-    }
-  }
-  if (errors.length) return { parsed: [], errors };
-
-  const dataRows = rows.slice(headerRowIdx + 1);
-  const parsed: ParsedPlayerRow[] = [];
-
-  for (const row of dataRows) {
-    const fanId = String(row[colIndex.fanId] ?? '').trim();
-    if (!fanId) continue;
-
-    const parentEmailRaw = String(row[colIndex.parentEmail ?? -1] ?? '').trim();
-    const parentEmails = parentEmailRaw
-      ? parentEmailRaw.split(',').map(e => e.trim()).filter(Boolean)
-      : [];
-
-    parsed.push({
-      fanId,
-      ageGroup:             String(row[colIndex.ageGroup ?? -1] ?? '').trim(),
-      teamName:             String(row[colIndex.teamName] ?? '').trim(),
-      registrationExpiry:   formatCellDate(row[colIndex.registrationExpiry ?? -1]),
-      registrationStatus:   String(row[colIndex.registrationStatus ?? -1] ?? '').trim(),
-      playerEmail:          String(row[colIndex.playerEmail ?? -1] ?? '').trim().toLowerCase(),
-      parentEmails,
-    });
-  }
-
-  return { parsed, errors };
 }
 
 function summarise(rows: ParsedPlayerRow[]) {
@@ -176,7 +82,6 @@ interface ImportPlayersPanelProps {
 export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug };
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [rows, setRows] = useState<ParsedPlayerRow[] | null>(null);
@@ -248,11 +153,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = e.target?.result;
-        const wb = XLSX.read(data, { type: 'array', cellDates: true });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
-        const { parsed, errors } = parseSheet(raw);
+        const { parsed, errors } = parseImportSheet(readWorkbookRows(e.target?.result));
         if (errors.length) {
           setParseErrors(errors);
         } else {
@@ -264,13 +165,6 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       }
     };
     reader.readAsArrayBuffer(file);
-  }
-
-  /** Pass the first dropped file through the normal workbook-selection flow. */
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
   }
 
   /** Commit the previously previewed import and display its result. */
@@ -304,57 +198,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
   return (
     <Stack gap="md">
-      {!rows && !result && (
-        <Paper
-          withBorder
-          radius="md"
-          p="xl"
-          style={{
-            borderStyle: 'dashed',
-            cursor: 'pointer',
-            textAlign: 'center',
-            background: clubDesign.color.n1,
-            transition: 'border-color 0.15s, background 0.15s',
-          }}
-          onDrop={handleDrop}
-          onDragOver={e => e.preventDefault()}
-          onClick={() => inputRef.current?.click()}
-          onMouseEnter={e => {
-            e.currentTarget.style.borderColor = 'var(--mantine-primary-color-filled)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.borderColor = '';
-          }}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-          />
-          <Center>
-            <Stack align="center" gap="xs">
-              <Box
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 14,
-                  background: 'var(--mantine-primary-color-light)',
-                  color: 'var(--mantine-primary-color-filled)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <IconFileUpload size={28} />
-              </Box>
-              <Text fw={700} ff={clubDesign.font.heading}>Drop a file here or click to browse</Text>
-              <Text size="sm" c="dimmed">Accepts .csv, .xlsx, .xls (FA Club Player Report)</Text>
-            </Stack>
-          </Center>
-        </Paper>
-      )}
+      {!rows && !result && <FileDropzone onFile={handleFile} />}
 
       {parseErrors.length > 0 && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not parse file">

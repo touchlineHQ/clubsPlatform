@@ -5,7 +5,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
-  IconArrowRight, IconChevronDown, IconChevronUp, IconFileSpreadsheet, IconFileUpload,
+  IconArrowRight, IconChevronDown, IconChevronUp, IconClipboardList, IconFileSpreadsheet, IconFileUpload,
   IconSelector, IconTrash, IconUserCheck,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
@@ -15,9 +15,11 @@ import { PageHeader } from '../components/club/PageHeader';
 import { StatTileRow } from '../components/club/StatTile';
 import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
+import { StatusReportPanel } from './registrations/StatusReportPanel';
 import { captureError, captureEvent } from '../lib/posthog';
 import { timeAgo } from '../utils/timeAgo';
 import { getSubscriptionStatus } from '../utils/subscriptionStatus';
+import { buildPaymentLink } from '../utils/paymentLink';
 import { summariseRegistrations } from '../utils/registrationSummary';
 
 interface RegistrationRow {
@@ -596,10 +598,6 @@ function RegistrationsSummary({ rows }: { rows: RegistrationRow[] }) {
   );
 }
 
-function buildPaymentLink(origin: string, clubSlug: string, fanId: string): string {
-  return `${origin}/${clubSlug}/payments/SUBS/${encodeURIComponent(fanId)}`;
-}
-
 function exportRegistrationsToXlsx(
   rows: RegistrationRow[],
   clubSlug: string,
@@ -662,6 +660,7 @@ export function RegistrationsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [importOpened, { open: openImport, close: closeImport }] = useDisclosure(false);
+  const [reportOpened, { open: openReport, close: closeReport }] = useDisclosure(false);
   const [levels, setLevels] = useState<SubscriptionLevel[]>([]);
   const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
   const [levelError, setLevelError] = useState('');
@@ -844,6 +843,15 @@ export function RegistrationsPage() {
     [club, filters],
   );
 
+  const filtersActive = filters.team !== ALL || filters.status !== ALL || filters.subscription !== ALL;
+
+  /** The same filters, expressed for rows that exist only in the FA file. */
+  const reportFaFilter = useMemo(() => ({
+    team: filters.team !== ALL ? filters.team : null,
+    registrationStatus: filters.status !== ALL ? filters.status : null,
+    dropFaOnly: filters.subscription !== ALL,
+  }), [filters]);
+
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
     setDeleting(true);
@@ -898,6 +906,16 @@ export function RegistrationsPage() {
             size="xs"
           >
             Import Players
+          </Button>
+          {/* Never disabled: with no registrations the report is all "No subs record". */}
+          <Button
+            leftSection={<IconClipboardList size={16} />}
+            onClick={openReport}
+            radius="xl"
+            variant="light"
+            size="xs"
+          >
+            Generate status report
           </Button>
           <Button
             leftSection={<IconFileSpreadsheet size={16} />}
@@ -995,6 +1013,21 @@ export function RegistrationsPage() {
         radius="md"
       >
         <ImportPlayersPanel onImported={handleImported} />
+      </Modal>
+
+      <Modal
+        opened={reportOpened}
+        onClose={closeReport}
+        title="Generate status report"
+        size="xl"
+        radius="md"
+      >
+        <StatusReportPanel
+          registrations={filteredClub ?? club ?? []}
+          faFilter={reportFaFilter}
+          clubSlug={clubSlug}
+          filtersActive={filtersActive}
+        />
       </Modal>
 
       <Modal
