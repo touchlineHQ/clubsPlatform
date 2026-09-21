@@ -27,12 +27,8 @@ interface StatusReportPanelProps {
 }
 
 /**
- * Join an FA Club Player Report against the club's registrations and download
- * the result.
- *
- * Everything happens in the browser. The chosen file is parsed here, joined
- * here and written to a download here — no name or date of birth is posted,
- * stored or sent to analytics (issue #94).
+ * Join an FA Club Player Report against the club's registrations and download it.
+ * Parsed, joined and written in the browser; no name or DOB leaves the page (#94).
  */
 export function StatusReportPanel({
   registrations,

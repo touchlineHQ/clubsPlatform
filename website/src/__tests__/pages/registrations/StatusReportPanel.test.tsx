@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, screen, fireEvent } from '@testing-library/react';
 import { renderWithMantine, mockAdmin } from '../../test-utils';
 
-// The panel reads and writes workbooks with SheetJS. Stubbing it keeps these
-// tests about the panel; parsing and joining have their own unit tests.
+// Stubbing SheetJS keeps these about the panel; parsing and joining have their own tests.
 const SHEET = [
   ['FAN ID', 'First Names', 'Surname', 'Date of birth', 'Team', 'Registration Status'],
   ['FAN001', 'Ada', 'Lovelace', '04/11/2009', 'U15 Reds', 'Active'],
@@ -36,15 +35,11 @@ vi.mock('../../../lib/posthog', () => ({
 
 import { StatusReportPanel } from '../../../pages/registrations/StatusReportPanel';
 
-/**
- * jsdom's FileReader delivers onload on a later tick, which makes "has the file
- * been parsed yet?" racy. A synchronous stand-in keeps the assertions about the
- * component rather than about timer ordering.
- */
+/** jsdom's FileReader fires onload a tick later, which makes "parsed yet?" racy. */
 class SyncFileReader {
   onload: ((e: { target: { result: ArrayBuffer } }) => void) | null = null;
 
-  /** Deliver a small buffer synchronously to the registered load callback. */
+  /** Deliver a small buffer synchronously to the load callback. */
   readAsArrayBuffer() {
     this.onload?.({ target: { result: new ArrayBuffer(8) } });
   }
@@ -161,8 +156,7 @@ describe('StatusReportPanel', () => {
     const { select } = renderPanel();
     select();
 
-    // FAN001 is in both; FAN003 is in the file only; FAN999 is a registration
-    // only. FAN002 is Cancelled, so it is left out by default.
+    // FAN001 in both, FAN003 file only, FAN999 registration only, FAN002 Cancelled.
     expect(screen.getByText('1 matched')).toBeInTheDocument();
     expect(screen.getByText('1 no subs record')).toBeInTheDocument();
     expect(screen.getByText('1 subs only')).toBeInTheDocument();
@@ -212,10 +206,7 @@ describe('StatusReportPanel', () => {
     expect(writeFile).toHaveBeenCalledWith(expect.anything(), `test-club-status-report-${today}.xlsx`);
   });
 
-  /**
-   * Guards issue #94: analytics carries counts only. A name or FAN number in
-   * this payload would put personal data in PostHog.
-   */
+  // Guards #94: a name or FAN number here would put personal data in PostHog.
   it('reports counts only to analytics', () => {
     const { select } = renderPanel();
     select();

@@ -845,12 +845,7 @@ export function RegistrationsPage() {
 
   const filtersActive = filters.team !== ALL || filters.status !== ALL || filters.subscription !== ALL;
 
-  /**
-   * The same filters, expressed for rows that exist only in the FA file.
-   *
-   * A subscription filter cannot apply to a player with no registration, so
-   * those rows are dropped rather than let through a filter they cannot meet.
-   */
+  /** The same filters, expressed for rows that exist only in the FA file. */
   const reportFaFilter = useMemo(() => ({
     team: filters.team !== ALL ? filters.team : null,
     registrationStatus: filters.status !== ALL ? filters.status : null,
@@ -912,10 +907,7 @@ export function RegistrationsPage() {
           >
             Import Players
           </Button>
-          {/*
-            Not disabled on an empty table the way Export is: a report with no
-            registrations is all "No subs record", which is the chase list.
-          */}
+          {/* Never disabled: with no registrations the report is all "No subs record". */}
           <Button
             leftSection={<IconClipboardList size={16} />}
             onClick={openReport}

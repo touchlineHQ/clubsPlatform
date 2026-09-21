@@ -59,8 +59,7 @@ describe('buildStatusReport', () => {
   });
 
   it('keeps each team of a multi-team player on its own subscription status', () => {
-    // The real case the Sheets formula got wrong: one team paying by direct
-    // debit, the other paid up in full, both shown with a single status.
+    // The real case the Sheets formula got wrong: one status shown against both teams.
     const rows = buildStatusReport(
       [fa({ teamName: 'U18 Reds' }), fa({ teamName: 'Robins First' })],
       [
@@ -225,8 +224,7 @@ describe('buildStatusReport', () => {
     });
 
     it('drops FA-only rows entirely when a subscription filter is active', () => {
-      // A player with no registration has no subscription status, so no
-      // subscription filter can meaningfully include them.
+      // No registration means no subscription status for such a filter to match.
       const rows = buildStatusReport(
         [fa({ fanId: 'FAN002', teamName: 'U15 Reds' }), fa()],
         [reg()],

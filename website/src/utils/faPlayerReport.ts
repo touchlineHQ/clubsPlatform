@@ -1,16 +1,8 @@
 import * as XLSX from 'xlsx';
 
 /**
- * Parsing for the FA's `Club - Player Report` workbook.
- *
- * Two callers, two column sets. The player import reads the operational
- * columns and posts them to the server; the status report additionally reads
- * names and date of birth, which must never leave the browser (issue #94).
- *
- * The opt-in `FaColumnSpec` is what keeps those apart. A parsed row only ever
- * carries keys that were present in the spec handed to the parser, so the
- * import path is structurally incapable of emitting a name or DOB field —
- * there is no code path that writes one.
+ * Parsing for the FA `Club - Player Report`: a row carries only the keys its
+ * column spec asked for, so the import path cannot emit names or DOB (#94).
  */
 
 export type FaField =
@@ -25,19 +17,10 @@ export type FaField =
   | 'surname'
   | 'dateOfBirth';
 
-/**
- * Field → the header texts that identify it, lowercased and trimmed, tried in
- * order. The FA has renamed columns before and different exports disagree on
- * "First Names" vs "Forename", so a field may list several spellings.
- */
+/** Field → its header texts, lowercased and tried in order; exports disagree on spelling. */
 export type FaColumnSpec = Partial<Record<FaField, readonly string[]>>;
 
-/**
- * Exactly the columns the player import has always read.
- *
- * Do not add name, DOB, gender or contact columns here: everything in this
- * spec is posted to `/api/admin/import-players` and stored in D1.
- */
+/** Exactly what the import posts and stores in D1 — never add name, DOB or contact columns. */
 export const IMPORT_COLUMNS: FaColumnSpec = {
   fanId:              ['fan id'],
   ageGroup:           ['age group'],
@@ -48,12 +31,7 @@ export const IMPORT_COLUMNS: FaColumnSpec = {
   parentEmail:        ['parent/carer email address'],
 };
 
-/**
- * The import columns plus the personal details the status report needs.
- *
- * Rows parsed with this spec stay in browser memory for the lifetime of the
- * export. They are never posted, persisted or sent to analytics.
- */
+/** The import columns plus the personal details the report keeps in browser memory. */
 export const REPORT_COLUMNS: FaColumnSpec = {
   ...IMPORT_COLUMNS,
   firstNames:  ['first names', 'first name', 'forename', 'forenames'],
@@ -101,14 +79,7 @@ export function formatCellDate(value: unknown): string {
   return String(value).trim();
 }
 
-/**
- * As `formatCellDate`, but also rewrites an ISO date to `dd/mm/yyyy`.
- *
- * Report only. `formatCellDate` passes strings through untouched because its
- * output is what the import writes to D1, and changing that would change the
- * stored values; the report has no such constraint and the spreadsheet is read
- * by people who expect UK dates.
- */
+/** As `formatCellDate`, plus ISO → `dd/mm/yyyy`; the import path must not reformat. */
 export function formatReportDate(value: unknown): string {
   const formatted = formatCellDate(value);
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(formatted);
@@ -135,12 +106,7 @@ interface ParseOutcome<T> {
 /** Trimmed, lowercased text for a cell that may be any type or missing. */
 const cellText = (value: unknown): string => String(value ?? '').trim();
 
-/**
- * Locate the requested columns and read every data row beneath them.
- *
- * The header row is found by scanning for a `FAN ID` cell rather than assuming
- * a fixed row: the FA export carries a variable number of title rows above it.
- */
+/** Find the header row by scanning for `FAN ID` — the export's title rows vary. */
 function locateColumns(
   rows: unknown[][],
   spec: FaColumnSpec,
@@ -169,9 +135,7 @@ function locateColumns(
     }
   }
 
-  // Only FAN ID and Team are load-bearing. A missing optional column leaves its
-  // cells blank rather than refusing the file, which matters most for the
-  // report: the unmatched-player chase list is useful even without names.
+  // Only FAN ID and Team are load-bearing; a missing optional column blanks its cells.
   const errors: string[] = [];
   for (const field of ['fanId', 'teamName'] as const) {
     if (colIndex[field] === undefined) errors.push(`Required column not found: ${field}`);
@@ -187,12 +151,7 @@ function locateColumns(
   return { colIndex, headerRowIdx, errors, warnings };
 }
 
-/**
- * The order fields appear in a parsed row.
- *
- * The import payload's key order comes from here, so keep the first seven as
- * they are: changing them changes the JSON posted to the server.
- */
+/** Field order in a parsed row; the first seven set the import payload's key order. */
 const FIELD_ORDER: readonly FaField[] = [
   'fanId', 'ageGroup', 'teamName', 'registrationExpiry', 'registrationStatus',
   'playerEmail', 'parentEmail', 'firstNames', 'surname', 'dateOfBirth',
@@ -216,13 +175,7 @@ function readField(row: unknown[], colIndex: ColIndex, name: FaField): unknown {
   }
 }
 
-/**
- * Parse every data row into an object carrying one key per field in `spec`.
- *
- * A field the spec asks for but the file lacks is still written, empty — that
- * is what keeps the import payload's shape constant. A field the spec does not
- * ask for is never written at all, which is the no-PII guarantee.
- */
+/** One key per field in `spec`: absent columns are written empty, unasked-for fields not at all. */
 function parseSheet(rows: unknown[][], spec: FaColumnSpec): ParseOutcome<Record<string, unknown>> {
   const { colIndex, headerRowIdx, errors, warnings } = locateColumns(rows, spec);
   if (errors.length) return { parsed: [], errors, warnings };
@@ -231,7 +184,7 @@ function parseSheet(rows: unknown[][], spec: FaColumnSpec): ParseOutcome<Record<
   const parsed: Record<string, unknown>[] = [];
 
   for (const row of rows.slice(headerRowIdx + 1)) {
-    // A blank FAN ID means a spacer or total row, not a player.
+    // A blank FAN ID is a spacer or total row, not a player.
     if (!cellText(row[colIndex.fanId ?? -1])) continue;
 
     const out: Record<string, unknown> = {};
@@ -248,12 +201,7 @@ export function parseImportSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]
   return { parsed: parsed as unknown as ParsedPlayerRow[], errors };
 }
 
-/**
- * Parse the same sheet with names and date of birth attached.
- *
- * Only the status report calls this, and what it returns never leaves the
- * browser.
- */
+/** The same sheet with names and DOB attached; what it returns never leaves the browser. */
 export function parseReportSheet(rows: unknown[][]): ParseOutcome<FaReportPlayerRow> {
   const { parsed, errors, warnings } = parseSheet(rows, REPORT_COLUMNS);
   return { parsed: parsed as unknown as FaReportPlayerRow[], errors, warnings };

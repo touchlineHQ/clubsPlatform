@@ -1,23 +1,10 @@
 import { getSubscriptionStatus } from './subscriptionStatus';
 
-/**
- * Join an FA Club Player Report against the club's own registrations.
- *
- * Pure: no React, no XLSX, no `window`. The caller supplies the rows and a
- * payment-link builder, and gets back the sheet's rows.
- *
- * This replaces a hand-rolled Google Sheets merge that keyed on FAN ID alone.
- * That collapsed multi-team players — a U18 who also played for the first team
- * vanished from the U18 count — and could show one team's subscription status
- * against another team's row. Keying on FAN ID *and* team fixes both.
- */
+/** Join an FA Club Player Report against the club's registrations; pure, no React or XLSX. */
 
 export type MatchKind = 'Matched' | 'No subs record' | 'Subs only';
 
-/**
- * Structural, so the page's `RegistrationRow` satisfies it without this module
- * importing a page type.
- */
+/** Structural, so the page's `RegistrationRow` satisfies it with no import. */
 export interface StatusReportRegistration {
   fanId: string;
   teamName: string;
@@ -57,20 +44,11 @@ export interface StatusReportRow {
   paymentLink: string;
 }
 
-/**
- * The page's active filters, as they apply to FA rows with no registration.
- *
- * Registrations arrive already filtered by the page; FA-only rows have to be
- * filtered here or the report would show players the table is hiding.
- */
+/** The page's filters as they apply to FA rows; registrations arrive already filtered. */
 export interface FaRowFilter {
   team?: string | null;
   registrationStatus?: string | null;
-  /**
-   * Drop FA-only rows entirely. Set when a subscription filter is active: a
-   * player with no registration has no subscription status and so cannot
-   * satisfy such a filter either way.
-   */
+  /** Drop FA-only rows; set when a subscription filter is on, which they cannot satisfy. */
   dropFaOnly?: boolean;
 }
 
@@ -85,18 +63,12 @@ export interface StatusReportOptions {
 /** FA registration statuses left out of the report unless asked for. */
 export const EXCLUDED_FA_STATUSES: readonly string[] = ['cancelled', 'transferred'];
 
-/**
- * Collapse a team name to its comparable form.
- *
- * The internal whitespace collapse is load-bearing: `East Leake FC U15 Bantams
- * ␣␣Blue` carries a double space in both exports today, which is luck rather
- * than contract.
- */
+/** Comparable form of a team name; the internal whitespace collapse is load-bearing. */
 export function normaliseTeam(team: string): string {
   return team.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-/** The join key. FAN ID alone is never enough — see the module comment. */
+/** The join key; FAN ID alone would collapse a player's other teams into one row. */
 export function joinKey(fanId: string, team: string): string {
   return `${fanId.trim()}|${normaliseTeam(team)}`;
 }
@@ -123,13 +95,7 @@ function faRowIncluded(
   return true;
 }
 
-/**
- * Build the report rows.
- *
- * Registration-driven: every registration handed in produces exactly one row,
- * so nothing the club holds can be silently dropped. FA rows left over at the
- * end become the `No subs record` chase list.
- */
+/** Registration-driven: one row each, so nothing the club holds is dropped; leftover FA rows follow. */
 export function buildStatusReport(
   faRows: StatusReportFaRow[],
   registrations: StatusReportRegistration[],
@@ -137,8 +103,7 @@ export function buildStatusReport(
 ): StatusReportRow[] {
   const link = options.paymentLink ?? (() => '');
 
-  // First FA row wins on a duplicate key — that is the manual "strip duplicate
-  // registrations" step this report replaces.
+  // First FA row wins: the manual "strip duplicate registrations" step, automated.
   const faByKey = new Map<string, StatusReportFaRow>();
   for (const row of faRows) {
     const status = text(row.registrationStatus).trim().toLowerCase();
@@ -163,9 +128,7 @@ export function buildStatusReport(
       surname: text(fa?.surname),
       dateOfBirth: text(fa?.dateOfBirth),
       ageGroup: text(fa?.ageGroup),
-      // The FA file is the fresher source. Its expiry is already dd/mm/yyyy;
-      // the stored one is left exactly as it is, because an ambiguous
-      // 03/04/2026 cannot be safely re-parsed into a known order.
+      // FA is fresher; the stored fallback is left as-is, since 03/04/2026 has no known order.
       registrationStatus: text(fa?.registrationStatus) || text(reg.registrationStatus),
       registrationExpiry: text(fa?.registrationExpiry) || text(reg.registrationExpiry),
       subscriptionLevel: text(reg.subscriptionLevelName),
@@ -188,11 +151,10 @@ export function buildStatusReport(
         ageGroup: text(fa.ageGroup),
         registrationStatus: text(fa.registrationStatus),
         registrationExpiry: text(fa.registrationExpiry),
-        // No registration means no level, no status and nobody marked it paid.
         subscriptionLevel: '',
         subscriptionStatus: '',
         markedPaidBy: '',
-        // The link still matters: this is who the treasurer has to chase.
+        // Still linked: this is the row the treasurer has to chase.
         paymentLink: link(fa.fanId),
       });
     }
@@ -217,12 +179,7 @@ export function summariseStatusReport(rows: StatusReportRow[]): {
   };
 }
 
-/**
- * The worksheet's columns, in order. Single source for the output contract:
- * header text, which field fills it, and how wide to make it.
- *
- * `Match` comes first — it is what the report is for.
- */
+/** The worksheet's columns in order — header, field and width. `Match` leads; it is the point. */
 export const STATUS_REPORT_COLUMNS: readonly {
   header: string;
   key: keyof StatusReportRow;

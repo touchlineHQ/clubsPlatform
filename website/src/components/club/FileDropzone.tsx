@@ -10,12 +10,7 @@ interface FileDropzoneProps {
   hint?: string;
 }
 
-/**
- * Click-or-drop picker for a single spreadsheet.
- *
- * Shared by the player import and the status report, which take the same FA
- * Club Player Report and differ only in what they do with it.
- */
+/** Click-or-drop picker for a single spreadsheet, shared by the import and the report. */
 export function FileDropzone({ onFile, hint }: FileDropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 

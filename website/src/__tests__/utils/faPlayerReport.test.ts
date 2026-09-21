@@ -13,10 +13,7 @@ const IMPORT_KEYS = [
   'playerEmail', 'parentEmails',
 ];
 
-/**
- * An FA export carries title rows above the headers, and the real file has the
- * personal columns the report wants sitting next to the operational ones.
- */
+/** Title rows above the headers, and the personal columns beside the operational ones. */
 const SHEET: unknown[][] = [
   ['The Football Association'],
   ['Club - Player Report', '', '', 'Generated 21/09/2026'],
@@ -43,11 +40,7 @@ describe('parseImportSheet', () => {
     expect(parsed.map(r => r.fanId)).toEqual(['FAN001', 'FAN002']);
   });
 
-  /**
-   * Guards issue #94's hard constraint: no PII may reach D1 or any endpoint.
-   * The sheet above *does* carry names and a date of birth, and the import's
-   * opt-in column spec must still leave every one of them behind.
-   */
+  // Guards #94: the sheet has names and DOB, the import's spec must leave them behind.
   it('emits only the seven operational keys, even from a sheet carrying names and DOB', () => {
     const { parsed } = parseImportSheet(SHEET);
     for (const row of parsed) expect(Object.keys(row)).toEqual(IMPORT_KEYS);
@@ -153,10 +146,7 @@ describe('formatCellDate', () => {
     expect(formatCellDate(undefined)).toBe('');
   });
 
-  /**
-   * The import writes this output straight to D1, so an ISO string has to pass
-   * through untouched — reformatting it here would rewrite stored values.
-   */
+  // This output goes straight to D1, so reformatting here would rewrite stored values.
   it('passes an ISO string through unchanged', () => {
     expect(formatCellDate('2009-11-04')).toBe('2009-11-04');
   });

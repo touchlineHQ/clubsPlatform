@@ -5,8 +5,7 @@ import { renderWithMantine, mockAdmin } from '../../test-utils';
 // The panel reads the workbook with SheetJS. Stubbing it keeps these tests
 // about the preview flow rather than about spreadsheet parsing, which
 // parseSheet's own shape already pins down.
-// Carries the personal columns a real FA export has, so the payload assertion
-// below is proving they are dropped rather than that they were never there.
+// Carries the personal columns a real export has, so the payload assertion proves they drop.
 const SHEET = [
   ['FAN ID', 'First Names', 'Surname', 'Date of birth', 'Team', 'Registration Status'],
   ['FAN001', 'Ada', 'Lovelace', '04/11/2009', 'U11 Boys', 'Active'],
@@ -98,12 +97,7 @@ describe('ImportPlayersPanel preview', () => {
     expect(JSON.parse(init.body).dryRun).toBe(true);
   });
 
-  /**
-   * Guards issue #94's hard constraint: no PII is to be stored in the app.
-   * The FA report the admin picks carries names and dates of birth, and the
-   * import must post neither — not at preview, not at commit. If this fails,
-   * personal data is about to reach an endpoint and then D1.
-   */
+  // Guards #94: the file has names and DOB, the posted payload must not.
   it('posts no name or date-of-birth field, even though the file has them', async () => {
     mockFetch.mockResolvedValue(jsonOk(previewBody()));
 
