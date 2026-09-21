@@ -19,11 +19,9 @@ const SUFFIX_LEN = 8;
 /**
  * Build the logical reference identifying a payment plan.
  *
- * The team name is the *billing* registration's — for a merged group, always the
- * primary's. That makes the reference stable for the life of the group, which
- * api/gocardless/confirm.ts depends on: it matches an existing GoCardless
- * subscription on `metadata.reference`, and a reference that moved would fail
- * that match on the same mandate and create a second subscription.
+ * `teamName` is always the *billing* registration's — a merged group's primary —
+ * so the reference stays stable for the life of the group. confirm.ts matches an
+ * existing subscription on it, and one that moved would collect twice.
  */
 export function buildLogicalReference(
   teamName: string,
@@ -33,11 +31,7 @@ export function buildLogicalReference(
   return `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
 }
 
-/**
- * The payment type trailing a logical reference (`EASTLEAKE-1234-SUBS` → `SUBS`).
- * Falls back to `SUBS`, the only type [clubSlug]/payments accepts, when the
- * reference is malformed or absent.
- */
+/** The type trailing a reference (`EASTLEAKE-1234-SUBS` → `SUBS`); `SUBS` when malformed. */
 export function paymentTypeFromReference(reference: string): string {
   const tail = reference.split('-').pop()?.trim();
   return tail ? tail.toUpperCase() : 'SUBS';

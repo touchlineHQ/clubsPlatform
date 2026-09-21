@@ -23,15 +23,11 @@ import {
  *   reference  MANUAL-<TEAMNAME>-<fanId>-SUBS
  *
  * The `-SUBS` suffix keeps the row visible to the existing `reference LIKE
- * '%-SUBS%'` filters; the `MANUAL-` prefix is a readability marker. (It used to
- * also keep the row clear of confirm.ts's `<reference>-________` dedupe match;
- * that clause is gone, and the dedupe's status filter excludes 'manual' and
- * 'inactive' anyway.)
+ * '%-SUBS%'` filters; the `MANUAL-` prefix is now only a readability marker,
+ * since confirm.ts's dedupe no longer matches on the reference.
  *
- * Merged registrations: everything here works on the *billing* registration, so
- * a manual override on any member of a group lands on the group's primary and
- * covers the lot. Marking a secondary paid separately would be a second payment
- * record for money that was only ever owed once.
+ * Everything here works on the *billing* registration, so an override on any
+ * member of a merged group lands on its primary and covers the lot.
  */
 
 interface RegistrationRow {
@@ -60,13 +56,8 @@ const NO_COMPLETED_GC_PAYMENT_SQL = `NOT EXISTS (
 )`;
 
 /**
- * Load the details behind a manual payment reference, for the registration the
- * override should actually hang off.
- *
- * Resolves through any merge in the same query: hand it a secondary and it
- * returns its group's primary, so `registrationId` on the result is always what
- * to write against. Returns null if the registration doesn't exist or doesn't
- * belong to the club.
+ * The registration a manual override should hang off, resolved through any merge
+ * in the same query. Null if it isn't in this club.
  */
 async function loadRegistration(
   db: D1Database,
@@ -108,9 +99,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const note = body.note?.trim() || null;
 
-  // loadRegistration resolves through any merge, so this is the group's primary:
-  // one override covers every merged registration, and a group never accumulates
-  // two manual records.
+  // Resolved through any merge, so one override covers the whole group.
   const registration = await loadRegistration(context.env.DB, body.registrationId, clubSlug);
   if (!registration) return json({ error: 'Registration not found' }, { status: 404 });
 
@@ -122,9 +111,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // around this — that only updates our DB, it does not cancel at GoCardless.
   // A completed plan is blocked too: the player has already paid in full.
   //
-  // A gating read, so it covers every member of the billing group: a payment
-  // flow already in flight when the merge happened can have left a live row on a
-  // secondary, and that still means "do not override".
+  // Covers every member: an in-flight flow can leave a live row on a secondary.
   const gcPayment = await context.env.DB
     .prepare(
       `SELECT id, status FROM "player_payment"
@@ -284,8 +271,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const requestedId = new URL(context.request.url).searchParams.get('registrationId');
   if (!requestedId) return json({ error: 'registrationId required' }, { status: 400 });
 
-  // Undo against the group's primary, matching where POST wrote it — undoing
-  // from a secondary's row in the UI must clear the group's override, not 404.
+  // Matches where POST wrote it, so undoing from a secondary's row doesn't 404.
   const registrationId = await resolveBillingRegistrationId(
     context.env.DB,
     requestedId,

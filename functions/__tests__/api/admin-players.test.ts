@@ -433,8 +433,7 @@ describe('import-players POST — preview', () => {
   });
 
   it('never touches registration_merge, so an admin‘s merges survive re-import', async () => {
-    // This is the whole reason merges live in a side table: the importer upserts
-    // by (clubSlug, playerId, teamName) and knows nothing about billing groups,
+    // Why merges live in a side table: the importer knows nothing about them,
     // so re-importing cannot overwrite a decision only the club can make.
     const db = dbHolding([heldRow()]);
     await runImport(db, [row(), row({ fanId: 'FAN002' })], false);

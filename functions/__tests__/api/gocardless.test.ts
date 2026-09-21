@@ -171,9 +171,8 @@ describe('GET /api/gocardless/confirm', () => {
 
   // Default pricing row returned by the DB pricing query in confirm.ts:
   // £100/year over 12 monthly payments → £10/month per payment.
-  // registrationId, teamName and fanId come from the same row: the query
-  // resolves through any merge, so what it returns is the *billing*
-  // registration, and the logical reference is rebuilt from its team name.
+  // The query resolves through any merge, so this row is the *billing*
+  // registration and the reference is rebuilt from its team name.
   const defaultPricingRow = {
     registrationId: 'reg_1',
     clubSlug: 'test-club',
@@ -327,8 +326,7 @@ describe('GET /api/gocardless/confirm', () => {
     const existingSub = {
       id: 'SUB-EXISTING',
       status: 'active',
-      // confirm.ts rebuilds the reference from the billing registration, so an
-      // existing subscription only matches when it carries that same value.
+      // Rebuilt from the billing registration, so only this value matches.
       metadata: { reference: 'U11S-FAN001-SUBS' },
       links: { mandate: 'MND-1' },
     };
@@ -350,12 +348,9 @@ describe('GET /api/gocardless/confirm', () => {
 
   // ── Merged registrations ───────────────────────────────────────────────────
 
+  // A link sits in the payer's inbox for hours. If its registration has since
+  // become a secondary, billing it directly charges the player twice.
   describe('a link minted before the registration was merged', () => {
-    // The payer's inbox holds a link for hours. If the registration it names has
-    // since become a secondary, everything downstream must hang off the group's
-    // primary — otherwise the player is charged a second time against a
-    // registration nothing reads any more.
-
     /** What the pricing query returns once the join has resolved reg_2 → reg_1. */
     const resolvedPricingRow = {
       registrationId: 'reg_1',
@@ -381,8 +376,7 @@ describe('GET /api/gocardless/confirm', () => {
       const pricingIdx = prepare.mock.calls.findIndex(
         (c: unknown[]) => String(c[0]).includes('yearlyPriceInPence'),
       );
-      // Looked up by the id from the link, resolved by the join, not by a
-      // second round trip.
+      // Resolved by the join, not by a second round trip.
       expect(String(prepare.mock.calls[pricingIdx][0])).toContain('registration_merge');
       expect(prepare.mock.results[pricingIdx].value.bind.mock.calls[0]).toEqual(['reg_2']);
 
@@ -398,9 +392,7 @@ describe('GET /api/gocardless/confirm', () => {
     });
 
     it('rebuilds the reference from the primary, so the group keeps one identity', async () => {
-      // The reference is what the GoCardless subscription match below keys on.
-      // Letting a stale link's reference through would fail that match on the
-      // same mandate and create a second subscription.
+      // A stale reference fails the subscription match on the same mandate.
       const fetchMock = makeFetchMock({
         brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
       });
@@ -419,8 +411,7 @@ describe('GET /api/gocardless/confirm', () => {
     });
 
     it('reuses the group‘s existing subscription instead of creating a second one', async () => {
-      // The regression that matters: pay through team A, merge B into A, then
-      // complete a link that was already open for B.
+      // The regression that matters: pay via A, merge B into A, then finish B's link.
       const existingSub = {
         id: 'SUB-GROUP',
         status: 'active',
@@ -451,9 +442,8 @@ describe('GET /api/gocardless/confirm', () => {
     });
 
     it('dedupes across mandates on the billing registration alone, not the reference', async () => {
-      // The prior row carries the primary's reference; a stale link carries the
-      // secondary's. Matching on the reference too would miss exactly the case
-      // the dedupe exists for.
+      // The stored row carries the primary's reference and a stale link the
+      // secondary's, so matching on it would miss the case dedupe exists for.
       const fetchMock = makeFetchMock({
         mandateId: 'MND-NEW',
         brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
@@ -489,8 +479,7 @@ describe('GET /api/gocardless/confirm', () => {
     const existingSub = {
       id: 'SUB-DONE',
       status: 'finished',
-      // confirm.ts rebuilds the reference from the billing registration, so an
-      // existing subscription only matches when it carries that same value.
+      // Rebuilt from the billing registration, so only this value matches.
       metadata: { reference: 'U11S-FAN001-SUBS' },
       links: { mandate: 'MND-1' },
     };
@@ -885,8 +874,7 @@ describe('GET /api/gocardless/confirm', () => {
 describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
   const sampleRegistration = {
     registrationId: 'reg_1',
-    // Its own id: unmerged, so it is the primary of a group of one.
-    billingRegistrationId: 'reg_1',
+    billingRegistrationId: 'reg_1', // unmerged: a group of one
     fanId: 'FAN001',
     teamName: 'U11s',
     levelId: 'level_1',
@@ -1400,8 +1388,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
 
       const res = await paymentRedirectOnRequestGet(payerCtx(db) as any);
 
-      // One group left, and a single group with no ?reg= skips the selection
-      // page entirely — there is nothing to choose between.
+      // One group and no ?reg= skips the selection page — nothing to choose.
       expect(res.status).toBe(302);
       expect(mockCreateGoCardlessLink).toHaveBeenCalledOnce();
       const arg = mockCreateGoCardlessLink.mock.calls[0][0];
@@ -1410,8 +1397,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     });
 
     it('prices the group off the primary, never the secondary', async () => {
-      // reg_1 is £120/year over 12; reg_2 would be £60 over 6. The group pays
-      // what the admin chose by picking the primary.
+      // reg_1 is £120/yr over 12; reg_2 would be £60 over 6.
       const db = makeDb({
         first: { slug: 'test-club' },
         all: [[sampleRegistration, mergedReg2], []],
@@ -1425,9 +1411,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     });
 
     it('prices off the primary even when the secondary is listed first', async () => {
-      // The query floats levelled registrations first, so a secondary can be
-      // seen before its primary. Pricing off whichever arrived first is the bug
-      // this guards.
+      // The ORDER BY floats levelled rows, so a secondary can arrive first.
       const db = makeDb({
         first: { slug: 'test-club' },
         all: [[mergedReg2, sampleRegistration], []],
@@ -1441,9 +1425,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     });
 
     it('resolves ?reg= pointing at a secondary forward to the primary', async () => {
-      // Links exported before the merge, and links in payers' inboxes, name the
-      // secondary. It is a registration this player really holds, so resolve it
-      // rather than calling it invalid.
+      // Exported and in-flight links name the secondary, which the player really holds.
       const db = makeDb({
         first: { slug: 'test-club' },
         all: [[sampleRegistration, mergedReg2], []],
@@ -1473,9 +1455,7 @@ describe('GET /[clubSlug]/payments/[paymentType]/[fanId]', () => {
     });
 
     it('treats a payment stranded on a secondary as settling the whole group', async () => {
-      // A flow already in flight when the merge happened can leave a row on a
-      // secondary. The gating read covers every member, so the group is still
-      // "sorted" and nobody is asked to pay again.
+      // The gating read covers every member, so nobody is asked to pay again.
       const db = makeDb({
         first: [{ slug: 'test-club' }, { reference: 'U11S-FAN001-SUBS-abcd1234' }],
         all: [[sampleRegistration, mergedReg2], []],

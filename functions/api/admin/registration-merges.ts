@@ -13,25 +13,12 @@ import { SUBSCRIPTION_LEVEL_ID_SQL, subscriptionLevelJoinSql } from '../../lib/r
 
 /**
  * Merge registrations into one billing group — one payment, many registrations.
+ * See lib/registration-merge.ts for the model.
  *
- * A player can hold several registrations at one club, and the club may bill
- * them once: a U15 playing Tuesdays and Thursdays is two registrations and one
- * set of subs. Nothing in the data distinguishes that from a player with two
- * genuine commitments, so this is an explicit admin action, not a heuristic.
- *
- * One member of the group is the primary. It carries the payment; the rest are
- * secondaries and read their status from it. Only secondaries get a
- * registration_merge row, so an unmerged registration is the trivial group of
- * one and needs no row.
- *
- * ── Why the invariants below are what they are ────────────────────────────────
- *
- * The primary's team name is the group's *billing identity*: lib/gocardless-link
- * derives the GoCardless reference from it, and api/gocardless/confirm.ts matches
- * an existing subscription on that reference. A reference that moved would fail
- * that match on the same mandate and collect twice. That is why a group holding
- * any payment row cannot be re-pointed at a different primary, and why a
- * secondary must not carry a live payment of its own.
+ * The invariants below all come from one fact: the primary's team name is the
+ * group's billing identity, because the GoCardless reference is derived from it
+ * and confirm.ts matches an existing subscription on that reference. A reference
+ * that moved would fail that match on the same mandate and collect twice.
  */
 
 interface RegistrationRow {
@@ -51,11 +38,7 @@ interface PaymentRow {
   mandateId: string;
 }
 
-/**
- * Load every registration named by the request, with its player, level and any
- * merge membership it already has. One query, so the whole validation below
- * works off a consistent snapshot.
- */
+/** Every named registration with its player, level and existing membership, in one snapshot. */
 async function loadRegistrations(
   db: D1Database,
   clubSlug: string,
@@ -103,10 +86,8 @@ async function loadPayments(
 /**
  * POST — create or replace a billing group.
  *
- * Body: `{ primaryRegistrationId, registrationIds: string[] }`, where
- * `registrationIds` are the members to bill through the primary. The whole group
- * is written in one conditional batch, so re-pointing a primary and absorbing one
- * group into another are both just another POST.
+ * Body: `{ primaryRegistrationId, registrationIds: string[] }`. The group is
+ * written in one conditional batch, so re-pointing a primary is just another POST.
  */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
@@ -148,10 +129,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const primary = registrations.find(r => r.registrationId === primaryId)!;
   const secondaries = registrations.filter(r => r.registrationId !== primaryId);
 
-  // Invariant 1 — same player, same club. Club is already enforced by the WHERE
-  // above; player has to be asserted here. It is load-bearing beyond tidiness:
-  // lib/posthog-identity.ts resolves a fan from the payment's registration, which
-  // stays correct only because every member is the same player.
+  // Same player (club is already enforced by the loader's WHERE). Load-bearing:
+  // posthog-identity.ts resolves a fan from the payment's registration.
   const wrongPlayer = secondaries.find(r => r.playerId !== primary.playerId);
   if (wrongPlayer) {
     return json(
@@ -163,9 +142,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // The group is priced off the primary's resolved level, so a primary with no
-  // level would render a dead "no subscription level assigned" card for a player
-  // who is perfectly payable.
+  // The group is priced off the primary, so one without a level would render a
+  // dead "no subscription level" card for a perfectly payable player.
   if (!primary.levelId) {
     return json(
       {
@@ -177,12 +155,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // Invariant 2 — no member but the primary may hold a payment row that is not
-  // 'inactive'. Stricter than "no settled payment" on purpose: 'mandate_only' is
-  // a live uncollected mandate, and a 'manual' row left on a secondary becomes
-  // unreachable by the undo path once manual-payment.ts resolves forward. Dead
-  // 'inactive' rows are allowed to stay put — abandoned setup attempts are
-  // common, and blocking on them would block most real merges.
+  // No secondary may hold a non-'inactive' payment. Stricter than "not settled":
+  // 'mandate_only' is a live mandate and a secondary's 'manual' row is unreachable
+  // by the undo path. Dead 'inactive' rows pass — abandoned setups are common.
   const payments = await loadPayments(context.env.DB, clubSlug, allIds);
   const secondaryIdSet = new Set(secondaryIds);
   const blocking = payments.find(
@@ -205,9 +180,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // The proposed primary is itself somebody else's secondary. Chains are not
-  // allowed — COALESCE resolves exactly one hop, so a chain would silently split
-  // a group's money from its members.
+  // No chains: COALESCE resolves one hop, so a chain would split a group's money
+  // from its members.
   if (primary.primaryRegistrationId) {
     return json(
       {
@@ -218,8 +192,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // A named member is itself the primary of an existing group. Absorbing one
-  // group into another would need its members re-pointed too, which is a second
+  // Absorbing another group would need its members re-pointed too — a second
   // decision the admin has not made here.
   const { results: nestedPrimaries } = await context.env.DB
     .prepare(
@@ -243,11 +216,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // Invariant 3 — a group holding a payment cannot be re-pointed at a different
-  // primary, because the group's GoCardless reference is derived from the
-  // primary's team name; see the note at the top of this file. The current
-  // primary may not be among the ids the request named, so look its payments up
-  // separately.
+  // A paid group cannot be re-pointed (see the header). Its current primary may
+  // not be among the named ids, so look its payments up separately.
   const demotedPrimaryIds = [...new Set(
     secondaries
       .map(r => r.primaryRegistrationId)
@@ -270,15 +240,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const now = nowMs();
 
-  // Conditional writes, not read-then-write: two admins merging overlapping sets
-  // can form a chain from opposite ends ({X→P} and {P→Q} both pass a "no chains"
-  // pre-read), and a confirm.ts flow can land a payment row between the checks
-  // above and the write. Each guard is re-asserted in the statement itself, and
-  // meta.changes tells us whether it held — the idiom api/admin/manual-payment.ts
-  // uses.
-  //
-  // The audit row goes in the same batch, so an audited merge that does not exist
-  // (or a merge nobody can see) is not possible.
+  // Conditional writes: two admins can form a chain from opposite ends, and a
+  // payment can land between the checks above and the write. Each guard is
+  // re-asserted here, with meta.changes reporting whether it held.
   const statements = secondaryIds.map(secondaryId =>
     context.env.DB
       .prepare(
@@ -321,9 +285,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const writes = await context.env.DB.batch(statements);
 
-  // D1 runs a batch as an implicit transaction but cannot abort mid-batch, so a
-  // guard that failed leaves the other rows committed. Roll those back by hand
-  // rather than leaving a half-formed group.
+  // A batch cannot abort mid-way, so a failed guard leaves the rest committed —
+  // roll those back rather than leave a half-formed group.
   const merged = writes.slice(0, secondaryIds.length);
   const failed = secondaryIds.filter((_, i) => (merged[i]?.meta?.changes ?? 0) === 0);
 
@@ -368,13 +331,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 };
 
 /**
- * DELETE — dissolve a billing group.
+ * DELETE — dissolve a billing group, by `?primaryRegistrationId=`.
  *
- * Query: `?primaryRegistrationId=<id>`. Refused while the group holds a live
- * GoCardless payment: dissolving would leave every ex-secondary with no payment
- * rows, so the payer page would re-offer each of them the mandate flow while the
- * group's subscription is still collecting — the mirror image of the double
- * charge merging exists to prevent.
+ * Refused while a live GoCardless payment exists: every ex-secondary would be
+ * left with no payment rows and re-offered the mandate flow while the group's
+ * subscription is still collecting.
  */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);

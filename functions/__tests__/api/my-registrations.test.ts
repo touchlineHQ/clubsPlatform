@@ -284,8 +284,7 @@ describe('onRequestDelete', () => {
   }
 
   it('refuses to delete a registration with a live GoCardless payment', async () => {
-    // Deleting cascades the payment row away — the only record that GoCardless
-    // is still collecting.
+    // Cascades away the only record that GoCardless is still collecting.
     mockGetSession.mockResolvedValue(adminSession);
     const db = makeDb({ first: [{ status: 'active' }], run: { meta: { changes: 1 } } });
     const res = await onRequestDelete(deleteCtx(db) as any);
@@ -296,8 +295,7 @@ describe('onRequestDelete', () => {
   });
 
   it('refuses to delete a registration that other registrations are billed through', async () => {
-    // registration_merge.primaryRegistrationId is ON DELETE RESTRICT, so this
-    // would otherwise surface as a raw FK violation.
+    // ON DELETE RESTRICT would otherwise surface as a raw FK violation.
     mockGetSession.mockResolvedValue(adminSession);
     const db = makeDb({ first: [null, { n: 2 }], run: { meta: { changes: 1 } } });
     const res = await onRequestDelete(deleteCtx(db) as any);
@@ -335,8 +333,7 @@ describe('merged registrations', () => {
 
     const withStatus = prepared(db).find((sql: string) => sql.includes('AS paymentStatus'));
     expect(withStatus).toBeDefined();
-    // Not `pp.registrationId = pr.id` — that would report a secondary unpaid
-    // and re-offer it the mandate flow.
+    // `pp.registrationId = pr.id` would report a secondary unpaid.
     expect(withStatus).toContain('registration_merge');
     expect(withStatus).not.toMatch(/pp\.registrationId = pr\.id/);
   });
@@ -354,14 +351,13 @@ describe('merged registrations', () => {
   });
 
   it('resolves manual attribution through the primary', async () => {
-    // The manual row hangs off the group's primary, so a secondary would
-    // otherwise show "Paid in full" with nobody's name against it.
+    // Otherwise a secondary shows "Paid in full" with nobody's name against it.
     const secondary = { ...clubRegistration, registrationId: 'reg_sec', paymentStatus: 'manual' };
     const db = makeDb({
       all: [
         [sampleRegistration],
         [secondary],
-        // attachManualAttribution: the audit lookup, then the merge map.
+        // attachManualAttribution: audit lookup, then the merge map.
         [{
           registrationId: 'reg_primary',
           manualPaidBy: 'admin@example.com',

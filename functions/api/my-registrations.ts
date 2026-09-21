@@ -55,10 +55,8 @@ interface RegistrationRow {
  */
 function paymentStatusSubquery(distinguishManual: boolean): string {
   const manualBranch = distinguishManual ? `'manual'` : `'completed'`;
-  // Keyed on the *billing* registration, not `pr.id`: merged registrations are
-  // one payment, so every member of a group reports the primary's status. An
-  // attribution read, per the rule in lib/registration-merge.ts — the group has
-  // exactly one authoritative record and this reads it.
+  // Keyed on the billing registration, so every member of a group reports the
+  // primary's status — the group has one authoritative record and this reads it.
   return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
@@ -126,9 +124,7 @@ async function attachManualAttribution(
     if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
   }
 
-  // A manual row always hangs off its group's primary, so a secondary has to
-  // look the attribution up through that. Without this, a merged registration
-  // shows "Paid in full" with nobody's name against it.
+  // A manual row hangs off the primary, so a secondary looks it up through that.
   const { results: merges } = await db
     .prepare(
       `SELECT "registrationId", "primaryRegistrationId" FROM "registration_merge"
@@ -286,10 +282,8 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     return json({ error: "registrationId is required" }, { status: 400 });
   }
 
-  // Deleting a registration cascades its player_payment rows away, which is the
-  // only record that GoCardless is still collecting. Refuse while a live mandate
-  // exists — a pre-existing hazard this endpoint never guarded, and one that
-  // merging makes worse because the row may cover several teams.
+  // Deleting cascades away the only record that GoCardless is still collecting —
+  // a pre-existing hazard this endpoint never guarded.
   const livePayment = await context.env.DB
     .prepare(
       `SELECT status FROM "player_payment"
@@ -313,10 +307,8 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     );
   }
 
-  // registration_merge.primaryRegistrationId is ON DELETE RESTRICT, so this would
-  // fail as a raw FK violation (a 500). Catch it here and say what to do: a
-  // primary carries the whole group's billing, and removing it would leave every
-  // other member unpaid with no record of why.
+  // primaryRegistrationId is ON DELETE RESTRICT, so this would otherwise surface
+  // as a raw FK violation. Catch it and say what to do instead.
   const dependants = await context.env.DB
     .prepare(
       `SELECT COUNT(*) AS n FROM "registration_merge"

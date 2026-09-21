@@ -36,9 +36,8 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
-  // Billing group — see functions/lib/registration-merge.ts. A registration
-  // billed through another one shows that one's payment status, so these say
-  // why a row reads as paid when nobody paid against it directly.
+  // Billing group — see functions/lib/registration-merge.ts. A merged row shows
+  // its group's payment status, so these say why it reads as paid.
   /** The registration this one is billed through — itself, unless merged. */
   billingRegistrationId: string;
   /** This registration's primary's team, when it is billed through another. */
@@ -166,9 +165,8 @@ function SubscriptionBadge({ row, showManualMarker }: { row: RegistrationRow; sh
     </Badge>
   );
 
-  // A merged registration shows its group's status, so say where that came
-  // from. Otherwise the row reads "Paid in full" with no payment behind it and
-  // the obvious response is to chase the player who has already paid.
+  // Say where the status came from, or the row reads "Paid in full" with no
+  // payment behind it and someone chases a player who has already paid.
   const withBillingNote = row.billedWithTeamName
     ? (
       <Stack gap={2}>
@@ -330,9 +328,8 @@ function ManualPaymentAction({ row, busyId, onMark, onUnmark }: ManualPaymentPro
     row.paymentStatus === 'pending'
   ) return null;
 
-  // A secondary is billed through its primary, so the override belongs there.
-  // The API resolves it either way; hiding the button keeps the group's one
-  // payment record visible in one place.
+  // The override belongs on the primary. The API resolves it either way; hiding
+  // the button keeps the group's one payment record in one place.
   if (row.billedWithTeamName) return null;
 
   return (
@@ -691,7 +688,7 @@ function RegistrationsSummary({ rows }: { rows: RegistrationRow[] }) {
         items={[
           { value: summary.registrations, label: 'Registrations' },
           { value: summary.players, label: 'Players' },
-          // What the club actually charges for: a merged group counts once.
+          // What the club charges for: a merged group counts once.
           { value: summary.billableUnits, label: 'Billable units' },
           { value: summary.paying, label: 'Paying' },
           { value: summary.outstanding, label: 'Outstanding' },
@@ -716,7 +713,7 @@ function exportRegistrationsToXlsx(
     'Linked Accounts':   r.linkedAccounts ?? '',
     'Subscription Level': r.subscriptionLevelName ?? '',
     'Subscription Status': getSubscriptionStatus(r).label,
-    // Without this a merged row exports as paid with nothing to explain why.
+    // Or a merged row exports as paid with nothing to explain why.
     'Billed Via':        r.billedWithTeamName
       ? `Billed with ${r.billedWithTeamName}`
       : r.mergedTeamNames ? `Also covers ${r.mergedTeamNames}` : '',
@@ -796,9 +793,8 @@ export function RegistrationsPage() {
       });
       if (!res.ok) throw new Error('Failed to load registrations');
       const data = await res.json() as Partial<Response>;
-      // Defaulted rather than trusted: the page renders `personal.length`
-      // directly, so a response missing a field would white-screen the whole
-      // table rather than show an error.
+      // Defaulted, not trusted: the page reads `personal.length` directly, so a
+      // missing field would white-screen the table rather than show an error.
       setPersonal(data.personal ?? []);
       setClub(data.club ?? null);
       setScope(data.scope ?? 'user');
@@ -956,9 +952,8 @@ export function RegistrationsPage() {
     refresh();
   };
 
-  // Registrations that look like they belong together. A hint only: same player
-  // and age group is wrong often enough (U18 Blue and U18 Purple are two sets of
-  // subs) that nothing is stored until an admin decides.
+  // A hint only — same player and age group is wrong often enough that nothing
+  // is stored until an admin decides.
   const suggestions = useMemo(() => suggestMerges(club ?? []), [club]);
   const suggestedIds = useMemo(() => suggestedRegistrationIds(suggestions), [suggestions]);
 
@@ -974,12 +969,7 @@ export function RegistrationsPage() {
     [club, selectedForMerge],
   );
 
-  /**
-   * Whether the selection is mergeable, and why not when it is not.
-   *
-   * Mirrors what POST /api/admin/registration-merges enforces, so an admin sees
-   * the reason before meeting a 409 rather than after.
-   */
+  /** Why the selection cannot merge, mirroring the API so the admin sees it before a 409. */
   const mergeBlocker = useMemo((): string | null => {
     if (selectedRows.length < 2) return 'Select two or more registrations to merge.';
     if (new Set(selectedRows.map(r => r.fanId)).size > 1) {
@@ -1003,9 +993,8 @@ export function RegistrationsPage() {
   }, []);
 
   const openMergeModal = () => {
-    // Default to the registration that already has a level, then one that has
-    // been paid, then the first — the admin can always choose differently. The
-    // primary is what prices the group and what the payment hangs off.
+    // Level first, then paid, then whatever is first — the primary prices the
+    // group, so one without a level would render a dead card.
     const preferred =
       selectedRows.find(r => r.subscriptionLevelId && r.paymentStatus)
       ?? selectedRows.find(r => r.subscriptionLevelId)
@@ -1038,8 +1027,8 @@ export function RegistrationsPage() {
       });
       setMergeModalOpen(false);
       setSelectedForMerge(new Set());
-      // Refresh rather than patch locally — the server owns which registration
-      // ends up billing which, and the whole group's payment status moves.
+      // Refresh, not patch: the server owns the grouping and the whole group's
+      // payment status moves with it.
       await refresh();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : 'Failed to merge registrations');

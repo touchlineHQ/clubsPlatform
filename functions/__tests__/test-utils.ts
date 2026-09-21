@@ -65,11 +65,8 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
     batch: vi.fn(async (stmts: unknown) => {
       const configured = batchResults[batchIdx];
       batchIdx++;
-      // With nothing configured, return one empty result per statement rather
-      // than none, carrying the same meta as run(). Endpoints that write a group
-      // in one batch read meta.changes per statement to tell a guarded no-op
-      // from a write, and a zero-length result array reads as "every guard
-      // failed".
+      // One empty result per statement carrying run()'s meta — endpoints that
+      // batch guarded writes read meta.changes per statement.
       const results = configured
         ?? (Array.isArray(stmts) ? stmts.map(() => [] as unknown[]) : []);
       return results.map((rows) => ({ results: rows, success: true, ...runMeta }));

@@ -103,13 +103,7 @@ function faRowIncluded(
 }
 
 /** Registration-driven: one row each, so nothing the club holds is dropped; leftover FA rows follow. */
-/**
- * How a registration is billed, in words, for the treasurer reading the export.
- *
- * Without this a secondary reads "Paid in full" with nothing to explain why, and
- * the obvious response is to chase the player who has already paid — or, worse,
- * to take a second payment.
- */
+/** How a registration is billed: without it a secondary reads "Paid in full" unexplained. */
 function billedVia(reg: StatusReportRegistration): string {
   if (reg.billedWithTeamName) return `Billed with ${reg.billedWithTeamName}`;
   if (reg.mergedTeamNames) return `Also covers ${reg.mergedTeamNames}`;
@@ -199,7 +193,7 @@ export function summariseStatusReport(rows: StatusReportRow[]): {
     matched: rows.filter(r => r.match === 'Matched').length,
     noSubsRecord: rows.filter(r => r.match === 'No subs record').length,
     subsOnly: rows.filter(r => r.match === 'Subs only').length,
-    // Rows covered by another registration's payment — the ones not to chase.
+    // Covered by another registration's payment — the ones not to chase.
     billedElsewhere: rows.filter(r => r.billedVia.startsWith('Billed with')).length,
   };
 }

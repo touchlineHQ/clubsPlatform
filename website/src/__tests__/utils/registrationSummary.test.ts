@@ -99,8 +99,7 @@ describe('summariseRegistrations', () => {
   // ── Merged registrations ───────────────────────────────────────────────────
 
   it('counts a merged group as one billable unit and one outstanding', () => {
-    // The bug this fixes: a U15 playing Tuesdays and Thursdays owes one set of
-    // subs, and reporting two outstanding had the treasurer chasing twice.
+    // One set of subs owed; reporting two had the treasurer chasing twice.
     const rows = [
       row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1', paymentStatus: null }),
       row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', paymentStatus: null }),
@@ -126,8 +125,7 @@ describe('summariseRegistrations', () => {
   });
 
   it('prices a group off its primary, not whichever member came first', () => {
-    // The secondary carries its own (irrelevant) level. Reading the group's
-    // level off it would report a group with no level as levelled, or vice versa.
+    // Reading the group's level off the secondary's would report the wrong one.
     const rows = [
       row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', subscriptionLevelId: 'sub_2', paymentStatus: null }),
       row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1', subscriptionLevelId: null, paymentStatus: null }),
@@ -140,7 +138,7 @@ describe('summariseRegistrations', () => {
   });
 
   it('still counts a group whose primary a filter has hidden', () => {
-    // Dropping it entirely would silently understate what the club is owed.
+    // Dropping it would silently understate what the club is owed.
     const rows = [
       row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', paymentStatus: null }),
     ];

@@ -43,11 +43,8 @@ type RegistrationRow = {
 };
 
 /**
- * One billable thing: a registration, or a merged group of them.
- *
- * `registrationId` is always the primary's — it is what the payment hangs off,
- * what `?reg=` resolves to, and whose subscription level prices the group.
- * `teamNames` carries every member's team so the card can name them all.
+ * One billable thing: a registration, or a merged group of them. `registrationId`
+ * is always the primary's — what the payment hangs off and what prices the group.
  */
 type RegistrationGroup = Omit<RegistrationRow, 'billingRegistrationId'> & {
   teamNames: string[];
@@ -57,21 +54,16 @@ type RegistrationGroup = Omit<RegistrationRow, 'billingRegistrationId'> & {
 /**
  * Collapse rows into billable groups, keyed on the billing registration.
  *
- * The group takes the *primary's* row — its level, its price, its team name for
- * the reference — because that is the registration the payment is created
- * against. A secondary's own level is deliberately not consulted: the group pays
- * once, and api/admin/registration-merges.ts made the admin choose which.
- *
- * Input order is preserved (levelled registrations first, then team name), and a
- * group sorts where its first-seen member did.
+ * A group takes the primary's row for everything but the team list, because that
+ * is the registration the payment is created against. Input order is preserved,
+ * so a group sorts where its first-seen member did.
  */
 function groupRegistrations(rows: RegistrationRow[]): RegistrationGroup[] {
   const byBillingId = new Map<string, RegistrationGroup>();
   const primaries = new Map<string, RegistrationRow>();
 
-  // Fall back to the row's own id rather than trusting the column to be there.
-  // A null would otherwise key every registration to the same group and collapse
-  // unrelated teams into one card.
+  // Falls back to the row's own id: a null would key every registration to one
+  // group and collapse unrelated teams into a single card.
   const billingIdOf = (row: RegistrationRow) => row.billingRegistrationId || row.registrationId;
 
   for (const row of rows) {
@@ -88,9 +80,8 @@ function groupRegistrations(rows: RegistrationRow[]): RegistrationGroup[] {
       continue;
     }
 
-    // Prefer the primary's own row for everything but the team list. A
-    // secondary can be seen first — the ORDER BY floats levelled rows — and
-    // pricing a group off a secondary is exactly the bug this avoids.
+    // A secondary can be seen first (the ORDER BY floats levelled rows), and
+    // pricing a group off one is exactly the bug this avoids.
     const source = primaries.get(billingId) ?? row;
     byBillingId.set(billingId, {
       registrationId: billingId,
@@ -106,8 +97,7 @@ function groupRegistrations(rows: RegistrationRow[]): RegistrationGroup[] {
     });
   }
 
-  // Name the primary's team first, then the rest alphabetically, so the card
-  // reads the same way every time regardless of row order.
+  // Primary's team first, then the rest alphabetically, so the card is stable.
   for (const group of byBillingId.values()) {
     const others = group.teamNames.filter(t => t !== group.teamName).sort();
     group.teamNames = [group.teamName, ...others];
@@ -155,12 +145,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const { results: registrationRows } = await env.DB
     .prepare(
-      // Level resolution precedence (highest → lowest) lives in
-      // lib/registration-merge.ts: per-registration override, then team+status,
-      // then club-wide status, then team default.
-      //
-      // billingRegistrationId is the registration this one's money hangs off:
-      // itself when unmerged or primary, its primary when a secondary.
+      // Level precedence lives in lib/registration-merge.ts; billingRegistrationId
+      // is the registration this one's money hangs off.
       `SELECT pr.id            AS registrationId,
               ${billingRegistrationIdSql('pr')} AS billingRegistrationId,
               pr.teamName,
@@ -179,9 +165,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug, fanId)
     .all<RegistrationRow>();
 
-  // Merged registrations are one thing to pay for. Collapse them into groups
-  // keyed on the billing registration, so a player billed once sees one card
-  // rather than being invited to pay twice for the same set of subs.
+  // Merged registrations are one thing to pay for, so a player billed once sees
+  // one card rather than an invitation to pay twice for the same subs.
   const registrations = groupRegistrations(registrationRows);
 
   if (registrations.length === 0) {
@@ -203,16 +188,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     });
   }
 
-  // Resolve which group to use. One group means one thing to pay for, even when
-  // it spans several registrations.
+  // One group is one thing to pay for, however many registrations it spans.
   let registration: RegistrationGroup;
 
   if (registrations.length === 1 && !regParam) {
     registration = registrations[0];
   } else if (regParam) {
-    // A link minted before the merge — or exported from the admin table — can
-    // name a secondary. Resolve it forward to its group rather than treating it
-    // as invalid; it is a registration this player really holds.
+    // A pre-merge or exported link can name a secondary — resolve it forward
+    // rather than calling it invalid; the player really does hold it.
     const match = registrations.find(r => r.memberIds.includes(regParam));
     if (!match) {
       return Response.redirect(`${origin}/#/payment-cancelled?reason=invalid_reg`, 302);
@@ -227,9 +210,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // never send them into the mandate flow again. 'completed' is the one that
   // bites: a plan that has collected in full would otherwise be charged twice.
   //
-  // This is a *gating* read, so it covers every member of the group, not just
-  // the primary: a payment flow that was in flight when the merge happened can
-  // have left a row on a secondary, and that still means "do not charge again".
+  // Covers every member: an in-flight flow can have left a row on a secondary,
+  // and that still means "do not charge again".
   const existingPayment = await env.DB
     .prepare(
       `SELECT reference FROM "player_payment"
@@ -278,8 +260,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     intervalUnit: registration.intervalUnit,
     count: registration.intervalCount,
     startDate: registration.startDate,
-    // Names every team the group covers, so the GoCardless mandate page tells
-    // the payer what the one payment is actually for.
+    // Names every team, so the mandate page says what the payment is for.
     description: `${registration.teamNames.join(' + ')} subscription — FAN ${registration.fanId}`,
     origin,
   });
@@ -304,13 +285,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 /**
- * Renders an HTML page for players with several things to pay for, to choose
- * which one.
+ * Renders an HTML page for players with several things to pay for.
  *
- * One card per billable group, not per registration: merged registrations are
- * one payment, so they appear once, naming every team they cover. Each card
- * shows its subscription pricing and badges payments already in place. Disabled
- * cards are shown for groups without a level or that are already paid, by Direct
+ * One card per billable *group*, not per registration, naming every team it
+ * covers. Cards are disabled for groups with no level or already paid, by Direct
  * Debit or by an admin's manual override.
  */
 async function selectionPage(
@@ -321,9 +299,7 @@ async function selectionPage(
   origin: string,
   paymentType: string,
 ): Promise<Response> {
-  // Check for already-active payments so we can badge them. This is a gating
-  // read — it decides whether a card is offered — so it covers every member of
-  // every group, not just the primaries.
+  // Badging decides whether a card is offered, so it covers every member.
   const allMemberIds = registrations.flatMap(r => r.memberIds);
   const placeholders = allMemberIds.map(() => '?').join(',');
   const { results: existingPayments } = await db
@@ -378,8 +354,7 @@ async function selectionPage(
         })()
       : null;
 
-    // A merged group is one payment covering several teams — say so on the card,
-    // or the payer wonders where their other team went.
+    // Say so on the card, or the payer wonders where their other team went.
     const teamLine = r.teamNames.length > 1
       ? `<div class="card-team">${escHtml(r.teamNames.join(' + '))}</div>
          <div class="card-merged">One payment covering ${r.teamNames.length} teams</div>`

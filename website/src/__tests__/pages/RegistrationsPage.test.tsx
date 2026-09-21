@@ -502,7 +502,7 @@ describe('RegistrationsPage', () => {
       await renderClubTab([tuesday, thursday]);
 
       expect(screen.getByText(/1 player has registrations in the same age group/i)).toBeTruthy();
-      // A hint, not a decision: nothing has been billed together yet.
+      // A hint, not a decision: nothing is billed together yet.
       expect(statValue('Billable units')).toBe('2');
     });
 
@@ -633,8 +633,7 @@ describe('RegistrationsPage', () => {
     });
 
     it('defaults the primary to the registration that has a level', async () => {
-      // The primary's level prices the whole group, so a primary without one
-      // would render a dead card for a payable player.
+      // A primary without a level would render a dead card for a payable player.
       await renderClubTab([
         { ...tuesday, subscriptionLevelId: null, subscriptionLevelName: null },
         thursday,
@@ -675,8 +674,7 @@ describe('RegistrationsPage', () => {
         { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
       ]);
 
-      // Rows sort by team name, so pick the primary's row by the badge only it
-      // carries rather than by position.
+      // Rows sort by team name, so pick the primary by the badge only it carries.
       const primaryRow = screen.getByText('Billed for 2 teams').closest('tr')!;
       fireEvent.click(within(primaryRow).getByRole('button', { name: /Remove registration/i }));
 

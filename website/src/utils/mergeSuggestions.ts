@@ -26,17 +26,12 @@ function normaliseAgeGroup(ageGroup: string): string {
 /**
  * Registrations that look like they should be billed together but are not.
  *
- * Same player, same age group is a *hint*, nothing more. It is wrong often
- * enough that it must never be stored or acted on automatically: U18 Blue and
- * U18 Purple share an age group and are two separate sets of subs, while U15s
- * on different days are two registrations the club bills once. Only the club
- * knows which. So this surfaces candidates and stops there — the merge itself is
- * always an explicit decision, recorded in registration_merge and audited.
+ * Same player and age group is a hint, never a decision: U18 Blue and U18 Purple
+ * share an age group and are two sets of subs, while U15s on different days are
+ * billed once. Only the club knows which, so this surfaces candidates and stops.
  *
- * A pair is suggested only when every member is currently billed separately.
- * Once an admin has merged two of three same-age-group registrations, the group
- * is a decision already made, and nagging about the third would be second-
- * guessing it.
+ * A set is suggested only while every member is billed separately — once any of
+ * them is merged, the admin has already ruled on it.
  */
 export function suggestMerges(rows: readonly SuggestionRow[]): MergeSuggestion[] {
   const byPlayerAndAge = new Map<string, SuggestionRow[]>();
@@ -54,8 +49,7 @@ export function suggestMerges(rows: readonly SuggestionRow[]): MergeSuggestion[]
   for (const candidates of byPlayerAndAge.values()) {
     if (candidates.length < 2) continue;
 
-    // Every candidate must still be its own billing group. If any share one,
-    // the admin has already ruled on this set.
+    // Any shared billing group means this set has already been ruled on.
     const billingIds = new Set(candidates.map(billingIdOf));
     if (billingIds.size !== candidates.length) continue;
 

@@ -26,8 +26,7 @@ describe('suggestMerges', () => {
   });
 
   it('does not suggest across different age groups', () => {
-    // A U18 who also plays for Robins First is two commitments until the club
-    // says otherwise.
+    // U18 plus Robins First is two commitments until the club says otherwise.
     const rows = [
       row({ registrationId: 'reg_1', ageGroup: 'U18' }),
       row({ registrationId: 'reg_2', ageGroup: 'Open' }),
@@ -46,9 +45,7 @@ describe('suggestMerges', () => {
   });
 
   it('says nothing about a set the admin has already ruled on', () => {
-    // reg_2 is billed through reg_1. Suggesting a merge that already exists
-    // would be nagging; suggesting the third be added would second-guess a
-    // decision only the club can make.
+    // reg_2 is billed through reg_1; pulling reg_3 in would second-guess that.
     const rows = [
       row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1' }),
       row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1' }),
@@ -70,7 +67,7 @@ describe('suggestMerges', () => {
   });
 
   it('treats age groups case- and whitespace-insensitively', () => {
-    // They arrive from an FA export, not a controlled vocabulary.
+    // From an FA export, not a controlled vocabulary.
     const rows = [
       row({ registrationId: 'reg_1', ageGroup: 'U15' }),
       row({ registrationId: 'reg_2', ageGroup: ' u15 ' }),
@@ -91,7 +88,7 @@ describe('suggestMerges', () => {
   });
 
   it('treats a missing billingRegistrationId as unmerged', () => {
-    // The column is new; a row that predates it is its own group.
+    // The column is new; a row predating it is its own group.
     const rows = [
       { registrationId: 'reg_1', fanId: 'FAN-1', ageGroup: 'U15' },
       { registrationId: 'reg_2', fanId: 'FAN-1', ageGroup: 'U15' },

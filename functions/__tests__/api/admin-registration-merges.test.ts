@@ -66,12 +66,7 @@ function unmergeCtx(db: any, query = '?primaryRegistrationId=reg_primary') {
   );
 }
 
-/**
- * The read sequence POST makes before writing:
- *   1. .all() — the named registrations
- *   2. .all() — their payment rows
- *   3. .all() — members that are themselves primaries (the nesting check)
- */
+/** POST's read sequence: named registrations, their payments, then the nesting check. */
 function postDb(over: { registrations?: unknown[]; payments?: unknown[]; nested?: unknown[] } = {}) {
   return makeDb({
     all: [
@@ -186,8 +181,7 @@ describe('onRequestPost — the primary carries the price', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
 
   it('returns 409 when the primary has no subscription level', async () => {
-    // The group is priced off the primary, so a primary with no level would
-    // render a dead card for a player who is perfectly payable.
+    // A primary with no level renders a dead card for a payable player.
     const res = await onRequestPost(
       mergeCtx(postDb({ registrations: [reg({ levelId: null }), SECONDARY] })) as any,
     );
@@ -232,8 +226,7 @@ describe('onRequestPost — a secondary may not hold a live payment', () => {
   });
 
   it('allows the merge when the secondary‘s only row is inactive', async () => {
-    // Abandoned setup attempts are common. Blocking on them would block most
-    // real merges, and a dead row cannot collect anything.
+    // Abandoned setups are common and a dead row collects nothing.
     const res = await onRequestPost(
       mergeCtx(postDb({
         payments: [{ registrationId: 'reg_secondary', status: 'inactive', mandateId: 'MND-1' }],
@@ -243,8 +236,7 @@ describe('onRequestPost — a secondary may not hold a live payment', () => {
   });
 
   it('allows the merge when the PRIMARY holds the payment', async () => {
-    // This is the point of the feature: a player who has paid through one team
-    // is covered for the rest of the group.
+    // The point of the feature: paying through one team covers the group.
     const res = await onRequestPost(
       mergeCtx(postDb({
         payments: [{ registrationId: 'reg_primary', status: 'active', mandateId: 'MND-1' }],
@@ -260,8 +252,7 @@ describe('onRequestPost — no chains', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
 
   it('returns 409 when the proposed primary is itself a secondary', async () => {
-    // COALESCE resolves exactly one hop, so a chain would split a group's money
-    // from its members.
+    // COALESCE resolves one hop, so a chain splits a group's money from it.
     const res = await onRequestPost(
       mergeCtx(postDb({
         registrations: [reg({ primaryRegistrationId: 'reg_elsewhere' }), SECONDARY],
@@ -300,9 +291,7 @@ describe('onRequestPost — writing the group', () => {
   });
 
   it('re-asserts every guard in the write itself, not just in the reads', async () => {
-    // Two admins merging overlapping sets can form a chain from opposite ends,
-    // and a confirm.ts flow can land a payment row between the checks and the
-    // write. Pre-reads cannot close either window.
+    // Pre-reads cannot close the two-admin or mid-merge-payment windows.
     const db = postDb();
     await onRequestPost(mergeCtx(db) as any);
 
@@ -313,8 +302,7 @@ describe('onRequestPost — writing the group', () => {
   });
 
   it('writes the audit row in the same batch as the merge', async () => {
-    // An audited merge that does not exist, or a merge nobody can see, is not a
-    // state this should be able to reach.
+    // An audited merge that does not exist must not be reachable.
     const db = postDb();
     await onRequestPost(mergeCtx(db) as any);
 
@@ -377,9 +365,7 @@ describe('onRequestDelete', () => {
   });
 
   it('refuses while the group holds a live GoCardless payment', async () => {
-    // Dissolving would leave every ex-secondary with no payment rows, so the
-    // payer page would re-offer each of them the mandate flow while the group's
-    // subscription is still collecting.
+    // Dissolving would re-offer the mandate flow while it is still collecting.
     const db = makeDb({ first: { status: 'active' } });
     const res = await onRequestDelete(unmergeCtx(db) as any);
     const body = await res.json() as any;

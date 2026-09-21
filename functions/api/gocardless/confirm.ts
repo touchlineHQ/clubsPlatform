@@ -161,15 +161,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return Response.redirect(`${origin}/#/payment-cancelled?reason=legacy_link`, 302);
   }
 
-  // Re-derive the payment plan AND the club slug from the DB, keyed by
-  // registration id (the only authoritative identifier we get from metadata).
-  // clubSlug must come from the DB, not the URL, so an attacker can't write
-  // a payment row against a club they don't own.
-  //
-  // The join resolves through any merge. The link may have been minted before
-  // this registration became a secondary — a payer's inbox holds it for hours —
-  // and everything downstream must hang off the group's *primary*, or the player
-  // is charged a second time against a registration nobody reads any more.
+  // clubSlug from the URL would let an attacker write against a club they don't own.
+  // The join resolves through any merge: a link minted before this registration
+  // became a secondary is still live, and billing it directly would charge twice.
   const pricing = await env.DB
     .prepare(
       `SELECT pr.id AS registrationId, pr.clubSlug, pr.teamName, p.fanId,
@@ -194,13 +188,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const registrationId = pricing?.registrationId ?? linkedRegistrationId;
 
-  // Re-derived rather than taken from metadata, for the same reason. For an
-  // unmerged registration this reproduces the stamped value exactly; for a
-  // merged one it swaps the secondary's team name for the primary's, keeping the
-  // group's reference stable so the subscription match below still fires.
-  //
-  // payment_type has been stamped since merging shipped; the parse is the
-  // fallback for links minted before that.
+  // Rebuilt from the billing registration so a group keeps one stable reference;
+  // identical when unmerged. The parse is a fallback for pre-payment_type links.
   const paymentType = br.metadata?.payment_type ?? paymentTypeFromReference(linkedReference);
   const reference = pricing
     ? buildLogicalReference(pricing.teamName, pricing.fanId, paymentType)
@@ -260,16 +249,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // mandate and reuse the existing subscription so the player isn't
   // double-charged.
   //
-  // This used to also require `reference LIKE '<reference>-________'`, matching
-  // the logical prefix of the stored `<reference>-<last-8-of-billing-request>`.
-  // That clause is gone because it defeats the merge case: a link minted before
-  // the merge carries the *secondary's* team-derived reference while the stored
-  // row carries the primary's, so the LIKE fails and the dedupe never fires —
-  // exactly when it is most needed. The billing registration id is the stronger
-  // key anyway. api/admin/manual-payment.ts documents relying on its `MANUAL-`
-  // prefix to stay out of this match; it no longer needs to, because manual rows
-  // are 'manual' (or 'inactive' after an undo) and the status filter excludes
-  // both.
+  // The old `reference LIKE` clause is gone: a pre-merge link carries the
+  // secondary's reference and the stored row the primary's, so it failed exactly
+  // when the dedupe was needed. The status filter still excludes manual rows.
   const priorPayment = await env.DB
     .prepare(
       `SELECT mandateId, subscriptionId, status FROM "player_payment"

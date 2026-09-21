@@ -125,10 +125,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     };
   }
 
-  // The join resolves through any merge. No caller should mint a link against a
-  // secondary, but a stale admin page or an exported link can still try, and
-  // resolving here means every route into GoCardless hangs off the group's
-  // primary.
+  // Resolves through any merge, so no caller can mint a link against a secondary.
   const reg = await db
     .prepare(
       `SELECT pr.id, pr.teamName, p.fanId
@@ -145,9 +142,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
   }
 
   const { id: billingRegistrationId, fanId, teamName } = reg;
-  // The primary's team name is the group's stable billing identity — see the
-  // note on buildLogicalReference. Changing it would break confirm.ts's
-  // subscription match and collect twice.
+  // The primary's team name is the group's stable billing identity; see buildLogicalReference.
   const reference = buildLogicalReference(teamName, fanId, paymentType);
   const baseDescription = input.description ?? `${teamName} — FAN ${fanId}`;
 
@@ -184,9 +179,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
         metadata: {
           reference,
           registration_id: billingRegistrationId,
-          // Stamped rather than left to be parsed back out of the reference:
-          // confirm.ts rebuilds the reference from the billing registration, and
-          // deriving the type from a string it is about to rewrite is circular.
+          // Stamped, not parsed back out: confirm.ts rewrites the reference itself.
           payment_type: paymentType,
           tracking_info: `team:${teamName}|fan:${fanId}|type:${paymentType}|${amountInPence}p-${intervalUnit}${totalCount ? `-x${totalCount}` : ''}`,
         },
