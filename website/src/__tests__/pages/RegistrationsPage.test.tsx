@@ -138,7 +138,21 @@ describe('RegistrationsPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
       expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Generate status report/i })).toBeTruthy();
     });
+  });
+
+  it('opens the status report panel from the Club Registrations tab', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    await renderClubTab([adminRow]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Generate status report/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Download status report/i })).toBeTruthy();
+    });
+    // Nothing is generated until the admin picks a file.
+    expect(screen.getByRole('button', { name: /Download status report/i })).toBeDisabled();
   });
 
   it('shows Import Players button in Club Registrations tab for admins', async () => {
