@@ -5,10 +5,12 @@ import { renderWithMantine, mockAdmin } from '../../test-utils';
 // The panel reads the workbook with SheetJS. Stubbing it keeps these tests
 // about the preview flow rather than about spreadsheet parsing, which
 // parseSheet's own shape already pins down.
+// Carries the personal columns a real FA export has, so the payload assertion
+// below is proving they are dropped rather than that they were never there.
 const SHEET = [
-  ['FAN ID', 'Team', 'Registration Status'],
-  ['FAN001', 'U11 Boys', 'Active'],
-  ['FAN002', 'U11 Boys', 'Active'],
+  ['FAN ID', 'First Names', 'Surname', 'Date of birth', 'Team', 'Registration Status'],
+  ['FAN001', 'Ada', 'Lovelace', '04/11/2009', 'U11 Boys', 'Active'],
+  ['FAN002', 'Grace', 'Hopper', '09/12/2010', 'U11 Boys', 'Active'],
 ];
 
 vi.mock('xlsx', () => ({
@@ -94,6 +96,27 @@ describe('ImportPlayersPanel preview', () => {
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('/api/admin/import-players');
     expect(JSON.parse(init.body).dryRun).toBe(true);
+  });
+
+  /**
+   * Guards issue #94's hard constraint: no PII is to be stored in the app.
+   * The FA report the admin picks carries names and dates of birth, and the
+   * import must post neither — not at preview, not at commit. If this fails,
+   * personal data is about to reach an endpoint and then D1.
+   */
+  it('posts no name or date-of-birth field, even though the file has them', async () => {
+    mockFetch.mockResolvedValue(jsonOk(previewBody()));
+
+    dropFile();
+    await screen.findByText('2 to create');
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body);
+    expect(Object.keys(body.rows[0])).toEqual([
+      'fanId', 'ageGroup', 'teamName', 'registrationExpiry', 'registrationStatus',
+      'playerEmail', 'parentEmails',
+    ]);
+    expect(init.body).not.toMatch(/Lovelace|Hopper|Ada|Grace|04\/11\/2009/);
   });
 
   it('lists the registrations the file leaves behind', async () => {
