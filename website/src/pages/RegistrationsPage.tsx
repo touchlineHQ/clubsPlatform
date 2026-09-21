@@ -18,6 +18,7 @@ import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 import { captureError, captureEvent } from '../lib/posthog';
 import { timeAgo } from '../utils/timeAgo';
 import { getSubscriptionStatus } from '../utils/subscriptionStatus';
+import { buildPaymentLink } from '../utils/paymentLink';
 import { summariseRegistrations } from '../utils/registrationSummary';
 
 interface RegistrationRow {
@@ -594,10 +595,6 @@ function RegistrationsSummary({ rows }: { rows: RegistrationRow[] }) {
       />
     </Box>
   );
-}
-
-function buildPaymentLink(origin: string, clubSlug: string, fanId: string): string {
-  return `${origin}/${clubSlug}/payments/SUBS/${encodeURIComponent(fanId)}`;
 }
 
 function exportRegistrationsToXlsx(
