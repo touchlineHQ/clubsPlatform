@@ -214,14 +214,16 @@
     "event": "registrations merged",
     "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only \u2014 no FAN numbers.",
     "files": [
-      "functions/api/admin/registration-merges.ts"
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/RegistrationsPage.tsx"
     ]
   },
   {
     "event": "registrations unmerged",
     "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only \u2014 no FAN numbers.",
     "files": [
-      "functions/api/admin/registration-merges.ts"
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/RegistrationsPage.tsx"
     ]
   },
   {

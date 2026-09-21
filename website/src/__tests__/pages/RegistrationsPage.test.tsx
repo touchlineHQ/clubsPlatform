@@ -472,6 +472,220 @@ describe('RegistrationsPage', () => {
     });
   });
 
+  // ── Merging registrations ──────────────────────────────────────────────────
+
+  describe('merging registrations', () => {
+    /** Two registrations of one player, same age group, each billed on its own. */
+    const tuesday = {
+      ...sampleRow,
+      registrationId: 'reg_tue',
+      teamName: 'U15 Tuesday',
+      ageGroup: 'U15',
+      billingRegistrationId: 'reg_tue',
+      billedWithTeamName: null,
+      mergedTeamNames: null,
+      paymentStatus: null,
+    };
+    const thursday = {
+      ...tuesday,
+      registrationId: 'reg_thu',
+      teamName: 'U15 Thursday',
+      billingRegistrationId: 'reg_thu',
+    };
+
+    function statValue(label: string): string {
+      const strip = screen.getByRole('group', { name: /registrations summary/i });
+      return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
+    }
+
+    it('suggests same-age-group registrations without merging anything itself', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      expect(screen.getByText(/1 player has registrations in the same age group/i)).toBeTruthy();
+      // A hint, not a decision: nothing has been billed together yet.
+      expect(statValue('Billable units')).toBe('2');
+    });
+
+    it('says nothing when the age groups differ', async () => {
+      // U18 plus Robins First is two commitments until the club says otherwise.
+      await renderClubTab([
+        tuesday,
+        { ...thursday, ageGroup: 'Open', teamName: 'Robins First' },
+      ]);
+
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+    });
+
+    it('counts a merged group as one billable unit but two registrations', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(statValue('Registrations')).toBe('2');
+      expect(statValue('Billable units')).toBe('1');
+      // Already ruled on, so no nagging.
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+    });
+
+    it('explains on the row why a merged registration reads as paid', async () => {
+      await renderClubTab([
+        { ...tuesday, paymentStatus: 'active', mergedTeamNames: 'U15 Thursday' },
+        {
+          ...thursday,
+          paymentStatus: 'active',
+          billingRegistrationId: 'reg_tue',
+          billedWithTeamName: 'U15 Tuesday',
+        },
+      ]);
+
+      expect(screen.getByText('Billed with U15 Tuesday')).toBeTruthy();
+      expect(screen.getByText('Billed for 2 teams')).toBeTruthy();
+    });
+
+    it('offers Unmerge on the primary only', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(screen.getAllByRole('button', { name: /^Unmerge$/ })).toHaveLength(1);
+    });
+
+    it('hides Mark as paid on a secondary — the override belongs on the primary', async () => {
+      await renderClubTab([
+        tuesday,
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(screen.getAllByRole('button', { name: /Mark as paid/i })).toHaveLength(1);
+    });
+
+    it('enables Merge once two registrations of one player are selected', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+      // One is not a group.
+      expect(screen.getByRole('button', { name: /Merge registrations/i })
+        .hasAttribute('disabled')).toBe(true);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Merge registrations/i })
+          .hasAttribute('disabled')).toBe(false);
+      });
+    });
+
+    it('refuses to merge across players, and says why before the API does', async () => {
+      await renderClubTab([
+        tuesday,
+        { ...thursday, fanId: 'fan_other' },
+      ]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/one player at a time/i)).toBeTruthy();
+      });
+      expect(screen.getByRole('button', { name: /Merge registrations/i })
+        .hasAttribute('disabled')).toBe(true);
+    });
+
+    it('posts the chosen primary and refreshes', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+
+      // The POST, then the refresh it triggers.
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            personal: [],
+            club: [
+              { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+              { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+            ],
+            scope: 'admin',
+          }),
+        });
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/ }));
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          c => String(c[0]).includes('/api/admin/registration-merges'),
+        );
+        expect(call).toBeTruthy();
+        expect(call![1].method).toBe('POST');
+        expect(JSON.parse(call![1].body)).toEqual({
+          primaryRegistrationId: 'reg_tue',
+          registrationIds: ['reg_tue', 'reg_thu'],
+        });
+      });
+    });
+
+    it('defaults the primary to the registration that has a level', async () => {
+      // The primary's level prices the whole group, so a primary without one
+      // would render a dead card for a payable player.
+      await renderClubTab([
+        { ...tuesday, subscriptionLevelId: null, subscriptionLevelName: null },
+        thursday,
+      ]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+
+      await waitFor(() => {
+        const chosen = within(screen.getByTestId('modal'))
+          .getByRole('radio', { checked: true }) as HTMLInputElement;
+        expect(chosen.value).toBe('reg_thu');
+      });
+    });
+
+    it('surfaces the API‘s refusal rather than pretending it worked', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: async () => ({ error: 'This group has a live GoCardless payment.' }),
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^Unmerge$/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/live GoCardless payment/i)).toBeTruthy();
+      });
+    });
+
+    it('warns before removing a registration others are billed through', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      // Rows sort by team name, so pick the primary's row by the badge only it
+      // carries rather than by position.
+      const primaryRow = screen.getByText('Billed for 2 teams').closest('tr')!;
+      fireEvent.click(within(primaryRow).getByRole('button', { name: /Remove registration/i }));
+
+      await waitFor(() => {
+        expect(within(screen.getByTestId('modal')).getByText(/unmerge first/i)).toBeTruthy();
+      });
+    });
+  });
+
   it('shows "No registrations linked to your account yet" when personal is empty and scope is user', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

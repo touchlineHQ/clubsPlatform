@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { summariseRegistrations, type SummaryRow } from '../../utils/registrationSummary';
 
+let nextId = 0;
+/** Distinct ids by default: every row is its own billing unit unless told otherwise. */
 const row = (over: Partial<SummaryRow> = {}): SummaryRow => ({
+  registrationId: `reg_${++nextId}`,
   fanId: 'FAN-1',
   paymentStatus: 'active',
   subscriptionLevelId: 'sub_1',
@@ -21,6 +24,7 @@ describe('summariseRegistrations', () => {
     expect(summariseRegistrations(rows)).toEqual({
       registrations: 4,
       players: 4,
+      billableUnits: 4,
       paying: 2,
       outstanding: 1,
       noLevel: 1,
@@ -92,10 +96,79 @@ describe('summariseRegistrations', () => {
     expect(payingWithLevel + s.outstanding + s.noLevel).toBe(s.registrations);
   });
 
+  // ── Merged registrations ───────────────────────────────────────────────────
+
+  it('counts a merged group as one billable unit and one outstanding', () => {
+    // The bug this fixes: a U15 playing Tuesdays and Thursdays owes one set of
+    // subs, and reporting two outstanding had the treasurer chasing twice.
+    const rows = [
+      row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1', paymentStatus: null }),
+      row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', paymentStatus: null }),
+      row({ registrationId: 'reg_3', billingRegistrationId: 'reg_1', paymentStatus: null }),
+    ];
+
+    const s = summariseRegistrations(rows);
+    expect(s.registrations).toBe(3);
+    expect(s.players).toBe(1);
+    expect(s.billableUnits).toBe(1);
+    expect(s.outstanding).toBe(1);
+  });
+
+  it('counts a merged group as paying once when its primary has paid', () => {
+    const rows = [
+      row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1', paymentStatus: 'active' }),
+      row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', paymentStatus: 'active' }),
+    ];
+
+    const s = summariseRegistrations(rows);
+    expect(s.paying).toBe(1);
+    expect(s.outstanding).toBe(0);
+  });
+
+  it('prices a group off its primary, not whichever member came first', () => {
+    // The secondary carries its own (irrelevant) level. Reading the group's
+    // level off it would report a group with no level as levelled, or vice versa.
+    const rows = [
+      row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', subscriptionLevelId: 'sub_2', paymentStatus: null }),
+      row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1', subscriptionLevelId: null, paymentStatus: null }),
+    ];
+
+    const s = summariseRegistrations(rows);
+    expect(s.billableUnits).toBe(1);
+    expect(s.noLevel).toBe(1);
+    expect(s.outstanding).toBe(0);
+  });
+
+  it('still counts a group whose primary a filter has hidden', () => {
+    // Dropping it entirely would silently understate what the club is owed.
+    const rows = [
+      row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1', paymentStatus: null }),
+    ];
+
+    const s = summariseRegistrations(rows);
+    expect(s.registrations).toBe(1);
+    expect(s.billableUnits).toBe(1);
+    expect(s.outstanding).toBe(1);
+  });
+
+  it('separates registrations from billable units, which is the whole point', () => {
+    const rows = [
+      row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1' }),
+      row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1' }),
+      row({ registrationId: 'reg_3', billingRegistrationId: 'reg_3', fanId: 'FAN-2' }),
+    ];
+
+    const s = summariseRegistrations(rows);
+    expect(s.registrations).toBe(3);
+    expect(s.billableUnits).toBe(2);
+    expect(s.registrations).not.toBe(s.billableUnits);
+  });
+
   it('returns zeroes for an empty set rather than blanks or NaN', () => {
     expect(summariseRegistrations([])).toEqual({
       registrations: 0,
       players: 0,
+      billableUnits: 0,
       paying: 0,
       outstanding: 0,
       noLevel: 0,
