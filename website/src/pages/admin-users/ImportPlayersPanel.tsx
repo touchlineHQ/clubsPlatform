@@ -12,11 +12,10 @@ import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../
 /**
  * Rows per write request.
  *
- * Seeding one new account costs ~49ms of CPU server-side (PBKDF2 at 100k
- * iterations, functions/lib/auth.ts), and Cloudflare terminates a Worker that
- * exceeds its CPU budget — which is what left clubs half-imported. A row carries
- * a player address plus up to maxParentEmails, so 25 rows is ~2.5s of CPU on
- * typical data and ~13s at the worst the row limits allow.
+ * A row costs about nine D1 round trips server-side, and Cloudflare counts each
+ * as a subrequest against a per-request limit — sending a whole club at once is
+ * what left clubs half-imported. Seeding accounts used to dominate too, until
+ * lazy hashing (functions/lib/auth.ts).
  *
  * IMPORT_LIMITS.maxCommitRows mirrors this; the server refuses a larger write.
  */

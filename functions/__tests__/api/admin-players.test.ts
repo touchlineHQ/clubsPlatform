@@ -7,6 +7,7 @@ const mockCaptureImmediate = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
   hashPwd: vi.fn(async () => 'pbkdf2$fakehash'),
+  hashSeededPwd: vi.fn(async () => 'pbkdf2-seed$fakehash'),
 }));
 vi.mock('../../lib/posthog', () => ({
   getPostHog: mockGetPostHog,
@@ -197,7 +198,7 @@ describe('player-payments PATCH', () => {
 // ─── import-players.ts ────────────────────────────────────────────────────────
 
 import { onRequestPost as importPlayersPost } from '../../api/admin/import-players';
-import { hashPwd } from '../../lib/auth';
+import { hashSeededPwd } from '../../lib/auth';
 
 describe('import-players POST', () => {
   beforeEach(() => {
@@ -650,7 +651,7 @@ describe('import-players POST — an unchunked commit is refused', () => {
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/out of date/i);
     expect(writes(db)).toEqual([]);
-    expect(hashPwd).not.toHaveBeenCalled();
+    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('refuses it whether or not the page claims to be sending a part', async () => {
@@ -669,7 +670,7 @@ describe('import-players POST — an unchunked commit is refused', () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(hashPwd).not.toHaveBeenCalled();
+    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('allows a commit that is within one batch', async () => {
@@ -807,7 +808,7 @@ describe('import-players POST — chunked writes', () => {
       false,
     );
 
-    expect(hashPwd).toHaveBeenCalledTimes(1);
+    expect(hashSeededPwd).toHaveBeenCalledTimes(1);
   });
 
   it('pays no hash for a chunk whose accounts already exist', async () => {
@@ -819,7 +820,7 @@ describe('import-players POST — chunked writes', () => {
     });
     await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'));
 
-    expect(hashPwd).not.toHaveBeenCalled();
+    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('looks accounts up in one query rather than one per email', async () => {

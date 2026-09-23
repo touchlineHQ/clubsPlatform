@@ -1,5 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
-import { hashPwd } from "../../lib/auth";
+import { hashSeededPwd } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import { normaliseTeamName } from "../../lib/team-name";
@@ -38,10 +38,12 @@ export const IMPORT_LIMITS = {
   /**
    * Rows one write request may carry.
    *
-   * Seeding a new account costs ~49ms of CPU (PBKDF2, lib/auth.ts), so a whole
-   * club in one request runs to minutes and Cloudflare kills it. The client
-   * batches to this; the server refuses more so an out-of-date page fails with
-   * a message instead of a CPU kill. A dry run hashes nothing, so it is exempt.
+   * A row costs about nine D1 round trips and Cloudflare counts each one as a
+   * subrequest, so a whole club in a single request is roughly 13,700 against a
+   * 10,000 limit. The client batches to this; the server refuses more so an
+   * out-of-date page fails with a message instead of a killed Worker. A dry run
+   * is exempt: it writes nothing, and only a whole-file pass can find stale
+   * registrations.
    */
   maxCommitRows: 25,
   maxStringLen: 200,
@@ -109,12 +111,12 @@ interface UserPlan {
 /**
  * One slice of a chunked import.
  *
- * Seeding a new user's password costs ~47ms of CPU (lib/auth.ts hashes the FAN
- * with PBKDF2 at 100k iterations), and Cloudflare bills that against a per-request
- * CPU limit — so a whole-club import in one request runs out of CPU part-way
- * through and leaves the club half-imported. The client sends slices instead.
+ * A whole-club import in one request exhausts the Worker's per-request budget
+ * and leaves the club half-imported, so the client sends slices. Seeding the
+ * accounts was the bulk of it until lazy hashing (SEEDED_ROUNDS in lib/auth.ts);
+ * what remains is the D1 round trips, which are subrequests.
  *
- * Absent means an unchunked import, which behaves exactly as it always did.
+ * Absent means an unchunked import, which maxCommitRows keeps small.
  */
 interface ImportPart {
   index: number;
@@ -566,9 +568,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
       if (!userId) {
         userId = plan.newUserId;
+        // Seeded, not full strength: see SEEDED_ROUNDS in lib/auth.ts. The
+        // member's first sign-in re-hashes it properly.
         const hashedPassword = plan.passwordFan
-          ? await hashPwd(plan.passwordFan)
-          : await hashPwd(crypto.randomUUID());
+          ? await hashSeededPwd(plan.passwordFan)
+          : await hashSeededPwd(crypto.randomUUID());
 
         await db
           .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
