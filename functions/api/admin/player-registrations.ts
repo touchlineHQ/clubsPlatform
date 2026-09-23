@@ -1,7 +1,6 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 import {
   SUBSCRIPTION_LEVEL_ID_SQL,
-  mergeColumnsSql,
   subscriptionLevelJoinSql,
 } from "../../lib/registration-merge";
 
@@ -20,12 +19,6 @@ interface PlayerRegistrationRow {
   intervalCount: number | null;
   intervalUnit: string | null;
   startDate: string | null;
-  /** The registration whose payment covers this one — itself, unless merged. */
-  billingRegistrationId: string;
-  /** This registration's primary's team, when it is a secondary. */
-  billedWithTeamName: string | null;
-  /** The other teams this registration is billed for, when it is a primary. */
-  mergedTeamNames: string | null;
 }
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
@@ -50,8 +43,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.yearlyPriceInPence              AS yearlyPriceInPence,
          sl.intervalCount                   AS intervalCount,
          sl.intervalUnit                    AS intervalUnit,
-         sl.startDate                       AS startDate,
-         ${mergeColumnsSql('pr')}
+         sl.startDate                       AS startDate
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
        LEFT JOIN user_player up ON up.playerId = p.id

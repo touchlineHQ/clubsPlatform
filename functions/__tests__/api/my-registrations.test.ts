@@ -320,61 +320,141 @@ describe('onRequestDelete', () => {
 describe('merged registrations', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
 
-  function prepared(db: any) {
-    return (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0]));
+  const merge = (registrationId: string, primaryRegistrationId: string, teamName: string) =>
+    ({ registrationId, primaryRegistrationId, teamName });
+
+  /**
+   * The admin read order: personal rows, club rows, the club's merges, then the
+   * manual-attribution audit lookup if any row is manual, then the import stamp.
+   */
+  function adminDb(over: {
+    personal?: unknown[];
+    club?: unknown[];
+    merges?: unknown[];
+    audit?: unknown[];
+  } = {}) {
+    return makeDb({
+      all: [
+        over.personal ?? [],
+        over.club ?? [],
+        over.merges ?? [],
+        over.audit ?? [],
+      ],
+      first: null,
+    });
   }
 
-  it('reads payment status from the billing registration, so a secondary shows the group‘s', async () => {
-    const db = makeDb({ all: [[sampleRegistration]] });
-    await onRequestGet(makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    ) as any);
+  const get = (db: any) => onRequestGet(makeContext(
+    getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+    { env: { DB: db as any } },
+  ) as any);
 
-    const withStatus = prepared(db).find((sql: string) => sql.includes('AS paymentStatus'));
-    expect(withStatus).toBeDefined();
-    // `pp.registrationId = pr.id` would report a secondary unpaid.
-    expect(withStatus).toContain('registration_merge');
-    expect(withStatus).not.toMatch(/pp\.registrationId = pr\.id/);
+  it('gives a secondary its group‘s payment status', async () => {
+    // The payment hangs off the primary, so the secondary has none of its own —
+    // without this it reads "Outstanding" and gets chased for money already paid.
+    const primary = { ...clubRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'active' };
+    const secondary = { ...clubRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null };
+
+    const res = await get(adminDb({
+      club: [primary, secondary],
+      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+    }));
+    const body = await res.json() as any;
+
+    const [p, sec] = body.club;
+    expect(sec.paymentStatus).toBe('active');
+    expect(sec.billingRegistrationId).toBe('reg_tue');
+    expect(sec.billedWithTeamName).toBe('U15 Tuesday');
+    expect(p.mergedTeamNames).toBe('U15 Thursday');
   });
 
-  it('returns the columns the UI needs to show a group', async () => {
-    const db = makeDb({ all: [[sampleRegistration]] });
-    await onRequestGet(makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    ) as any);
+  it('names every team a primary is billed for', async () => {
+    const rows = ['reg_tue', 'reg_thu', 'reg_sun'].map((id, i) => ({
+      ...clubRegistration,
+      registrationId: id,
+      teamName: ['U15 Tuesday', 'U15 Thursday', 'U15 Sunday'][i],
+      paymentStatus: null,
+    }));
 
-    const query = prepared(db).find((sql: string) => sql.includes('AS billingRegistrationId'));
-    expect(query).toContain('AS billedWithTeamName');
-    expect(query).toContain('AS mergedTeamNames');
+    const res = await get(adminDb({
+      club: rows,
+      merges: [
+        merge('reg_thu', 'reg_tue', 'U15 Thursday'),
+        merge('reg_sun', 'reg_tue', 'U15 Sunday'),
+      ],
+    }));
+    const body = await res.json() as any;
+
+    expect(body.club[0].mergedTeamNames).toBe('U15 Thursday, U15 Sunday');
+  });
+
+  it('sends no merge fields at all when the club has merged nothing', async () => {
+    // Which is every club today. Repeating an id equal to registrationId on every
+    // row grew the response by 25% for nothing.
+    const res = await get(adminDb({ club: [clubRegistration], merges: [] }));
+    const body = await res.json() as any;
+
+    expect(body.club[0]).not.toHaveProperty('billingRegistrationId');
+    expect(body.club[0]).not.toHaveProperty('billedWithTeamName');
+    expect(body.club[0]).not.toHaveProperty('mergedTeamNames');
+  });
+
+  it('reads the groups once, not once per row', async () => {
+    const db = adminDb({ club: [clubRegistration], merges: [] });
+    await get(db);
+
+    const sql = (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(sql.filter((q: string) => /registration_merge/.test(q))).toHaveLength(1);
+    // And never per row, inside the payment-status subquery.
+    const withStatus = sql.find((q: string) => q.includes('AS paymentStatus'));
+    expect(withStatus).not.toMatch(/registration_merge/);
+  });
+
+  it('groups a player‘s own registrations too', async () => {
+    const db = makeDb({
+      all: [[
+        { ...sampleRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'active' },
+        { ...sampleRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null },
+      ], [merge('reg_thu', 'reg_tue', 'U15 Thursday')]],
+      first: null,
+    });
+    mockGetSession.mockResolvedValue(memberSession);
+
+    const body = await (await get(db)).json() as any;
+    expect(body.personal[1].paymentStatus).toBe('active');
+    expect(body.personal[1].billedWithTeamName).toBe('U15 Tuesday');
+  });
+
+  it('keeps personal and club primary statuses separate for their secondaries', async () => {
+    const personalPrimary = { ...sampleRegistration, registrationId: 'reg_tue', paymentStatus: 'completed' };
+    const personalSecondary = { ...sampleRegistration, registrationId: 'reg_thu', paymentStatus: null };
+    const clubPrimary = { ...clubRegistration, registrationId: 'reg_tue', paymentStatus: 'manual' };
+    const clubSecondary = { ...clubRegistration, registrationId: 'reg_thu', paymentStatus: null };
+
+    const body = await (await get(adminDb({
+      personal: [personalPrimary, personalSecondary],
+      club: [clubPrimary, clubSecondary],
+      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+    }))).json() as any;
+
+    expect(body.personal[1].paymentStatus).toBe('completed');
+    expect(body.club[1].paymentStatus).toBe('manual');
   });
 
   it('resolves manual attribution through the primary', async () => {
-    // Otherwise a secondary shows "Paid in full" with nobody's name against it.
-    const secondary = { ...clubRegistration, registrationId: 'reg_sec', paymentStatus: 'manual' };
-    const db = makeDb({
-      all: [
-        [sampleRegistration],
-        [secondary],
-        // attachManualAttribution: audit lookup, then the merge map.
-        [{
-          registrationId: 'reg_primary',
-          manualPaidBy: 'admin@example.com',
-          manualPaidAt: 1,
-          manualNote: 'cash',
-        }],
-        [{ registrationId: 'reg_sec', primaryRegistrationId: 'reg_primary' }],
-      ],
-    });
+    // The manual row hangs off the primary, so a secondary would otherwise show
+    // "Paid in full" with nobody's name against it.
+    const primary = { ...clubRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'manual' };
+    const secondary = { ...clubRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null };
 
-    const res = await onRequestGet(makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    ) as any);
+    const res = await get(adminDb({
+      club: [primary, secondary],
+      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+      audit: [{ registrationId: 'reg_tue', manualPaidBy: 'admin@example.com', manualPaidAt: 1, manualNote: 'cash' }],
+    }));
     const body = await res.json() as any;
 
-    expect(body.club[0].manualPaidBy).toBe('admin@example.com');
-    expect(body.club[0].manualNote).toBe('cash');
+    expect(body.club[1].manualPaidBy).toBe('admin@example.com');
+    expect(body.club[1].manualNote).toBe('cash');
   });
 });

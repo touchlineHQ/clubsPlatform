@@ -46,24 +46,6 @@ export const GROUP_MEMBER_IDS_SQL = `(
   SELECT "registrationId" FROM "registration_merge" WHERE "primaryRegistrationId" = ?
 )`;
 
-/**
- * A registration's place in its billing group, for the registration lists.
- *
- * `billedWithTeamName` is set only on a secondary and is how the UI tells one
- * apart; `mergedTeamNames` is set only on a primary.
- */
-export function mergeColumnsSql(alias: string): string {
-  return `${billingRegistrationIdSql(alias)} AS billingRegistrationId,
-         (SELECT pr_primary."teamName"
-            FROM "registration_merge" rm_self
-            JOIN "player_registration" pr_primary ON pr_primary."id" = rm_self."primaryRegistrationId"
-           WHERE rm_self."registrationId" = ${alias}."id") AS billedWithTeamName,
-         (SELECT GROUP_CONCAT(pr_member."teamName", ', ')
-            FROM "registration_merge" rm_members
-            JOIN "player_registration" pr_member ON pr_member."id" = rm_members."registrationId"
-           WHERE rm_members."primaryRegistrationId" = ${alias}."id") AS mergedTeamNames`;
-}
-
 /** Level precedence, highest first: per-registration, team+status, status, team. */
 export const SUBSCRIPTION_LEVEL_ID_SQL =
   `COALESCE(rsl."subscriptionLevelId", tssl."subscriptionLevelId", ssl."subscriptionLevelId", tsl."subscriptionLevelId")`;

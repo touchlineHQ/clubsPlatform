@@ -36,14 +36,15 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
-  // Billing group — see functions/lib/registration-merge.ts. A merged row shows
-  // its group's payment status, so these say why it reads as paid.
-  /** The registration this one is billed through — itself, unless merged. */
-  billingRegistrationId: string;
+  // Billing group — see functions/lib/registration-merge.ts. Sent only for rows
+  // that are in a group, so a club that has merged nothing carries none of these.
+  // A merged row shows its group's payment status; these say why.
+  /** The registration this one is billed through. Absent means itself. */
+  billingRegistrationId?: string;
   /** This registration's primary's team, when it is billed through another. */
-  billedWithTeamName: string | null;
+  billedWithTeamName?: string | null;
   /** The other teams this registration is billed for, when it is a primary. */
-  mergedTeamNames: string | null;
+  mergedTeamNames?: string | null;
   // Manual override attribution — admin (club) rows only; never sent to players.
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
@@ -64,6 +65,13 @@ interface Response {
 }
 
 const DEFAULT_VALUE = '__default__';
+
+/**
+ * Mirrors MAX_MERGE_GROUP in api/admin/registration-merges.ts, so the admin is
+ * told before meeting the 400. The server's cap is on the members *besides* the
+ * primary, hence the +1 here.
+ */
+const MAX_MERGE_SELECTION = 12;
 
 type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'subscriptionLevel' | 'sixthCol';
 type SortDir = 'asc' | 'desc';
@@ -982,6 +990,9 @@ export function RegistrationsPage() {
   /** Why the selection cannot merge, mirroring the API so the admin sees it before a 409. */
   const mergeBlocker = useMemo((): string | null => {
     if (selectedRows.length < 2) return 'Select two or more registrations to merge.';
+    if (selectedRows.length > MAX_MERGE_SELECTION) {
+      return `A billing group can hold at most ${MAX_MERGE_SELECTION} registrations.`;
+    }
     if (new Set(selectedRows.map(r => r.fanId)).size > 1) {
       return 'Registrations can only be merged for one player at a time.';
     }

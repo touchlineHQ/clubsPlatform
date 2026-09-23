@@ -26,6 +26,18 @@ import {
  * that moved would fail that match on the same mandate and collect twice.
  */
 
+/**
+ * The most registrations one merge may name.
+ *
+ * D1 caps a query at 100 bound parameters. The guarded audit statement sets the
+ * limit, not the INSERT: prepareAuditLog repeats its guard across a UNION ALL
+ * and the guard binds the member list three times, so it costs 33 + 6 per
+ * member. Eleven keeps that at 99; the INSERT and both unmerge statements are
+ * well under. A player in eleven teams at one club is not a real case, so
+ * capping is cheaper than slicing.
+ */
+const MAX_MERGE_GROUP = 11;
+
 interface RegistrationRow {
   registrationId: string;
   clubSlug: string;
@@ -120,6 +132,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (secondaryIds.length === 0) {
     return json(
       { error: 'registrationIds must name at least one registration other than the primary' },
+      { status: 400 },
+    );
+  }
+  if (secondaryIds.length > MAX_MERGE_GROUP) {
+    return json(
+      { error: `A billing group can hold at most ${MAX_MERGE_GROUP} other registrations.` },
       { status: 400 },
     );
   }
@@ -283,6 +301,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
                    AND current_group."primaryRegistrationId" <> ?
                    AND pp."status" <> 'inactive'
               )
+          AND (
+                SELECT COUNT(*) FROM "registration_merge" existing
+                 WHERE existing."clubSlug" = ?
+                   AND existing."primaryRegistrationId" = ?
+                   AND existing."registrationId" NOT IN (SELECT "registrationId" FROM proposed)
+              ) + (SELECT COUNT(*) FROM proposed) <= ?
        ON CONFLICT("registrationId") DO UPDATE SET
          "primaryRegistrationId" = excluded."primaryRegistrationId",
          "updatedAt"             = excluded."updatedAt"`,
@@ -292,6 +316,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       clubSlug, primaryId, now, now,
       primaryId, clubSlug, clubSlug,
       clubSlug, primaryId,
+      clubSlug, primaryId, MAX_MERGE_GROUP,
     );
 
   const secondaryPlaceholders = secondaryIds.map(() => '?').join(', ');
