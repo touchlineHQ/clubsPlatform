@@ -38,14 +38,17 @@ export const IMPORT_LIMITS = {
   /**
    * Rows one write request may carry.
    *
-   * A row costs about nine D1 round trips and Cloudflare counts each one as a
-   * subrequest, so a whole club in a single request is roughly 13,700 against a
-   * 10,000 limit. The client batches to this; the server refuses more so an
-   * out-of-date page fails with a message instead of a killed Worker. A dry run
-   * is exempt: it writes nothing, and only a whole-file pass can find stale
-   * registrations.
+   * Cloudflare counts every D1 round trip as a subrequest against a limit of
+   * 10,000. A row costs 9.2 of them on typical data and 36.3 at the worst these
+   * limits allow — a player address plus maxParentEmails, each its own account
+   * and link — so the worst case is what sets this: 100 rows is ~3,600, a 2.8x
+   * margin. Doubling it would leave 1.4x.
+   *
+   * The client batches to this; the server refuses more, so an out-of-date page
+   * fails with a message instead of a killed Worker. A dry run is exempt: it
+   * writes nothing, and only a whole-file pass can find stale registrations.
    */
-  maxCommitRows: 25,
+  maxCommitRows: 100,
   maxStringLen: 200,
   maxParentEmails: 10,
 } as const;

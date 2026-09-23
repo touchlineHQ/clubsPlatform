@@ -32,7 +32,7 @@ vi.mock('xlsx', () => ({
   SSF: { parse_date_code: vi.fn(() => null) },
 }));
 
-import { ImportPlayersPanel } from '../../../pages/admin-users/ImportPlayersPanel';
+import { ImportPlayersPanel, IMPORT_CHUNK_ROWS } from '../../../pages/admin-users/ImportPlayersPanel';
 
 /**
  * jsdom's FileReader delivers onload on a later tick, which makes "has the
@@ -234,6 +234,9 @@ describe('ImportPlayersPanel chunked commit', () => {
     SHEET = SMALL_SHEET;
   });
 
+  /** Two full slices and a partial one, whatever the chunk size is tuned to. */
+  const BIG_FILE = IMPORT_CHUNK_ROWS * 2 + 10;
+
   /** Preview once, then commit, with `n` players in the file. */
   async function commitFileOf(n: number, chunkResponse = previewBody()) {
     SHEET = sheetOf(n);
@@ -250,13 +253,13 @@ describe('ImportPlayersPanel chunked commit', () => {
   }
 
   it('sends a big file in slices, so one request cannot exhaust the CPU budget', async () => {
-    // 60 players at 25 a slice: preview, then three writes.
-    await commitFileOf(60);
+    // Two full slices and a part one: preview, then three writes.
+    await commitFileOf(BIG_FILE);
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
 
     const writes = mockFetch.mock.calls.slice(1).map(c => JSON.parse(c[1].body));
-    expect(writes.map(w => w.rows.length)).toEqual([25, 25, 10]);
+    expect(writes.map(w => w.rows.length)).toEqual([IMPORT_CHUNK_ROWS, IMPORT_CHUNK_ROWS, 10]);
     expect(writes.map(w => w.part)).toEqual([
       { index: 0, total: 3 },
       { index: 1, total: 3, runId: 'imprun_test' },
@@ -275,7 +278,7 @@ describe('ImportPlayersPanel chunked commit', () => {
   });
 
   it('sums the counts across slices rather than showing only the last', async () => {
-    await commitFileOf(60, previewBody({
+    await commitFileOf(BIG_FILE, previewBody({
       players: { created: 1 },
       registrations: { created: 2, updated: 3 },
       users: { created: 1, skipped: 1 },
@@ -293,18 +296,18 @@ describe('ImportPlayersPanel chunked commit', () => {
     // A slice covers only its own teams, so the server sends back no stale rows
     // for one; taking the slice's answer would report "0 no longer in file" and
     // quietly lose the warning.
-    await commitFileOf(60, previewBody({ stale: { count: 0, rows: [] } }));
+    await commitFileOf(BIG_FILE, previewBody({ stale: { count: 0, rows: [] } }));
 
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
     expect(await screen.findByText(/No longer in the file:/)).toHaveTextContent('1');
   });
 
   it('says how much landed when a slice fails part-way through', async () => {
-    SHEET = sheetOf(60);
+    SHEET = sheetOf(BIG_FILE);
     mockFetch.mockResolvedValueOnce(jsonOk(previewBody()));
     dropFile();
 
-    const button = await screen.findByRole('button', { name: /Import 60 players/ });
+    const button = await screen.findByRole('button', { name: new RegExp(`Import ${BIG_FILE} players`) });
     await waitFor(() => expect(button).not.toBeDisabled());
 
     mockFetch

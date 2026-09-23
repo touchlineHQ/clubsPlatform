@@ -12,14 +12,14 @@ import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../
 /**
  * Rows per write request.
  *
- * A row costs about nine D1 round trips server-side, and Cloudflare counts each
- * as a subrequest against a per-request limit — sending a whole club at once is
- * what left clubs half-imported. Seeding accounts used to dominate too, until
- * lazy hashing (functions/lib/auth.ts).
+ * A row costs up to 36 D1 round trips server-side, and Cloudflare counts each as
+ * a subrequest against a per-request limit — sending a whole club at once is what
+ * left clubs half-imported. Seeding accounts used to dominate too, until lazy
+ * hashing (functions/lib/auth.ts), which is what lets a batch be this large.
  *
  * IMPORT_LIMITS.maxCommitRows mirrors this; the server refuses a larger write.
  */
-const IMPORT_CHUNK_ROWS = 25;
+export const IMPORT_CHUNK_ROWS = 100;
 
 /** A registration the club holds that the uploaded file no longer mentions. */
 interface StaleRegistration {
