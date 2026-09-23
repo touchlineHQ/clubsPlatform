@@ -26,6 +26,17 @@ import {
  * that moved would fail that match on the same mandate and collect twice.
  */
 
+/**
+ * The most registrations one merge may name.
+ *
+ * D1 caps a query at 100 bound parameters, and the member list is bound several
+ * times over: the atomic INSERT alone binds one per member plus nine, and the
+ * statements after it bind the list again. An unbounded selection breaches that
+ * and the merge fails outright. A player in more than a couple of dozen teams at
+ * one club is not a real case, so capping is cheaper than slicing.
+ */
+const MAX_MERGE_GROUP = 25;
+
 interface RegistrationRow {
   registrationId: string;
   clubSlug: string;
@@ -120,6 +131,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (secondaryIds.length === 0) {
     return json(
       { error: 'registrationIds must name at least one registration other than the primary' },
+      { status: 400 },
+    );
+  }
+  if (secondaryIds.length > MAX_MERGE_GROUP) {
+    return json(
+      { error: `A billing group can hold at most ${MAX_MERGE_GROUP} other registrations.` },
       { status: 400 },
     );
   }

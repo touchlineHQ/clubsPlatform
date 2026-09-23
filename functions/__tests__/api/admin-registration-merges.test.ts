@@ -131,6 +131,21 @@ describe('onRequestPost — validation', () => {
     expect(res.status).toBe(400);
   });
 
+  it('refuses a group larger than D1 can take bindings for', async () => {
+    // The atomic INSERT binds one parameter per member plus nine, and the
+    // statements after it bind the list again; D1 caps a query at 100. A player
+    // in 26 teams at one club is not a real case anyway.
+    const ids = Array.from({ length: 26 }, (_, i) => `reg_${i}`);
+    const res = await onRequestPost(
+      mergeCtx(postDb(), { primaryRegistrationId: 'reg_primary', registrationIds: ids }) as any,
+    );
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/at most 25/);
+    expect(prepareAuditLog).not.toHaveBeenCalled();
+  });
+
   it('returns 400 without an X-Club-Slug header', async () => {
     const res = await onRequestPost(mergeCtx(postDb(), DEFAULT_BODY, {}) as any);
     expect(res.status).toBe(400);

@@ -66,6 +66,13 @@ interface Response {
 
 const DEFAULT_VALUE = '__default__';
 
+/**
+ * Mirrors MAX_MERGE_GROUP in api/admin/registration-merges.ts, so the admin is
+ * told before meeting the 400. The server's cap is on the members *besides* the
+ * primary, hence the +1 here.
+ */
+const MAX_MERGE_SELECTION = 26;
+
 type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'subscriptionLevel' | 'sixthCol';
 type SortDir = 'asc' | 'desc';
 
@@ -983,6 +990,9 @@ export function RegistrationsPage() {
   /** Why the selection cannot merge, mirroring the API so the admin sees it before a 409. */
   const mergeBlocker = useMemo((): string | null => {
     if (selectedRows.length < 2) return 'Select two or more registrations to merge.';
+    if (selectedRows.length > MAX_MERGE_SELECTION) {
+      return `A billing group can hold at most ${MAX_MERGE_SELECTION} registrations.`;
+    }
     if (new Set(selectedRows.map(r => r.fanId)).size > 1) {
       return 'Registrations can only be merged for one player at a time.';
     }
