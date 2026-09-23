@@ -2,10 +2,20 @@ import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
 import { makeContext, makeDb, adminSession, getReq, postReq, patchReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
+const mockGetPostHog = vi.hoisted(() => vi.fn(() => null as any));
+const mockCaptureImmediate = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
   hashPwd: vi.fn(async () => 'pbkdf2$fakehash'),
 }));
+vi.mock('../../lib/posthog', () => ({
+  getPostHog: mockGetPostHog,
+  clubGroups: (clubSlug: string) => ({ groups: { club: clubSlug } }),
+}));
+
+beforeEach(() => {
+  mockGetPostHog.mockReturnValue(null);
+});
 
 // ─── player-registrations.ts ──────────────────────────────────────────────────
 
@@ -360,6 +370,8 @@ function prepared(db: any): { sql: string; bindings: unknown[] }[] {
 const IMPORT_TABLES = [
   'player',
   'player_registration',
+  'player_import_run',
+  'player_import_run_part',
   'club_import_log',
   'user',
   'account',
@@ -626,10 +638,15 @@ describe('import-players POST — chunked writes', () => {
     mockGetSession.mockResolvedValue(adminSession);
   });
 
-  const part = (index: number, total: number, totalRows: number) => ({ index, total, totalRows });
+  const part = (index: number, total: number, runId?: string) => ({ index, total, ...(runId ? { runId } : {}) });
 
   it('rejects a malformed part rather than silently importing the whole file', async () => {
-    const { res } = await runImport(dbHolding([]), [row()], false, { index: 2, total: 2, totalRows: 5 });
+    const { res } = await runImport(dbHolding([]), [row()], false, { index: 2, total: 2 });
+    expect(res.status).toBe(400);
+  });
+
+  it('requires the server run identifier after the first part', async () => {
+    const { res } = await runImport(dbHolding([]), [row()], false, part(1, 3));
     expect(res.status).toBe(400);
   });
 
@@ -637,7 +654,7 @@ describe('import-players POST — chunked writes', () => {
     // Without this a 25-row slice of a 300-row file reports every other team in
     // the club as abandoned.
     const held = [heldRow(), heldRow({ fanId: 'FAN999', teamName: 'U11 Boys' })];
-    const { body } = await runImport(dbHolding(held), [row()], false, part(0, 3, 75));
+    const { body } = await runImport(dbHolding(held), [row()], false, part(0, 3));
 
     expect(body.stale.count).toBe(0);
     expect(body.stale.rows).toEqual([]);
@@ -652,20 +669,73 @@ describe('import-players POST — chunked writes', () => {
 
   it('does not stamp the import log until the final chunk', async () => {
     const db = dbHolding([]);
-    await runImport(db, [row()], false, part(0, 3, 75));
+    const { body } = await runImport(db, [row()], false, part(0, 3));
 
     const sql = (db.prepare as Mock).mock.calls.map(c => String(c[0]));
     expect(sql.some(q => /club_import_log/.test(q))).toBe(false);
+    expect(body.runId).toMatch(/^imprun_/);
   });
 
-  it('stamps once on the final chunk, counting the whole file', async () => {
-    const db = dbHolding([]);
-    await runImport(db, [row()], false, part(2, 3, 75));
+  it('rejects an out-of-sequence part before applying player writes', async () => {
+    const db = makeDb({ run: { meta: { changes: 0 } } });
+    const { res } = await runImport(db, [row()], false, part(1, 3, 'imprun_test'));
 
-    const stamp = prepared(db).find(p => /club_import_log/.test(p.sql));
-    expect(stamp).toBeDefined();
-    // 75, the file — not 1, this slice.
-    expect(stamp!.bindings).toContain(75);
+    expect(res.status).toBe(409);
+    expect(prepared(db).some(p => /(?:INSERT|UPDATE) (?:INTO )?"player"/.test(p.sql))).toBe(false);
+  });
+
+  it('rejects finalization until every expected part is recorded', async () => {
+    const db = makeDb({
+      all: [[heldRow()]],
+      first: {
+        partCount: 2,
+        rowCount: 50,
+        playersCreated: 2,
+        registrationsCreated: 20,
+        registrationsUpdated: 30,
+        usersCreated: 4,
+        usersSkipped: 5,
+        errorCount: 0,
+      },
+      run: { meta: { changes: 1 } },
+    });
+    const { res } = await runImport(db, [row()], false, part(2, 3, 'imprun_test'));
+
+    expect(res.status).toBe(409);
+    expect(prepared(db).some(p => /club_import_log/.test(p.sql))).toBe(false);
+  });
+
+  it('uses recorded counts for the final log and analytics', async () => {
+    const totals = {
+      partCount: 3,
+      rowCount: 75,
+      playersCreated: 7,
+      registrationsCreated: 20,
+      registrationsUpdated: 55,
+      usersCreated: 8,
+      usersSkipped: 12,
+      errorCount: 2,
+    };
+    const db = makeDb({
+      all: [[heldRow()]],
+      first: totals,
+      run: { meta: { changes: 1 } },
+    });
+    mockGetPostHog.mockReturnValue({ captureImmediate: mockCaptureImmediate } as any);
+    await runImport(db, [row()], false, part(2, 3, 'imprun_test'));
+
+    const stamp = prepared(db).find(p => /INSERT INTO "club_import_log"/.test(p.sql));
+    expect(stamp?.bindings).toContain(75);
+    expect(mockCaptureImmediate).toHaveBeenCalledWith(expect.objectContaining({
+      properties: expect.objectContaining({
+        rows_submitted: 75,
+        players_created: 7,
+        registrations_created: 20,
+        registrations_updated: 55,
+        users_created: 8,
+        users_skipped: 12,
+      }),
+    }));
   });
 
   it('stamps with the row count when the import is not chunked', async () => {
@@ -699,7 +769,7 @@ describe('import-players POST — chunked writes', () => {
       first: null,
       run: { meta: { changes: 1 } },
     });
-    await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 75));
+    await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'));
 
     expect(hashPwd).not.toHaveBeenCalled();
   });

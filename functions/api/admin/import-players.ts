@@ -23,6 +23,8 @@ export interface StaleRegistration {
 
 interface ImportResult {
   ok: boolean;
+  /** Server-generated identifier shared by every part of a chunked import. */
+  runId?: string;
   /** Player identity rows inserted. A returning player counts in neither field. */
   players: { created: number };
   registrations: { created: number; updated: number };
@@ -108,19 +110,34 @@ interface UserPlan {
 interface ImportPart {
   index: number;
   total: number;
-  /** Rows in the whole file, not this slice — for the import-log stamp. */
-  totalRows: number;
+  /** Returned by the server for part zero, then required for every later part. */
+  runId?: string;
 }
 
 function validatePart(v: unknown): string | null {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'object') return 'part must be an object';
   const p = v as Record<string, unknown>;
-  for (const k of ['index', 'total', 'totalRows'] as const) {
+  for (const k of ['index', 'total'] as const) {
     if (!Number.isInteger(p[k]) || (p[k] as number) < 0) return `part.${k} must be a non-negative integer`;
   }
   if ((p.index as number) >= (p.total as number)) return 'part.index must be less than part.total';
+  if (p.index === 0 && p.runId !== undefined) return 'part.runId must be omitted for the first part';
+  if (p.index !== 0 && (typeof p.runId !== 'string' || !p.runId || p.runId.length > 200)) {
+    return 'part.runId is required after the first part';
+  }
   return null;
+}
+
+interface ImportRunTotals {
+  partCount: number;
+  rowCount: number;
+  playersCreated: number;
+  registrationsCreated: number;
+  registrationsUpdated: number;
+  usersCreated: number;
+  usersSkipped: number;
+  errorCount: number;
 }
 
 /**
@@ -192,10 +209,42 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const db = context.env.DB;
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  let importRunId: string | null = null;
+
+  // Claim the part before doing any import work. A later part can advance only
+  // after every preceding claim has produced its immutable part record.
+  if (!dryRun && part) {
+    if (part.index === 0) {
+      importRunId = randomId("imprun");
+      await db
+        .prepare(`INSERT INTO "player_import_run" (id, clubSlug, adminId, totalParts, nextPart, createdAt) VALUES (?, ?, ?, ?, 1, ?)`)
+        .bind(importRunId, clubSlug, adminId, part.total, nowMs())
+        .run();
+    } else {
+      importRunId = part.runId!;
+      const claim = await db
+        .prepare(
+          `UPDATE "player_import_run"
+              SET nextPart = nextPart + 1
+            WHERE id = ? AND clubSlug = ? AND adminId = ? AND totalParts = ?
+              AND nextPart = ? AND completedAt IS NULL
+              AND (SELECT COUNT(*) FROM "player_import_run_part" WHERE runId = ?) = ?`,
+        )
+        .bind(importRunId, clubSlug, adminId, part.total, part.index, importRunId, part.index)
+        .run();
+      if (claim.meta.changes !== 1) {
+        return json(
+          { error: "Import part does not belong to this run or arrived out of sequence" },
+          { status: 409 },
+        );
+      }
+    }
+  }
+
   /** The slice that stamps the import and reports the run to analytics. */
   const isFinalPart = !part || part.index === part.total - 1;
-
-  const db = context.env.DB;
   const importResult: ImportResult = {
     ok: true,
     players: { created: 0 },
@@ -204,6 +253,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     errors: [],
     stale: { count: 0, rows: [] },
   };
+  if (importRunId) importResult.runId = importRunId;
 
   // ── 1. Pre-process: build email→player maps ──────────────────────────────
   // email → Map<fanId, relationship>
@@ -397,7 +447,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
   importResult.stale.count = importResult.stale.rows.length;
 
-  const adminId = (result.session.user as Record<string, unknown>).id as string;
   const posthog = getPostHog(context.env);
 
   // ── 7. Preview stops here — nothing above this line writes ───────────────
@@ -510,13 +559,70 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   // ── 10. Stamp the import so the Registrations page can age the data ───────
-  // Once per import, not once per chunk, and counting the whole file — otherwise
-  // "last imported" reports the size of whichever slice happened to land last.
+  let runTotals: ImportRunTotals | null = null;
+  if (part && importRunId) {
+    await db
+      .prepare(
+        `INSERT INTO "player_import_run_part"
+           (runId, partIndex, rowCount, playersCreated, registrationsCreated,
+            registrationsUpdated, usersCreated, usersSkipped, errorCount, recordedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        importRunId,
+        part.index,
+        rows.length,
+        importResult.players.created,
+        importResult.registrations.created,
+        importResult.registrations.updated,
+        importResult.users.created,
+        importResult.users.skipped,
+        importResult.errors.length,
+        nowMs(),
+      )
+      .run();
+
+    if (isFinalPart) {
+      runTotals = await db
+        .prepare(
+          `SELECT COUNT(*) AS partCount,
+                  COALESCE(SUM(rowCount), 0) AS rowCount,
+                  COALESCE(SUM(playersCreated), 0) AS playersCreated,
+                  COALESCE(SUM(registrationsCreated), 0) AS registrationsCreated,
+                  COALESCE(SUM(registrationsUpdated), 0) AS registrationsUpdated,
+                  COALESCE(SUM(usersCreated), 0) AS usersCreated,
+                  COALESCE(SUM(usersSkipped), 0) AS usersSkipped,
+                  COALESCE(SUM(errorCount), 0) AS errorCount
+             FROM "player_import_run_part" WHERE runId = ?`,
+        )
+        .bind(importRunId)
+        .first<ImportRunTotals>();
+
+      if (!runTotals || runTotals.partCount !== part.total) {
+        return json({ error: "Cannot finalize an import before every part is recorded" }, { status: 409 });
+      }
+
+      const finalized = await db
+        .prepare(
+          `UPDATE "player_import_run" SET completedAt = ?
+            WHERE id = ? AND clubSlug = ? AND adminId = ? AND totalParts = ?
+              AND nextPart = totalParts AND completedAt IS NULL`,
+        )
+        .bind(nowMs(), importRunId, clubSlug, adminId, part.total)
+        .run();
+      if (finalized.meta.changes !== 1) {
+        return json({ error: "Import run could not be finalized" }, { status: 409 });
+      }
+    }
+  }
+
+  // Once per import, not once per chunk. Chunked row counts come only from the
+  // part records above, never from a client-claimed whole-file total.
   if (isFinalPart) {
     try {
       await db
         .prepare(`INSERT INTO "club_import_log" (id, clubSlug, importedAt, rowCount, adminId) VALUES (?, ?, ?, ?, ?)`)
-        .bind(randomId("imp"), clubSlug, nowMs(), part?.totalRows ?? rows.length, adminId)
+        .bind(randomId("imp"), clubSlug, nowMs(), runTotals?.rowCount ?? rows.length, adminId)
         .run();
     } catch (err) {
       // A missing stamp is not worth failing an otherwise good import over.
@@ -534,14 +640,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
-        rows_submitted: part?.totalRows ?? rows.length,
+        rows_submitted: runTotals?.rowCount ?? rows.length,
         chunked: part !== null,
-        players_created: importResult.players.created,
-        registrations_created: importResult.registrations.created,
-        registrations_updated: importResult.registrations.updated,
-        users_created: importResult.users.created,
-        users_skipped: importResult.users.skipped,
-        error_count: importResult.errors.length,
+        players_created: runTotals?.playersCreated ?? importResult.players.created,
+        registrations_created: runTotals?.registrationsCreated ?? importResult.registrations.created,
+        registrations_updated: runTotals?.registrationsUpdated ?? importResult.registrations.updated,
+        users_created: runTotals?.usersCreated ?? importResult.users.created,
+        users_skipped: runTotals?.usersSkipped ?? importResult.users.skipped,
+        error_count: runTotals?.errorCount ?? importResult.errors.length,
         stale_count: importResult.stale.count,
       },
     });

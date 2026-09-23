@@ -244,7 +244,7 @@ describe('ImportPlayersPanel chunked commit', () => {
     const button = await screen.findByRole('button', { name: new RegExp(`Import ${n} players`) });
     await waitFor(() => expect(button).not.toBeDisabled());
 
-    mockFetch.mockResolvedValue(jsonOk(chunkResponse));
+    mockFetch.mockResolvedValue(jsonOk({ ...chunkResponse, runId: 'imprun_test' }));
     fireEvent.click(button);
     return button;
   }
@@ -258,9 +258,9 @@ describe('ImportPlayersPanel chunked commit', () => {
     const writes = mockFetch.mock.calls.slice(1).map(c => JSON.parse(c[1].body));
     expect(writes.map(w => w.rows.length)).toEqual([25, 25, 10]);
     expect(writes.map(w => w.part)).toEqual([
-      { index: 0, total: 3, totalRows: 60 },
-      { index: 1, total: 3, totalRows: 60 },
-      { index: 2, total: 3, totalRows: 60 },
+      { index: 0, total: 3 },
+      { index: 1, total: 3, runId: 'imprun_test' },
+      { index: 2, total: 3, runId: 'imprun_test' },
     ]);
   });
 
@@ -271,7 +271,7 @@ describe('ImportPlayersPanel chunked commit', () => {
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
     const write = JSON.parse(mockFetch.mock.calls[1][1].body);
     expect(write.rows).toHaveLength(2);
-    expect(write.part).toEqual({ index: 0, total: 1, totalRows: 2 });
+    expect(write.part).toEqual({ index: 0, total: 1 });
   });
 
   it('sums the counts across slices rather than showing only the last', async () => {
@@ -308,7 +308,10 @@ describe('ImportPlayersPanel chunked commit', () => {
     await waitFor(() => expect(button).not.toBeDisabled());
 
     mockFetch
-      .mockResolvedValueOnce(jsonOk(previewBody({ registrations: { created: 25, updated: 0 } })))
+      .mockResolvedValueOnce(jsonOk({
+        ...previewBody({ registrations: { created: 25, updated: 0 } }),
+        runId: 'imprun_test',
+      }))
       .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'Boom' }) });
     fireEvent.click(button);
 

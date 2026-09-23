@@ -33,6 +33,7 @@ interface StaleRegistration {
 // kept in step by hand.
 interface ImportResult {
   ok: boolean;
+  runId?: string;
   players: { created: number };
   registrations: { created: number; updated: number };
   users: { created: number; skipped: number };
@@ -202,6 +203,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       errors: [],
       stale: preview.stale,
     };
+    let importRunId: string | undefined;
 
     try {
       for (const [index, chunk] of chunks.entries()) {
@@ -213,7 +215,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           headers: { ...clubHeaders, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             rows: chunk,
-            part: { index, total: chunks.length, totalRows: rows.length },
+            part: { index, total: chunks.length, ...(importRunId ? { runId: importRunId } : {}) },
           }),
         });
         if (!res.ok) {
@@ -221,6 +223,10 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           throw new Error(err.error ?? `HTTP ${res.status}`);
         }
         const data = await res.json() as ImportResult;
+        if (!data.runId || (importRunId && data.runId !== importRunId)) {
+          throw new Error('Server returned an invalid import run identifier');
+        }
+        importRunId = data.runId;
 
         totals.ok &&= data.ok;
         totals.players.created += data.players.created;
