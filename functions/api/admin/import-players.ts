@@ -95,6 +95,48 @@ interface UserPlan {
   fanMap: Map<string, "self" | "guardian">;
 }
 
+/**
+ * One slice of a chunked import.
+ *
+ * Seeding a new user's password costs ~47ms of CPU (lib/auth.ts hashes the FAN
+ * with PBKDF2 at 100k iterations), and Cloudflare bills that against a per-request
+ * CPU limit — so a whole-club import in one request runs out of CPU part-way
+ * through and leaves the club half-imported. The client sends slices instead.
+ *
+ * Absent means an unchunked import, which behaves exactly as it always did.
+ */
+interface ImportPart {
+  index: number;
+  total: number;
+  /** Rows in the whole file, not this slice — for the import-log stamp. */
+  totalRows: number;
+}
+
+function validatePart(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object') return 'part must be an object';
+  const p = v as Record<string, unknown>;
+  for (const k of ['index', 'total', 'totalRows'] as const) {
+    if (!Number.isInteger(p[k]) || (p[k] as number) < 0) return `part.${k} must be a non-negative integer`;
+  }
+  if ((p.index as number) >= (p.total as number)) return 'part.index must be less than part.total';
+  return null;
+}
+
+/**
+ * D1 caps a query at 100 bound parameters, so an `IN (…)` list over a whole
+ * club's worth of values has to be issued in slices.
+ */
+const MAX_BOUND_PARAMS = 90;
+
+function inSlices<T>(values: T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < values.length; i += MAX_BOUND_PARAMS) {
+    out.push(values.slice(i, i + MAX_BOUND_PARAMS));
+  }
+  return out;
+}
+
 /** A registration as D1 currently holds it. */
 interface HeldRegistration {
   id: string;
@@ -120,8 +162,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   let rows: ParsedPlayerRow[];
   let dryRun: boolean;
+  let part: ImportPart | null;
   try {
-    const body = await context.request.json() as { rows?: unknown; dryRun?: unknown };
+    const body = await context.request.json() as { rows?: unknown; dryRun?: unknown; part?: unknown };
     if (!Array.isArray(body.rows)) {
       return json({ error: "Expected { rows: [] }" }, { status: 400 });
     }
@@ -134,6 +177,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
       return json({ error: "dryRun must be a boolean" }, { status: 400 });
     }
+    const partError = validatePart(body.part);
+    if (partError) return json({ error: partError }, { status: 400 });
     for (let i = 0; i < body.rows.length; i++) {
       const err = validateImportRow(body.rows[i]);
       if (err) {
@@ -142,9 +187,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
     rows = body.rows as ParsedPlayerRow[];
     dryRun = body.dryRun === true;
+    part = (body.part as ImportPart | undefined) ?? null;
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
+
+  /** The slice that stamps the import and reports the run to analytics. */
+  const isFinalPart = !part || part.index === part.total - 1;
 
   const db = context.env.DB;
   const importResult: ImportResult = {
@@ -287,38 +336,48 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   // ── 5. Plan users (reads only) ───────────────────────────────────────────
+  // One query per 90 emails rather than one per email: a 300-row file carries
+  // hundreds of addresses, and that was hundreds of sequential round trips.
+  const existingUserIdByEmail = new Map<string, string>();
+  const emails = [...emailRelMap.keys()];
+  for (const slice of inSlices(emails)) {
+    try {
+      const { results } = await db
+        .prepare(
+          `SELECT id, email FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
+        )
+        .bind(...slice)
+        .all<{ id: string; email: string }>();
+      for (const row of results) existingUserIdByEmail.set(row.email, row.id);
+    } catch (err) {
+      for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
+    }
+  }
+
   const userPlans: UserPlan[] = [];
   for (const [email, fanMap] of emailRelMap) {
-    try {
-      const userRow = await db
-        .prepare(`SELECT id FROM "user" WHERE email = ? LIMIT 1`)
-        .bind(email)
-        .first<{ id: string }>();
+    const existingUserId = existingUserIdByEmail.get(email) ?? null;
 
-      if (userRow) {
-        importResult.users.skipped++;
-      } else {
-        importResult.users.created++;
-      }
+    if (existingUserId) importResult.users.skipped++;
+    else importResult.users.created++;
 
-      userPlans.push({
-        email,
-        existingUserId: userRow?.id ?? null,
-        newUserId: randomId("user"),
-        passwordFan: emailToPasswordFan.get(email) ?? "",
-        fanMap,
-      });
-    } catch (err) {
-      importResult.errors.push({ fanId: email, reason: String(err) });
-    }
+    userPlans.push({
+      email,
+      existingUserId,
+      newUserId: randomId("user"),
+      passwordFan: emailToPasswordFan.get(email) ?? "",
+      fanMap,
+    });
   }
 
   // ── 6. Work out what the file leaves behind ──────────────────────────────
   // Only teams the file actually covers can go stale. Without that guard a
-  // single-team export would report every other team in the club as missing.
+  // single-team export would report every other team in the club as missing —
+  // which is exactly what a chunk is, so a chunked import skips this entirely
+  // and the page shows the whole-file dry run's list instead.
   const submittedTeams = new Set<string>();
   const submittedKeys = new Set<string>();
-  for (const row of rows) {
+  for (const row of part ? [] : rows) {
     const fanId = String(row.fanId ?? "").trim();
     if (!fanId) continue;
     const team = normaliseTeamName(String(row.teamName ?? ""));
@@ -451,24 +510,32 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   // ── 10. Stamp the import so the Registrations page can age the data ───────
-  try {
-    await db
-      .prepare(`INSERT INTO "club_import_log" (id, clubSlug, importedAt, rowCount, adminId) VALUES (?, ?, ?, ?, ?)`)
-      .bind(randomId("imp"), clubSlug, nowMs(), rows.length, adminId)
-      .run();
-  } catch (err) {
-    // A missing stamp is not worth failing an otherwise good import over.
-    importResult.errors.push({ fanId: "(import log)", reason: String(err) });
+  // Once per import, not once per chunk, and counting the whole file — otherwise
+  // "last imported" reports the size of whichever slice happened to land last.
+  if (isFinalPart) {
+    try {
+      await db
+        .prepare(`INSERT INTO "club_import_log" (id, clubSlug, importedAt, rowCount, adminId) VALUES (?, ?, ?, ?, ?)`)
+        .bind(randomId("imp"), clubSlug, nowMs(), part?.totalRows ?? rows.length, adminId)
+        .run();
+    } catch (err) {
+      // A missing stamp is not worth failing an otherwise good import over.
+      importResult.errors.push({ fanId: "(import log)", reason: String(err) });
+    }
   }
 
-  if (posthog) {
+  // One event per import, not per chunk — otherwise a 300-row file reports as
+  // twelve small imports and the funnel counts are meaningless. The per-chunk
+  // counts stay in the response for the client to sum.
+  if (posthog && isFinalPart) {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'players imported',
       ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
-        rows_submitted: rows.length,
+        rows_submitted: part?.totalRows ?? rows.length,
+        chunked: part !== null,
         players_created: importResult.players.created,
         registrations_created: importResult.registrations.created,
         registrations_updated: importResult.registrations.updated,

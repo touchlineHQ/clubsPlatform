@@ -187,6 +187,7 @@ describe('player-payments PATCH', () => {
 // ─── import-players.ts ────────────────────────────────────────────────────────
 
 import { onRequestPost as importPlayersPost } from '../../api/admin/import-players';
+import { hashPwd } from '../../lib/auth';
 
 describe('import-players POST', () => {
   beforeEach(() => {
@@ -402,9 +403,10 @@ const dbHolding = (held: unknown[]) =>
   makeDb({ all: [held], first: null, run: { meta: { changes: 1 } } });
 
 /** Invoke the import handler with the supplied rows and return its JSON response. */
-async function runImport(db: any, rows: unknown[], dryRun?: boolean) {
+async function runImport(db: any, rows: unknown[], dryRun?: boolean, part?: unknown) {
   const payload: Record<string, unknown> = { rows };
   if (dryRun !== undefined) payload.dryRun = dryRun;
+  if (part !== undefined) payload.part = part;
   const req = postReq('/api/admin/import-players', payload, { 'X-Club-Slug': 'test-club' });
   const ctx = makeContext(req, { env: { DB: db as any } });
   const res = await importPlayersPost(ctx as any);
@@ -613,6 +615,112 @@ describe('import-players POST — counters and the import stamp', () => {
     expect(stamp!.bindings).toEqual(
       expect.arrayContaining(['test-club', 2, 'user_1']),
     );
+  });
+});
+
+// ─── import-players.ts: chunked writes ────────────────────────────────────────
+
+describe('import-players POST — chunked writes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  const part = (index: number, total: number, totalRows: number) => ({ index, total, totalRows });
+
+  it('rejects a malformed part rather than silently importing the whole file', async () => {
+    const { res } = await runImport(dbHolding([]), [row()], false, { index: 2, total: 2, totalRows: 5 });
+    expect(res.status).toBe(400);
+  });
+
+  it('skips the stale pass for a chunk — a slice covers only its own teams', async () => {
+    // Without this a 25-row slice of a 300-row file reports every other team in
+    // the club as abandoned.
+    const held = [heldRow(), heldRow({ fanId: 'FAN999', teamName: 'U11 Boys' })];
+    const { body } = await runImport(dbHolding(held), [row()], false, part(0, 3, 75));
+
+    expect(body.stale.count).toBe(0);
+    expect(body.stale.rows).toEqual([]);
+  });
+
+  it('still reports stale registrations for an unchunked import', async () => {
+    const held = [heldRow(), heldRow({ fanId: 'FAN999', teamName: 'U11 Boys' })];
+    const { body } = await runImport(dbHolding(held), [row()], false);
+
+    expect(body.stale.count).toBe(1);
+  });
+
+  it('does not stamp the import log until the final chunk', async () => {
+    const db = dbHolding([]);
+    await runImport(db, [row()], false, part(0, 3, 75));
+
+    const sql = (db.prepare as Mock).mock.calls.map(c => String(c[0]));
+    expect(sql.some(q => /club_import_log/.test(q))).toBe(false);
+  });
+
+  it('stamps once on the final chunk, counting the whole file', async () => {
+    const db = dbHolding([]);
+    await runImport(db, [row()], false, part(2, 3, 75));
+
+    const stamp = prepared(db).find(p => /club_import_log/.test(p.sql));
+    expect(stamp).toBeDefined();
+    // 75, the file — not 1, this slice.
+    expect(stamp!.bindings).toContain(75);
+  });
+
+  it('stamps with the row count when the import is not chunked', async () => {
+    const db = dbHolding([]);
+    await runImport(db, [row(), row({ fanId: 'FAN002' })], false);
+
+    const stamp = prepared(db).find(p => /club_import_log/.test(p.sql));
+    expect(stamp!.bindings).toContain(2);
+  });
+
+  it('hashes once per new account, which is the whole reason for chunking', async () => {
+    // One PBKDF2 hash is ~47ms of CPU and Cloudflare bills it against the
+    // request's budget; two rows sharing a parent must not pay for it twice.
+    const db = dbHolding([]);
+    await runImport(
+      db,
+      [
+        row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] }),
+        row({ fanId: 'FAN002', parentEmails: ['parent@example.com'] }),
+      ],
+      false,
+    );
+
+    expect(hashPwd).toHaveBeenCalledTimes(1);
+  });
+
+  it('pays no hash for a chunk whose accounts already exist', async () => {
+    // The cross-chunk case: chunk 1 created the parent, so chunk 2 finds them.
+    const db = makeDb({
+      all: [[], [{ id: 'user_1', email: 'parent@example.com' }]],
+      first: null,
+      run: { meta: { changes: 1 } },
+    });
+    await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 75));
+
+    expect(hashPwd).not.toHaveBeenCalled();
+  });
+
+  it('looks accounts up in one query rather than one per email', async () => {
+    // This was a sequential round trip per address; a 300-row file carries
+    // hundreds.
+    const db = dbHolding([]);
+    await runImport(
+      db,
+      [
+        row({ fanId: 'FAN001', playerEmail: 'a@example.com' }),
+        row({ fanId: 'FAN002', playerEmail: 'b@example.com' }),
+        row({ fanId: 'FAN003', playerEmail: 'c@example.com' }),
+      ],
+      false,
+    );
+
+    const lookups = prepared(db).filter(p => /FROM "user" WHERE email/.test(p.sql));
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0].bindings).toEqual(['a@example.com', 'b@example.com', 'c@example.com']);
   });
 });
 

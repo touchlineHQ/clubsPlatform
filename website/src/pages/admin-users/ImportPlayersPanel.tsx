@@ -9,6 +9,18 @@ import { clubDesign } from '../../theme';
 import { FileDropzone } from '../../components/club/FileDropzone';
 import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../utils/faPlayerReport';
 
+/**
+ * Rows per write request.
+ *
+ * Seeding one new user's password costs ~47ms of CPU server-side (PBKDF2 at 100k
+ * iterations, functions/lib/auth.ts), and Cloudflare terminates a Worker that
+ * exceeds its CPU budget — which is what left clubs half-imported. 25 rows caps a
+ * request at roughly 1.2s of CPU even if every row brings a new account.
+ *
+ * Raising this trades safety margin for round trips; it is not a tuning knob.
+ */
+const IMPORT_CHUNK_ROWS = 25;
+
 /** A registration the club holds that the uploaded file no longer mentions. */
 interface StaleRegistration {
   fanId: string;
@@ -87,6 +99,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const [rows, setRows] = useState<ParsedPlayerRow[] | null>(null);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importedSoFar, setImportedSoFar] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [apiError, setApiError] = useState('');
   const [preview, setPreview] = useState<ImportResult | null>(null);
@@ -172,23 +185,69 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     if (!rows || !preview) return;
     setImporting(true);
     setApiError('');
+    setImportedSoFar(0);
+
+    const chunks: ParsedPlayerRow[][] = [];
+    for (let i = 0; i < rows.length; i += IMPORT_CHUNK_ROWS) {
+      chunks.push(rows.slice(i, i + IMPORT_CHUNK_ROWS));
+    }
+
+    // Start from the preview's stale list: a chunk covers only its own teams, so
+    // the server cannot compute staleness from one and does not try.
+    const totals: ImportResult = {
+      ok: true,
+      players: { created: 0 },
+      registrations: { created: 0, updated: 0 },
+      users: { created: 0, skipped: 0 },
+      errors: [],
+      stale: preview.stale,
+    };
+
     try {
-      const res = await fetch('/api/admin/import-players', {
-        method: 'POST',
-        headers: { ...clubHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+      for (const [index, chunk] of chunks.entries()) {
+        // Sequential, never parallel: two chunks carrying the same parent's email
+        // would both find no user and both create one, breaking UNIQUE(email) and
+        // paying the password hash twice.
+        const res = await fetch('/api/admin/import-players', {
+          method: 'POST',
+          headers: { ...clubHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: chunk,
+            part: { index, total: chunks.length, totalRows: rows.length },
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json() as ImportResult;
+
+        totals.ok &&= data.ok;
+        totals.players.created += data.players.created;
+        totals.registrations.created += data.registrations.created;
+        totals.registrations.updated += data.registrations.updated;
+        totals.users.created += data.users.created;
+        totals.users.skipped += data.users.skipped;
+        totals.errors.push(...data.errors);
+
+        setImportedSoFar(Math.min((index + 1) * IMPORT_CHUNK_ROWS, rows.length));
       }
-      const data = await res.json() as ImportResult;
-      setResult(data);
+
+      setResult(totals);
       setRows(null);
       clearPreview();
       onImported?.();
     } catch (err) {
-      setApiError(String(err));
+      // Earlier chunks have already been written. Say so rather than implying
+      // nothing happened — re-running the same file is safe (it upserts), but
+      // the admin needs to know to do it.
+      setApiError(
+        totals.registrations.created + totals.registrations.updated > 0
+          ? `${String(err)} — ${totals.registrations.created + totals.registrations.updated} `
+            + 'registrations were imported before this failed. Re-run the same file to finish; '
+            + 'importing twice is safe.'
+          : String(err),
+      );
     } finally {
       setImporting(false);
     }
@@ -304,8 +363,15 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               loading={importing}
               disabled={importing || previewing || !preview}
             >
-              Import {rows.length} player{rows.length !== 1 ? 's' : ''}
+              {importing && rows.length > IMPORT_CHUNK_ROWS
+                ? `Importing ${importedSoFar} of ${rows.length}…`
+                : `Import ${rows.length} player${rows.length !== 1 ? 's' : ''}`}
             </Button>
+            {importing && rows.length > IMPORT_CHUNK_ROWS && (
+              <Text size="xs" c="dimmed" mt={6}>
+                Sent in batches so the import does not time out. Leave this page open.
+              </Text>
+            )}
           </Box>
         </Stack>
       )}

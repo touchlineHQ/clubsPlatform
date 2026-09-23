@@ -6,11 +6,25 @@ import { renderWithMantine, mockAdmin } from '../../test-utils';
 // about the preview flow rather than about spreadsheet parsing, which
 // parseSheet's own shape already pins down.
 // Carries the personal columns a real export has, so the payload assertion proves they drop.
-const SHEET = [
-  ['FAN ID', 'First Names', 'Surname', 'Date of birth', 'Team', 'Registration Status'],
+const HEADER = ['FAN ID', 'First Names', 'Surname', 'Date of birth', 'Team', 'Registration Status'];
+const SMALL_SHEET = [
+  HEADER,
   ['FAN001', 'Ada', 'Lovelace', '04/11/2009', 'U11 Boys', 'Active'],
   ['FAN002', 'Grace', 'Hopper', '09/12/2010', 'U11 Boys', 'Active'],
 ];
+
+/** Reassignable so one test can drop a file big enough to be chunked. */
+let SHEET: unknown[][] = SMALL_SHEET;
+
+/** A sheet of `n` distinct players, for exercising the chunked write path. */
+function sheetOf(n: number): unknown[][] {
+  return [
+    HEADER,
+    ...Array.from({ length: n }, (_, i) => [
+      `FAN${String(i).padStart(3, '0')}`, 'Ada', 'Lovelace', '04/11/2009', 'U11 Boys', 'Active',
+    ]),
+  ];
+}
 
 vi.mock('xlsx', () => ({
   read: vi.fn(() => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } })),
@@ -79,6 +93,7 @@ describe('ImportPlayersPanel preview', () => {
     vi.stubGlobal('fetch', mockFetch);
     vi.stubGlobal('FileReader', SyncFileReader);
     mockFetch.mockReset();
+    SHEET = SMALL_SHEET;
   });
 
   it('previews the file on parse, before anything is committed', async () => {
@@ -208,5 +223,97 @@ describe('ImportPlayersPanel preview', () => {
     expect(screen.getByText('8 to update')).toBeInTheDocument();
     expect(screen.queryByText('1 to create')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Import 2 players/ })).not.toBeDisabled();
+  });
+});
+
+describe('ImportPlayersPanel chunked commit', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', mockFetch);
+    vi.stubGlobal('FileReader', SyncFileReader);
+    mockFetch.mockReset();
+    SHEET = SMALL_SHEET;
+  });
+
+  /** Preview once, then commit, with `n` players in the file. */
+  async function commitFileOf(n: number, chunkResponse = previewBody()) {
+    SHEET = sheetOf(n);
+    mockFetch.mockResolvedValueOnce(jsonOk(previewBody({ stale: { count: 1, rows: [] } })));
+
+    dropFile();
+
+    const button = await screen.findByRole('button', { name: new RegExp(`Import ${n} players`) });
+    await waitFor(() => expect(button).not.toBeDisabled());
+
+    mockFetch.mockResolvedValue(jsonOk(chunkResponse));
+    fireEvent.click(button);
+    return button;
+  }
+
+  it('sends a big file in slices, so one request cannot exhaust the CPU budget', async () => {
+    // 60 players at 25 a slice: preview, then three writes.
+    await commitFileOf(60);
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
+
+    const writes = mockFetch.mock.calls.slice(1).map(c => JSON.parse(c[1].body));
+    expect(writes.map(w => w.rows.length)).toEqual([25, 25, 10]);
+    expect(writes.map(w => w.part)).toEqual([
+      { index: 0, total: 3, totalRows: 60 },
+      { index: 1, total: 3, totalRows: 60 },
+      { index: 2, total: 3, totalRows: 60 },
+    ]);
+  });
+
+  it('sends one unchunked request for a small file', async () => {
+    // The part is still sent, so the server takes the same path either way.
+    await commitFileOf(2);
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    const write = JSON.parse(mockFetch.mock.calls[1][1].body);
+    expect(write.rows).toHaveLength(2);
+    expect(write.part).toEqual({ index: 0, total: 1, totalRows: 2 });
+  });
+
+  it('sums the counts across slices rather than showing only the last', async () => {
+    await commitFileOf(60, previewBody({
+      players: { created: 1 },
+      registrations: { created: 2, updated: 3 },
+      users: { created: 1, skipped: 1 },
+      errors: [],
+    }));
+
+    // Three slices of the same stubbed response: 1/2/3/1/1 each, tripled.
+    const summary = await screen.findByText(/New players:/);
+    expect(summary).toHaveTextContent('New players: 3');
+    expect(screen.getByText(/^Registrations:/)).toHaveTextContent('6 created, 9 updated');
+    expect(screen.getByText(/^User accounts:/)).toHaveTextContent('3 created, 3 already existed');
+  });
+
+  it('keeps the stale list from the whole-file preview, not from a slice', async () => {
+    // A slice covers only its own teams, so the server sends back no stale rows
+    // for one; taking the slice's answer would report "0 no longer in file" and
+    // quietly lose the warning.
+    await commitFileOf(60, previewBody({ stale: { count: 0, rows: [] } }));
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
+    expect(await screen.findByText(/No longer in the file:/)).toHaveTextContent('1');
+  });
+
+  it('says how much landed when a slice fails part-way through', async () => {
+    SHEET = sheetOf(60);
+    mockFetch.mockResolvedValueOnce(jsonOk(previewBody()));
+    dropFile();
+
+    const button = await screen.findByRole('button', { name: /Import 60 players/ });
+    await waitFor(() => expect(button).not.toBeDisabled());
+
+    mockFetch
+      .mockResolvedValueOnce(jsonOk(previewBody({ registrations: { created: 25, updated: 0 } })))
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'Boom' }) });
+    fireEvent.click(button);
+
+    // Silence about the first slice would have the admin re-import blind.
+    expect(await screen.findByText(/25 registrations were imported before this failed/i))
+      .toBeInTheDocument();
   });
 });
