@@ -181,7 +181,12 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     reader.readAsArrayBuffer(file);
   }
 
-  /** Commit the previously previewed import and display its result. */
+  /**
+   * Commit the previewed rows in sequential batches of at most 25 and display
+   * combined counts with the preview's whole-file stale list. On failure,
+   * retain the selected file for retry and report registrations confirmed by
+   * earlier batches; notify the parent only after every batch succeeds.
+   */
   async function handleConfirm() {
     if (!rows || !preview) return;
     setImporting(true);

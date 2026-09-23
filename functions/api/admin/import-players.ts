@@ -114,6 +114,13 @@ interface ImportPart {
   runId?: string;
 }
 
+/**
+ * Check a supplied import part before any player import writes.
+ * Missing parts are valid for unchunked requests; present parts need a zero-based
+ * index below a positive total; the first part forbids a run ID, and later
+ * parts require a nonempty run ID of at most 200 characters.
+ * Returns an error message for invalid parts, or null otherwise.
+ */
 function validatePart(v: unknown): string | null {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'object') return 'part must be an object';
@@ -146,6 +153,7 @@ interface ImportRunTotals {
  */
 const MAX_BOUND_PARAMS = 90;
 
+/** Split values into ordered groups of at most 90 for bound-parameter queries. */
 function inSlices<T>(values: T[]): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < values.length; i += MAX_BOUND_PARAMS) {
@@ -167,7 +175,17 @@ interface HeldRegistration {
 const regKey = (fanId: string, teamName: string) =>
   JSON.stringify([fanId, normaliseTeamName(teamName)]);
 
-/** Preview or commit a player import for the authenticated club administrator. */
+/**
+ * Preview or commit player rows for the authenticated club administrator.
+ * A whole-file dry run reports projected counts and stale registrations
+ * without writing players; an unchunked write also reports staleness. Chunked
+ * writes require sequential parts under the server-issued run ID, return
+ * per-part counts with that ID, and attempt the full-import log stamp only
+ * on the final part.
+ * Row-level write failures appear in the response's errors; invalid input
+ * returns 400, and conflicting or incomplete parts return 409. Database and
+ * analytics failures outside the per-row handlers can still reject the request.
+ */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
