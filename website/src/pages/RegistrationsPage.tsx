@@ -36,14 +36,15 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
-  // Billing group — see functions/lib/registration-merge.ts. A merged row shows
-  // its group's payment status, so these say why it reads as paid.
-  /** The registration this one is billed through — itself, unless merged. */
-  billingRegistrationId: string;
+  // Billing group — see functions/lib/registration-merge.ts. Sent only for rows
+  // that are in a group, so a club that has merged nothing carries none of these.
+  // A merged row shows its group's payment status; these say why.
+  /** The registration this one is billed through. Absent means itself. */
+  billingRegistrationId?: string;
   /** This registration's primary's team, when it is billed through another. */
-  billedWithTeamName: string | null;
+  billedWithTeamName?: string | null;
   /** The other teams this registration is billed for, when it is a primary. */
-  mergedTeamNames: string | null;
+  mergedTeamNames?: string | null;
   // Manual override attribution — admin (club) rows only; never sent to players.
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;

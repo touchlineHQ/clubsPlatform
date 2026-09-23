@@ -1,9 +1,5 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
-import {
-  billingRegistrationIdSql,
-  mergeColumnsSql,
-  subscriptionLevelJoinSql,
-} from "../lib/registration-merge";
+import { subscriptionLevelJoinSql } from "../lib/registration-merge";
 import { GC_BLOCKING_STATUSES } from "../lib/payment-status";
 
 interface RegistrationRow {
@@ -19,12 +15,14 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
-  /** The registration whose payment covers this one — itself, unless merged. */
-  billingRegistrationId: string;
+  // Attached by attachMergeGrouping, and only to the rows in a billing group —
+  // a club that has merged nothing sends none of these at all.
+  /** The registration whose payment covers this one. Absent means itself. */
+  billingRegistrationId?: string;
   /** This registration's primary's team, when it is a secondary. */
-  billedWithTeamName: string | null;
+  billedWithTeamName?: string;
   /** The other teams this registration is billed for, when it is a primary. */
-  mergedTeamNames: string | null;
+  mergedTeamNames?: string;
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
   manualNote?: string | null;
@@ -55,8 +53,9 @@ interface RegistrationRow {
  */
 function paymentStatusSubquery(distinguishManual: boolean): string {
   const manualBranch = distinguishManual ? `'manual'` : `'completed'`;
-  // Keyed on the billing registration, so every member of a group reports the
-  // primary's status — the group has one authoritative record and this reads it.
+  // Keyed on the row's own id. A merged registration takes its group's status in
+  // attachMergeGrouping below, not here: resolving it in SQL meant a subquery per
+  // row inside a subquery per row, for a table that holds a handful of rows.
   return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
@@ -66,7 +65,7 @@ function paymentStatusSubquery(distinguishManual: boolean): string {
     WHEN COUNT(pp.id) > 0 THEN 'inactive'
     ELSE NULL
   END
-  FROM "player_payment" pp WHERE pp.registrationId = ${billingRegistrationIdSql('pr')}
+  FROM "player_payment" pp WHERE pp.registrationId = pr.id
 ) AS paymentStatus`;
 }
 
@@ -96,6 +95,8 @@ async function attachManualAttribution(
   db: D1Database,
   clubSlug: string,
   rows: RegistrationRow[],
+  /** Secondary → primary, so a merged row finds the override on its group. */
+  primaryOf: Map<string, string>,
 ): Promise<RegistrationRow[]> {
   if (!rows.some((r) => r.paymentStatus === "manual")) return rows;
 
@@ -124,17 +125,6 @@ async function attachManualAttribution(
     if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
   }
 
-  // A manual row hangs off the primary, so a secondary looks it up through that.
-  const { results: merges } = await db
-    .prepare(
-      `SELECT "registrationId", "primaryRegistrationId" FROM "registration_merge"
-        WHERE "clubSlug" = ?`
-    )
-    .bind(clubSlug)
-    .all<MergeRow>();
-
-  const primaryOf = new Map(merges.map((m) => [m.registrationId, m.primaryRegistrationId]));
-
   return rows.map((r) => {
     const attribution = r.paymentStatus === "manual"
       ? latest.get(primaryOf.get(r.registrationId) ?? r.registrationId)
@@ -148,6 +138,80 @@ async function attachManualAttribution(
         }
       : r;
   });
+}
+
+/**
+ * Reads the club's billing groups and attaches them to the rows that are in one.
+ *
+ * Deliberately one small query and a pass in JS rather than SQL per row:
+ * `registration_merge` holds one row per merged *secondary*, so it is nearly
+ * empty, and asking for it per registration meant three correlated subqueries on
+ * every row of a whole-club scan — plus a `billingRegistrationId` on the wire for
+ * every row that repeated the id it already had, which grew the response by 25%.
+ * It is also the rule this file already follows for manual attribution.
+ *
+ * Returns the secondary → primary map, which manual attribution needs too.
+ */
+async function attachMergeGrouping(
+  db: D1Database,
+  clubSlug: string,
+  rowSets: RegistrationRow[][],
+): Promise<Map<string, string>> {
+  const { results: merges } = await db
+    .prepare(
+      `SELECT rm."registrationId", rm."primaryRegistrationId", pr."teamName"
+         FROM "registration_merge" rm
+         JOIN "player_registration" pr ON pr."id" = rm."registrationId"
+        WHERE rm."clubSlug" = ?`
+    )
+    .bind(clubSlug)
+    .all<MergeRow & { teamName: string }>();
+
+  const primaryOf = new Map(merges.map((m) => [m.registrationId, m.primaryRegistrationId]));
+  // Every club that has merged nothing stops here, having paid one empty read.
+  if (primaryOf.size === 0) return primaryOf;
+
+  const teamNameById = new Map<string, string>();
+  const membersOf = new Map<string, string[]>();
+  for (const rows of rowSets) {
+    for (const r of rows) teamNameById.set(r.registrationId, r.teamName);
+  }
+  for (const m of merges) {
+    teamNameById.set(m.registrationId, m.teamName);
+    const members = membersOf.get(m.primaryRegistrationId);
+    if (members) members.push(m.registrationId);
+    else membersOf.set(m.primaryRegistrationId, [m.registrationId]);
+  }
+
+  // A group's payment hangs off its primary, so every member reports that status.
+  const statusByPrimary = new Map<string, string | null>();
+  for (const rows of rowSets) {
+    for (const r of rows) {
+      if (membersOf.has(r.registrationId)) statusByPrimary.set(r.registrationId, r.paymentStatus);
+    }
+  }
+
+  for (const rows of rowSets) {
+    for (const r of rows) {
+      const primaryId = primaryOf.get(r.registrationId);
+      if (primaryId) {
+        r.billingRegistrationId = primaryId;
+        const primaryTeam = teamNameById.get(primaryId);
+        if (primaryTeam) r.billedWithTeamName = primaryTeam;
+        if (statusByPrimary.has(primaryId)) r.paymentStatus = statusByPrimary.get(primaryId) ?? null;
+        continue;
+      }
+      const members = membersOf.get(r.registrationId);
+      if (members) {
+        r.mergedTeamNames = members
+          .map((id) => teamNameById.get(id))
+          .filter((t): t is string => Boolean(t))
+          .join(', ');
+      }
+    }
+  }
+
+  return primaryOf;
 }
 
 /**
@@ -193,7 +257,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
-         ${mergeColumnsSql('pr')},
          ${PERSONAL_PAYMENT_STATUS_SUBQUERY}
        FROM user_player up
        JOIN player p ON p.id = up.playerId
@@ -206,6 +269,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .all<RegistrationRow>();
 
   if (!isAdmin) {
+    await attachMergeGrouping(context.env.DB, clubSlug, [personalRows.results]);
     return json({
       personal: personalRows.results,
       club: null,
@@ -228,7 +292,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
-         ${mergeColumnsSql('pr')},
          ${CLUB_PAYMENT_STATUS_SUBQUERY}
        FROM player_registration pr
        JOIN player p ON p.id = pr.playerId
@@ -242,10 +305,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .all<RegistrationRow>();
 
+  // One read of the club's billing groups serves both passes.
+  const primaryOf = await attachMergeGrouping(
+    context.env.DB,
+    clubSlug,
+    [personalRows.results, clubRows.results],
+  );
+
   const club = await attachManualAttribution(
     context.env.DB,
     clubSlug,
     clubRows.results,
+    primaryOf,
   );
 
   // Lets the page say how old the numbers on screen are. Dry-run previews write
