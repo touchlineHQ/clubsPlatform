@@ -179,7 +179,8 @@ const regKey = (fanId: string, teamName: string) =>
  * Preview or commit player rows for the authenticated club administrator.
  * A whole-file dry run reports projected counts and stale registrations
  * without writing players; an unchunked write also reports staleness. Chunked
- * writes require sequential parts under the server-issued run ID, return
+ * writes return no stale registrations because each part covers only a slice.
+ * They require sequential parts under the server-issued run ID, return
  * per-part counts with that ID, and attempt the full-import log stamp only
  * on the final part.
  * Row-level write failures appear in the response's errors; invalid input
