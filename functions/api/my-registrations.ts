@@ -184,14 +184,12 @@ async function attachMergeGrouping(
   }
 
   // A group's payment hangs off its primary, so every member reports that status.
-  const statusByPrimary = new Map<string, string | null>();
   for (const rows of rowSets) {
+    const statusByPrimary = new Map<string, string | null>();
     for (const r of rows) {
       if (membersOf.has(r.registrationId)) statusByPrimary.set(r.registrationId, r.paymentStatus);
     }
-  }
 
-  for (const rows of rowSets) {
     for (const r of rows) {
       const primaryId = primaryOf.get(r.registrationId);
       if (primaryId) {

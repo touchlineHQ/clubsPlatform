@@ -301,6 +301,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
                    AND current_group."primaryRegistrationId" <> ?
                    AND pp."status" <> 'inactive'
               )
+          AND (
+                SELECT COUNT(*) FROM "registration_merge" existing
+                 WHERE existing."clubSlug" = ?
+                   AND existing."primaryRegistrationId" = ?
+                   AND existing."registrationId" NOT IN (SELECT "registrationId" FROM proposed)
+              ) + (SELECT COUNT(*) FROM proposed) <= ?
        ON CONFLICT("registrationId") DO UPDATE SET
          "primaryRegistrationId" = excluded."primaryRegistrationId",
          "updatedAt"             = excluded."updatedAt"`,
@@ -310,6 +316,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       clubSlug, primaryId, now, now,
       primaryId, clubSlug, clubSlug,
       clubSlug, primaryId,
+      clubSlug, primaryId, MAX_MERGE_GROUP,
     );
 
   const secondaryPlaceholders = secondaryIds.map(() => '?').join(', ');

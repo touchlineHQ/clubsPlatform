@@ -319,6 +319,17 @@ describe('onRequestPost — writing the group', () => {
     expect(insert!.sql).toContain('current_group."primaryRegistrationId"');
   });
 
+  it('guards the resulting group size, excluding members already named again', async () => {
+    const db = postDb();
+    await onRequestPost(mergeCtx(db) as any);
+
+    const insert = findSql(db, 'INSERT INTO "registration_merge"')!;
+    expect(insert.sql).toMatch(/COUNT\(\*\) FROM "registration_merge" existing[\s\S]*existing\."primaryRegistrationId" = \?/);
+    expect(insert.sql).toContain('existing."registrationId" NOT IN (SELECT "registrationId" FROM proposed)');
+    expect(insert.sql).toMatch(/\) \+ \(SELECT COUNT\(\*\) FROM proposed\) <= \?/);
+    expect(insert.bindings.slice(-3)).toEqual(['test-club', 'reg_primary', 11]);
+  });
+
   it('writes the audit row in the same batch as the merge', async () => {
     // An audited merge that does not exist must not be reachable.
     const db = postDb();

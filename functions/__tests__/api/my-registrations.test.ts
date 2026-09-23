@@ -425,6 +425,22 @@ describe('merged registrations', () => {
     expect(body.personal[1].billedWithTeamName).toBe('U15 Tuesday');
   });
 
+  it('keeps personal and club primary statuses separate for their secondaries', async () => {
+    const personalPrimary = { ...sampleRegistration, registrationId: 'reg_tue', paymentStatus: 'completed' };
+    const personalSecondary = { ...sampleRegistration, registrationId: 'reg_thu', paymentStatus: null };
+    const clubPrimary = { ...clubRegistration, registrationId: 'reg_tue', paymentStatus: 'manual' };
+    const clubSecondary = { ...clubRegistration, registrationId: 'reg_thu', paymentStatus: null };
+
+    const body = await (await get(adminDb({
+      personal: [personalPrimary, personalSecondary],
+      club: [clubPrimary, clubSecondary],
+      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+    }))).json() as any;
+
+    expect(body.personal[1].paymentStatus).toBe('completed');
+    expect(body.club[1].paymentStatus).toBe('manual');
+  });
+
   it('resolves manual attribution through the primary', async () => {
     // The manual row hangs off the primary, so a secondary would otherwise show
     // "Paid in full" with nobody's name against it.
