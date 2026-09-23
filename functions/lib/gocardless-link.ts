@@ -1,6 +1,8 @@
 import type { Env } from '../api/gocardless/_types';
 import type { GCBillingRequest, GCBillingRequestFlow, GCMandate } from '../api/gocardless/_types';
 import { getSecret } from './secrets';
+import { buildLogicalReference } from './payment-reference';
+import { billingRegistrationJoinSql } from './registration-merge';
 
 export interface CreateLinkInput {
   env: Env;
@@ -123,22 +125,42 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     };
   }
 
+  // Resolves through any merge, so no caller can mint a link against a secondary.
   const reg = await db
     .prepare(
-      `SELECT pr.id, pr.teamName, p.fanId
-         FROM player_registration pr
+      `SELECT src.id AS sourceRegistrationId,
+              pr.id, pr.teamName, p.fanId,
+              COALESCE(rps.generation, 0) AS paymentGeneration
+         FROM player_registration src
+         ${billingRegistrationJoinSql('src', 'pr')}
          JOIN player p ON p.id = pr.playerId
-        WHERE pr.id = ? AND pr.clubSlug = ?`
+         LEFT JOIN registration_payment_state rps ON rps.registrationId = src.id
+        WHERE src.id = ?
+          AND (? IS NULL OR src.clubSlug = ?)
+          AND pr.clubSlug = src.clubSlug`
     )
-    .bind(registrationId, clubSlug)
-    .first<{ id: string; teamName: string; fanId: string }>();
+    .bind(registrationId, clubSlug, clubSlug)
+    .first<{
+      sourceRegistrationId: string;
+      id: string;
+      teamName: string;
+      fanId: string;
+      paymentGeneration: number;
+    }>();
 
   if (!reg) {
     return { ok: false, status: 404, error: 'Registration not found' };
   }
 
-  const { fanId, teamName } = reg;
-  const reference = `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
+  const {
+    sourceRegistrationId,
+    id: billingRegistrationId,
+    fanId,
+    teamName,
+    paymentGeneration = 0,
+  } = reg;
+  // The primary's team name is the group's stable billing identity; see buildLogicalReference.
+  const reference = buildLogicalReference(teamName, fanId, paymentType);
   const baseDescription = input.description ?? `${teamName} — FAN ${fanId}`;
 
   const pounds = (amountInPence / 100).toLocaleString('en-GB', {
@@ -173,7 +195,10 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
         },
         metadata: {
           reference,
-          registration_id: registrationId,
+          registration_id: sourceRegistrationId ?? registrationId,
+          registration_generation: String(paymentGeneration),
+          // Stamped, not parsed back out: confirm.ts rewrites the reference itself.
+          payment_type: paymentType,
           tracking_info: `team:${teamName}|fan:${fanId}|type:${paymentType}|${amountInPence}p-${intervalUnit}${totalCount ? `-x${totalCount}` : ''}`,
         },
       },
@@ -193,7 +218,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     amount: String(amountInPence),
     interval_unit: intervalUnit,
     description: baseDescription,
-    registration_id: registrationId,
+    registration_id: sourceRegistrationId ?? registrationId,
     ...(totalCount !== null ? { count: String(totalCount) } : {}),
     ...(clubSlug ? { club_slug: clubSlug } : {}),
     ...(input.startDate ? { start_date: input.startDate } : {}),

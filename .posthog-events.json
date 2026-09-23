@@ -142,7 +142,7 @@
   },
   {
     "event": "payment page viewed",
-    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel.",
+    "description": "A player lands on the public payment setup page \u2014 the top of the subscription payment funnel.",
     "files": [
       "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
     ]
@@ -163,7 +163,7 @@
   },
   {
     "event": "player payment manually marked paid",
-    "description": "An admin records a registration as paid outside Direct Debit — cash, bank transfer or a sponsored place.",
+    "description": "An admin records a registration as paid outside Direct Debit \u2014 cash, bank transfer or a sponsored place.",
     "files": [
       "functions/api/admin/manual-payment.ts"
     ]
@@ -177,7 +177,7 @@
   },
   {
     "event": "players import previewed",
-    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind — no writes happen. Counts only; no FAN numbers.",
+    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind \u2014 no writes happen. Counts only; no FAN numbers.",
     "files": [
       "functions/api/admin/import-players.ts"
     ]
@@ -211,6 +211,22 @@
     ]
   },
   {
+    "event": "registrations merged",
+    "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only \u2014 no FAN numbers.",
+    "files": [
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/RegistrationsPage.tsx"
+    ]
+  },
+  {
+    "event": "registrations unmerged",
+    "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only \u2014 no FAN numbers.",
+    "files": [
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/RegistrationsPage.tsx"
+    ]
+  },
+  {
     "event": "signup failed",
     "description": "An account creation attempt did not succeed. The reason property distinguishes a rejected request from a thrown error.",
     "files": [
@@ -226,7 +242,7 @@
   },
   {
     "event": "status report generated",
-    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only — no names, dates of birth or FAN numbers leave the page.",
+    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only \u2014 no names, dates of birth or FAN numbers leave the page.",
     "files": [
       "website/src/pages/registrations/StatusReportPanel.tsx"
     ]

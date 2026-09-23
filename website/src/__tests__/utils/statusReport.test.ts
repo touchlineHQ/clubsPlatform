@@ -248,20 +248,55 @@ describe('summariseStatusReport', () => {
       matched: 1,
       noSubsRecord: 1,
       subsOnly: 1,
+      billedElsewhere: 0,
     });
   });
 });
 
 describe('toSheetRows', () => {
-  it('emits the thirteen headers in spec order, Match first', () => {
+  it('emits the fourteen headers in spec order, Match first', () => {
     const rows = toSheetRows(buildStatusReport([fa()], [reg()]));
 
     expect(Object.keys(rows[0])).toEqual([
       'Match', 'FAN ID', 'Team', 'First names', 'Surname', 'Date of birth', 'Age group',
       'Registration status', 'Registration expiry', 'Subscription level',
-      'Subscription status', 'Marked paid by', 'Payment link',
+      'Subscription status', 'Billed via', 'Marked paid by', 'Payment link',
     ]);
-    expect(STATUS_REPORT_COLUMNS).toHaveLength(13);
+    expect(STATUS_REPORT_COLUMNS).toHaveLength(14);
+  });
+
+  it('says which registration a merged one is billed through', () => {
+    // Without the column a secondary reads "Paid in full" with nothing to
+    // explain why, and the treasurer chases a player who has already paid.
+    const rows = buildStatusReport(
+      [fa()],
+      [reg({ billedWithTeamName: 'U15 Blues' })],
+    );
+
+    expect(rows[0].billedVia).toBe('Billed with U15 Blues');
+    expect(summariseStatusReport(rows).billedElsewhere).toBe(1);
+  });
+
+  it('says what else a primary‘s payment covers', () => {
+    const rows = buildStatusReport(
+      [fa()],
+      [reg({ mergedTeamNames: 'U15 Thursday, U15 Sunday' })],
+    );
+
+    expect(rows[0].billedVia).toBe('Also covers U15 Thursday, U15 Sunday');
+    // A primary is the row to chase, so it is not counted as billed elsewhere.
+    expect(summariseStatusReport(rows).billedElsewhere).toBe(0);
+  });
+
+  it('leaves the column blank for an unmerged registration', () => {
+    const rows = buildStatusReport([fa()], [reg()]);
+    expect(rows[0].billedVia).toBe('');
+  });
+
+  it('leaves the column blank on an FA-only row, which has no subs record', () => {
+    const rows = buildStatusReport([fa({ fanId: 'FAN999', teamName: 'U8 Reds' })], []);
+    expect(rows[0].match).toBe('No subs record');
+    expect(rows[0].billedVia).toBe('');
   });
 
   it('writes the date of birth as a string, never an Excel serial', () => {

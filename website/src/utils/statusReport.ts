@@ -13,6 +13,12 @@ export interface StatusReportRegistration {
   subscriptionLevelName?: string | null;
   paymentStatus?: string | null;
   manualPaidBy?: string | null;
+  /** The registration this one is billed through — itself, unless merged. */
+  billingRegistrationId?: string | null;
+  /** This registration's primary's team, when it is billed through another. */
+  billedWithTeamName?: string | null;
+  /** The other teams this registration is billed for, when it is a primary. */
+  mergedTeamNames?: string | null;
 }
 
 /** A row from the FA report, as `parseReportSheet` returns it. */
@@ -40,6 +46,7 @@ export interface StatusReportRow {
   registrationExpiry: string;
   subscriptionLevel: string;
   subscriptionStatus: string;
+  billedVia: string;
   markedPaidBy: string;
   paymentLink: string;
 }
@@ -96,6 +103,13 @@ function faRowIncluded(
 }
 
 /** Registration-driven: one row each, so nothing the club holds is dropped; leftover FA rows follow. */
+/** How a registration is billed: without it a secondary reads "Paid in full" unexplained. */
+function billedVia(reg: StatusReportRegistration): string {
+  if (reg.billedWithTeamName) return `Billed with ${reg.billedWithTeamName}`;
+  if (reg.mergedTeamNames) return `Also covers ${reg.mergedTeamNames}`;
+  return '';
+}
+
 export function buildStatusReport(
   faRows: StatusReportFaRow[],
   registrations: StatusReportRegistration[],
@@ -133,6 +147,7 @@ export function buildStatusReport(
       registrationExpiry: text(fa?.registrationExpiry) || text(reg.registrationExpiry),
       subscriptionLevel: text(reg.subscriptionLevelName),
       subscriptionStatus: getSubscriptionStatus(reg).label,
+      billedVia: billedVia(reg),
       markedPaidBy: text(reg.manualPaidBy),
       paymentLink: link(reg.fanId),
     });
@@ -153,6 +168,7 @@ export function buildStatusReport(
         registrationExpiry: text(fa.registrationExpiry),
         subscriptionLevel: '',
         subscriptionStatus: '',
+        billedVia: '',
         markedPaidBy: '',
         // Still linked: this is the row the treasurer has to chase.
         paymentLink: link(fa.fanId),
@@ -170,12 +186,15 @@ export function summariseStatusReport(rows: StatusReportRow[]): {
   matched: number;
   noSubsRecord: number;
   subsOnly: number;
+  billedElsewhere: number;
 } {
   return {
     rowCount: rows.length,
     matched: rows.filter(r => r.match === 'Matched').length,
     noSubsRecord: rows.filter(r => r.match === 'No subs record').length,
     subsOnly: rows.filter(r => r.match === 'Subs only').length,
+    // Covered by another registration's payment — the ones not to chase.
+    billedElsewhere: rows.filter(r => r.billedVia.startsWith('Billed with')).length,
   };
 }
 
@@ -196,6 +215,7 @@ export const STATUS_REPORT_COLUMNS: readonly {
   { header: 'Registration expiry', key: 'registrationExpiry', wch: 18 },
   { header: 'Subscription level',  key: 'subscriptionLevel',  wch: 22 },
   { header: 'Subscription status', key: 'subscriptionStatus', wch: 18 },
+  { header: 'Billed via',          key: 'billedVia',          wch: 32 },
   { header: 'Marked paid by',      key: 'markedPaidBy',       wch: 28 },
   { header: 'Payment link',        key: 'paymentLink',        wch: 60 },
 ];

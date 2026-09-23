@@ -275,4 +275,106 @@ describe('onRequestDelete', () => {
     const res = await onRequestDelete(ctx as any);
     expect(res.status).toBe(404);
   });
+
+  function deleteCtx(db: any, id = 'reg_1') {
+    return makeContext(
+      deleteReq(`/api/my-registrations?registrationId=${id}`, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+  }
+
+  it('refuses to delete a registration with a live GoCardless payment', async () => {
+    // Cascades away the only record that GoCardless is still collecting.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [{ status: 'active' }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/live GoCardless payment/i);
+  });
+
+  it('refuses to delete a registration that other registrations are billed through', async () => {
+    // ON DELETE RESTRICT would otherwise surface as a raw FK violation.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [null, { n: 2 }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/billed for 2 other registrations/i);
+    expect(body.mergedCount).toBe(2);
+  });
+
+  it('allows deleting a registration that is billed through another one', async () => {
+    // A secondary owns no group; its own merge row cascades away with it.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [null, { n: 0 }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── Merged registrations ─────────────────────────────────────────────────────
+
+describe('merged registrations', () => {
+  beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
+
+  function prepared(db: any) {
+    return (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0]));
+  }
+
+  it('reads payment status from the billing registration, so a secondary shows the group‘s', async () => {
+    const db = makeDb({ all: [[sampleRegistration]] });
+    await onRequestGet(makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    ) as any);
+
+    const withStatus = prepared(db).find((sql: string) => sql.includes('AS paymentStatus'));
+    expect(withStatus).toBeDefined();
+    // `pp.registrationId = pr.id` would report a secondary unpaid.
+    expect(withStatus).toContain('registration_merge');
+    expect(withStatus).not.toMatch(/pp\.registrationId = pr\.id/);
+  });
+
+  it('returns the columns the UI needs to show a group', async () => {
+    const db = makeDb({ all: [[sampleRegistration]] });
+    await onRequestGet(makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    ) as any);
+
+    const query = prepared(db).find((sql: string) => sql.includes('AS billingRegistrationId'));
+    expect(query).toContain('AS billedWithTeamName');
+    expect(query).toContain('AS mergedTeamNames');
+  });
+
+  it('resolves manual attribution through the primary', async () => {
+    // Otherwise a secondary shows "Paid in full" with nobody's name against it.
+    const secondary = { ...clubRegistration, registrationId: 'reg_sec', paymentStatus: 'manual' };
+    const db = makeDb({
+      all: [
+        [sampleRegistration],
+        [secondary],
+        // attachManualAttribution: audit lookup, then the merge map.
+        [{
+          registrationId: 'reg_primary',
+          manualPaidBy: 'admin@example.com',
+          manualPaidAt: 1,
+          manualNote: 'cash',
+        }],
+        [{ registrationId: 'reg_sec', primaryRegistrationId: 'reg_primary' }],
+      ],
+    });
+
+    const res = await onRequestGet(makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    ) as any);
+    const body = await res.json() as any;
+
+    expect(body.club[0].manualPaidBy).toBe('admin@example.com');
+    expect(body.club[0].manualNote).toBe('cash');
+  });
 });

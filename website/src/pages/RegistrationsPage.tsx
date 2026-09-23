@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Table, Stack, Alert, Loader, Center, Badge, Text, Paper, Box, Group, Button, UnstyledButton,
-  Select, ActionIcon, Modal, Tooltip, Tabs, Textarea,
+  Select, ActionIcon, Modal, Tooltip, Tabs, Textarea, Checkbox, Radio,
 } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowRight, IconChevronDown, IconChevronUp, IconClipboardList, IconFileSpreadsheet, IconFileUpload,
-  IconSelector, IconTrash, IconUserCheck,
+  IconArrowsJoin, IconSelector, IconTrash, IconUserCheck,
 } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -21,11 +21,13 @@ import { timeAgo } from '../utils/timeAgo';
 import { getSubscriptionStatus } from '../utils/subscriptionStatus';
 import { buildPaymentLink } from '../utils/paymentLink';
 import { summariseRegistrations } from '../utils/registrationSummary';
+import { suggestMerges, suggestedRegistrationIds } from '../utils/mergeSuggestions';
 
 interface RegistrationRow {
   registrationId: string;
   fanId: string;
   teamName: string;
+  ageGroup: string | null;
   registrationExpiry: string | null;
   registrationStatus: string | null;
   relationship: string | null;
@@ -34,6 +36,14 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+  // Billing group — see functions/lib/registration-merge.ts. A merged row shows
+  // its group's payment status, so these say why it reads as paid.
+  /** The registration this one is billed through — itself, unless merged. */
+  billingRegistrationId: string;
+  /** This registration's primary's team, when it is billed through another. */
+  billedWithTeamName: string | null;
+  /** The other teams this registration is billed for, when it is a primary. */
+  mergedTeamNames: string | null;
   // Manual override attribution — admin (club) rows only; never sent to players.
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
@@ -155,11 +165,22 @@ function SubscriptionBadge({ row, showManualMarker }: { row: RegistrationRow; sh
     </Badge>
   );
 
-  if (!showManualMarker || row.paymentStatus !== 'manual') return badge;
+  // Say where the status came from, or the row reads "Paid in full" with no
+  // payment behind it and someone chases a player who has already paid.
+  const withBillingNote = row.billedWithTeamName
+    ? (
+      <Stack gap={2}>
+        {badge}
+        <Text size="xs" c="dimmed">Billed with {row.billedWithTeamName}</Text>
+      </Stack>
+    )
+    : badge;
+
+  if (!showManualMarker || row.paymentStatus !== 'manual') return withBillingNote;
 
   return (
     <Group gap={4} wrap="nowrap" align="center">
-      {badge}
+      {withBillingNote}
       <Tooltip label={manualOverrideTooltip(row)} withArrow multiline w={260}>
         <IconUserCheck
           size={14}
@@ -169,6 +190,20 @@ function SubscriptionBadge({ row, showManualMarker }: { row: RegistrationRow; sh
         />
       </Tooltip>
     </Group>
+  );
+}
+
+/** Marks a registration whose payment also covers other teams. */
+function MergedTeamsBadge({ row }: { row: RegistrationRow }) {
+  if (!row.mergedTeamNames) return null;
+  const count = row.mergedTeamNames.split(',').length + 1;
+
+  return (
+    <Tooltip label={`One payment covering ${row.teamName}, ${row.mergedTeamNames}`} withArrow multiline w={260}>
+      <Badge size="xs" variant="light" color="indigo" radius="xl" styles={BADGE_STYLES}>
+        Billed for {count} teams
+      </Badge>
+    </Tooltip>
   );
 }
 
@@ -293,10 +328,40 @@ function ManualPaymentAction({ row, busyId, onMark, onUnmark }: ManualPaymentPro
     row.paymentStatus === 'pending'
   ) return null;
 
+  // The override belongs on the primary. The API resolves it either way; hiding
+  // the button keeps the group's one payment record in one place.
+  if (row.billedWithTeamName) return null;
+
   return (
     <Tooltip label="Record this player as paid outside GoCardless — cash, bank transfer, sponsored place" withArrow multiline w={240}>
       <Button size="xs" variant="subtle" color="green" loading={busy} onClick={() => onMark(row)}>
         Mark as paid
+      </Button>
+    </Tooltip>
+  );
+}
+
+interface MergeProps {
+  selectedIds: Set<string>;
+  onToggle: (registrationId: string) => void;
+  onUnmerge: (row: RegistrationRow) => void;
+  busyId: string | null;
+}
+
+/** Offered on a primary only — a group is dissolved as a whole, not per member. */
+function UnmergeAction({ row, onUnmerge, busyId }: MergeProps & { row: RegistrationRow }) {
+  if (!row.mergedTeamNames) return null;
+
+  return (
+    <Tooltip label="Bill each of these registrations separately again" withArrow multiline w={240}>
+      <Button
+        size="xs"
+        variant="subtle"
+        color="indigo"
+        loading={busyId === row.registrationId}
+        onClick={() => onUnmerge(row)}
+      >
+        Unmerge
       </Button>
     </Tooltip>
   );
@@ -313,9 +378,11 @@ interface TableProps {
     onChange: (row: RegistrationRow, levelId: string | null) => void;
   };
   manualPayment?: ManualPaymentProps;
+  /** Present only on the admin club tab; merging is an admin action. */
+  merge?: MergeProps;
 }
 
-function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLevels, manualPayment }: TableProps) {
+function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLevels, manualPayment, merge }: TableProps) {
   const [sort, setSort] = useState<SortState>({ key: 'teamName', dir: 'asc' });
   const sixthIsLinkedAccounts = sixthHeader === 'Linked accounts';
   const isMobile = useMediaQuery('(max-width: 768px)');
@@ -340,10 +407,21 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
           <Paper key={r.registrationId} withBorder radius="md" p="md">
             <Stack gap={6}>
               <Group justify="space-between" wrap="nowrap" align="flex-start">
-                <Stack gap={2}>
-                  <Text fw={700} size="sm">{r.teamName}</Text>
-                  <Text size="xs" c="dimmed" ff="monospace">{r.fanId}</Text>
-                </Stack>
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  {merge && (
+                    <Checkbox
+                      size="xs"
+                      mt={2}
+                      checked={merge.selectedIds.has(r.registrationId)}
+                      onChange={() => merge.onToggle(r.registrationId)}
+                      aria-label={`Select ${r.teamName} for merging`}
+                    />
+                  )}
+                  <Stack gap={2}>
+                    <Text fw={700} size="sm">{r.teamName}</Text>
+                    <Text size="xs" c="dimmed" ff="monospace">{r.fanId}</Text>
+                  </Stack>
+                </Group>
                 {canDelete && onDelete && (
                   <Tooltip label="Remove registration">
                     <ActionIcon
@@ -360,8 +438,12 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
               <Group gap={6} wrap="wrap">
                 <StatusBadge value={r.registrationStatus} />
                 <SubscriptionBadge row={r} showManualMarker={!!manualPayment} />
+                <MergedTeamsBadge row={r} />
               </Group>
-              {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
+              <Group gap="xs" wrap="wrap">
+                {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
+                {merge && <UnmergeAction row={r} {...merge} />}
+              </Group>
               <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
               {editableLevels && (
                 <Box>
@@ -389,13 +471,14 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
 
   const miw = (canDelete
     ? (editableLevels ? 1060 : 880)
-    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0);
+    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0) + (merge ? 140 : 0);
 
   return (
     <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
       <Table striped highlightOnHover fz="sm" miw={miw}>
         <Table.Thead>
           <Table.Tr>
+            {merge && <Table.Th aria-label="Select for merging" style={{ width: 1 }} />}
             <Table.Th><SortHeader label="FAN ID" sortKey="fanId" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Team" sortKey="teamName" {...headerProps} /></Table.Th>
             <Table.Th><SortHeader label="Expiry" sortKey="registrationExpiry" {...headerProps} /></Table.Th>
@@ -411,10 +494,25 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
         <Table.Tbody>
           {sortedRows.map(r => (
             <Table.Tr key={r.registrationId}>
+              {merge && (
+                <Table.Td style={{ width: 1 }}>
+                  <Checkbox
+                    size="xs"
+                    checked={merge.selectedIds.has(r.registrationId)}
+                    onChange={() => merge.onToggle(r.registrationId)}
+                    aria-label={`Select ${r.teamName} for merging`}
+                  />
+                </Table.Td>
+              )}
               <Table.Td>
                 <Text size="sm" ff="monospace">{r.fanId}</Text>
               </Table.Td>
-              <Table.Td><Text size="sm">{r.teamName}</Text></Table.Td>
+              <Table.Td>
+                <Group gap={6} wrap="nowrap">
+                  <Text size="sm">{r.teamName}</Text>
+                  <MergedTeamsBadge row={r} />
+                </Group>
+              </Table.Td>
               <Table.Td><Text size="sm">{r.registrationExpiry || '—'}</Text></Table.Td>
               <Table.Td><StatusBadge value={r.registrationStatus} /></Table.Td>
               {editableLevels && (
@@ -436,6 +534,7 @@ function RegistrationsTable({ rows, sixthHeader, canDelete, onDelete, editableLe
               {canDelete && onDelete && (
                 <Table.Td style={{ width: 1 }}>
                   <Group gap="xs" wrap="nowrap" justify="flex-end">
+                    {merge && <UnmergeAction row={r} {...merge} />}
                     {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
                     <Tooltip label="Remove registration">
                       <ActionIcon
@@ -585,10 +684,12 @@ function RegistrationsSummary({ rows }: { rows: RegistrationRow[] }) {
   return (
     <Box role="group" aria-label="Registrations summary">
       <StatTileRow
-        cols={5}
+        cols={6}
         items={[
           { value: summary.registrations, label: 'Registrations' },
           { value: summary.players, label: 'Players' },
+          // What the club charges for: a merged group counts once.
+          { value: summary.billableUnits, label: 'Billable units' },
           { value: summary.paying, label: 'Paying' },
           { value: summary.outstanding, label: 'Outstanding' },
           { value: summary.noLevel, label: 'No level assigned' },
@@ -612,6 +713,10 @@ function exportRegistrationsToXlsx(
     'Linked Accounts':   r.linkedAccounts ?? '',
     'Subscription Level': r.subscriptionLevelName ?? '',
     'Subscription Status': getSubscriptionStatus(r).label,
+    // Or a merged row exports as paid with nothing to explain why.
+    'Billed Via':        r.billedWithTeamName
+      ? `Billed with ${r.billedWithTeamName}`
+      : r.mergedTeamNames ? `Also covers ${r.mergedTeamNames}` : '',
     'Marked Paid By':    r.manualPaidBy ?? '',
     'Payment Link':      buildPaymentLink(origin, clubSlug, r.fanId),
   }));
@@ -625,6 +730,7 @@ function exportRegistrationsToXlsx(
     { wch: 38 }, // Linked Accounts
     { wch: 22 }, // Subscription Level
     { wch: 18 }, // Subscription Status
+    { wch: 32 }, // Billed Via
     { wch: 28 }, // Marked Paid By
     { wch: 60 }, // Payment Link
   ];
@@ -670,6 +776,12 @@ export function RegistrationsPage() {
   const [manualError, setManualError] = useState('');
   const [unmarkPaidError, setUnmarkPaidError] = useState('');
   const [lastImportedAt, setLastImportedAt] = useState<number | null>(null);
+  const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [mergePrimaryId, setMergePrimaryId] = useState<string | null>(null);
+  const [mergeBusyId, setMergeBusyId] = useState<string | null>(null);
+  const [mergeError, setMergeError] = useState('');
+  const [showOnlySuggested, setShowOnlySuggested] = useState(false);
 
   /** Reload the registrations and import timestamp for the active club. */
   const refresh = useCallback(async () => {
@@ -680,10 +792,12 @@ export function RegistrationsPage() {
         headers: { 'X-Club-Slug': clubSlug },
       });
       if (!res.ok) throw new Error('Failed to load registrations');
-      const data = await res.json() as Response;
-      setPersonal(data.personal);
-      setClub(data.club);
-      setScope(data.scope);
+      const data = await res.json() as Partial<Response>;
+      // Defaulted, not trusted: the page reads `personal.length` directly, so a
+      // missing field would white-screen the table rather than show an error.
+      setPersonal(data.personal ?? []);
+      setClub(data.club ?? null);
+      setScope(data.scope ?? 'user');
       setLastImportedAt(data.lastImportedAt ?? null);
     } catch (e) {
       captureError(e, { op: 'registrations.refresh' });
@@ -838,10 +952,121 @@ export function RegistrationsPage() {
     refresh();
   };
 
-  const filteredClub = useMemo(
-    () => (club ? applyClubFilters(club, filters) : null),
-    [club, filters],
+  // A hint only — same player and age group is wrong often enough that nothing
+  // is stored until an admin decides.
+  const suggestions = useMemo(() => suggestMerges(club ?? []), [club]);
+  const suggestedIds = useMemo(() => suggestedRegistrationIds(suggestions), [suggestions]);
+  const suggestedPlayerCount = useMemo(
+    () => new Set(suggestions.map(suggestion => suggestion.fanId)).size,
+    [suggestions],
   );
+
+  useEffect(() => {
+    if (suggestions.length === 0) setShowOnlySuggested(false);
+  }, [suggestions.length]);
+
+  const filteredClub = useMemo(() => {
+    if (!club) return null;
+    const rows = applyClubFilters(club, filters);
+    return showOnlySuggested && suggestions.length > 0
+      ? rows.filter(r => suggestedIds.has(r.registrationId))
+      : rows;
+  }, [club, filters, showOnlySuggested, suggestedIds, suggestions.length]);
+
+  /** The selected rows, in the table's own order, for the primary picker. */
+  const selectedRows = useMemo(
+    () => (club ?? []).filter(r => selectedForMerge.has(r.registrationId)),
+    [club, selectedForMerge],
+  );
+
+  /** Why the selection cannot merge, mirroring the API so the admin sees it before a 409. */
+  const mergeBlocker = useMemo((): string | null => {
+    if (selectedRows.length < 2) return 'Select two or more registrations to merge.';
+    if (new Set(selectedRows.map(r => r.fanId)).size > 1) {
+      return 'Registrations can only be merged for one player at a time.';
+    }
+    const alreadyMerged = selectedRows.find(r => r.billedWithTeamName || r.mergedTeamNames);
+    if (alreadyMerged) {
+      return `${alreadyMerged.teamName} is already part of a billing group. Unmerge it first.`;
+    }
+    return null;
+  }, [selectedRows]);
+
+  const toggleMergeSelection = useCallback((registrationId: string) => {
+    setMergeError('');
+    setSelectedForMerge(prev => {
+      const next = new Set(prev);
+      if (next.has(registrationId)) next.delete(registrationId);
+      else next.add(registrationId);
+      return next;
+    });
+  }, []);
+
+  const openMergeModal = () => {
+    // Level first, then paid, then whatever is first — the primary prices the
+    // group, so one without a level would render a dead card.
+    const preferred =
+      selectedRows.find(r => r.subscriptionLevelId && r.paymentStatus)
+      ?? selectedRows.find(r => r.subscriptionLevelId)
+      ?? selectedRows[0];
+    setMergePrimaryId(preferred?.registrationId ?? null);
+    setMergeError('');
+    setMergeModalOpen(true);
+  };
+
+  const handleConfirmMerge = async () => {
+    if (!mergePrimaryId || selectedRows.length < 2) return;
+    setMergeBusyId(mergePrimaryId);
+    setMergeError('');
+    try {
+      const res = await fetch('/api/admin/registration-merges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          primaryRegistrationId: mergePrimaryId,
+          registrationIds: selectedRows.map(r => r.registrationId),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to merge registrations');
+      }
+      captureEvent('registrations merged', {
+        club_slug: clubSlug,
+        group_size: selectedRows.length,
+      });
+      setMergeModalOpen(false);
+      setSelectedForMerge(new Set());
+      // Refresh, not patch: the server owns the grouping and the whole group's
+      // payment status moves with it.
+      await refresh();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : 'Failed to merge registrations');
+    } finally {
+      setMergeBusyId(null);
+    }
+  };
+
+  const handleUnmerge = async (row: RegistrationRow) => {
+    setMergeBusyId(row.registrationId);
+    setMergeError('');
+    try {
+      const res = await fetch(
+        `/api/admin/registration-merges?primaryRegistrationId=${encodeURIComponent(row.registrationId)}`,
+        { method: 'DELETE', headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to unmerge registrations');
+      }
+      captureEvent('registrations unmerged', { club_slug: clubSlug });
+      await refresh();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : 'Failed to unmerge registrations');
+    } finally {
+      setMergeBusyId(null);
+    }
+  };
 
   const filtersActive = filters.team !== ALL || filters.status !== ALL || filters.subscription !== ALL;
 
@@ -937,8 +1162,63 @@ export function RegistrationsPage() {
           </Button>
         </Group>
       </Group>
+      {selectedForMerge.size > 0 && (
+        <Group
+          justify="space-between"
+          wrap="wrap"
+          gap="xs"
+          p="xs"
+          style={{
+            background: 'var(--mantine-color-indigo-0)',
+            borderRadius: 'var(--mantine-radius-md)',
+          }}
+        >
+          <Text size="sm">
+            {selectedForMerge.size} selected
+            {mergeBlocker && <Text span size="sm" c="dimmed"> — {mergeBlocker}</Text>}
+          </Text>
+          <Group gap="xs">
+            <Button size="xs" variant="subtle" onClick={() => setSelectedForMerge(new Set())}>
+              Clear
+            </Button>
+            <Button
+              size="xs"
+              radius="xl"
+              leftSection={<IconArrowsJoin size={16} />}
+              disabled={mergeBlocker !== null}
+              onClick={openMergeModal}
+            >
+              Merge registrations
+            </Button>
+          </Group>
+        </Group>
+      )}
+      {suggestions.length > 0 && (
+        <Alert color="indigo" variant="light" icon={<IconArrowsJoin size={18} />}>
+          <Group justify="space-between" wrap="wrap" gap="xs">
+            <Text size="sm">
+              {suggestedPlayerCount === 1
+                ? '1 player has registrations in the same age group that are billed separately.'
+                : `${suggestedPlayerCount} players have registrations in the same age group that are billed separately.`}
+              {' '}
+              <Text span size="sm" c="dimmed">
+                They may be one set of subs — or genuinely separate. Only you can tell.
+              </Text>
+            </Text>
+            <Button
+              size="xs"
+              variant={showOnlySuggested ? 'filled' : 'light'}
+              radius="xl"
+              onClick={() => setShowOnlySuggested(v => !v)}
+            >
+              {showOnlySuggested ? 'Show all' : 'Review them'}
+            </Button>
+          </Group>
+        </Alert>
+      )}
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
       {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
+      {mergeError && <Alert color="red" variant="light">{mergeError}</Alert>}
       {/* Same rows as the Export button; zeroes when a filter matches nothing. */}
       {club.length > 0 && <RegistrationsSummary rows={filteredClub ?? club} />}
       {club.length === 0 ? (
@@ -955,6 +1235,12 @@ export function RegistrationsPage() {
             levels,
             updatingId: updatingLevelId,
             onChange: handleLevelChange,
+          }}
+          merge={{
+            selectedIds: selectedForMerge,
+            onToggle: toggleMergeSelection,
+            onUnmerge: handleUnmerge,
+            busyId: mergeBusyId,
           }}
           manualPayment={{
             busyId: manualBusyId,
@@ -1093,6 +1379,15 @@ export function RegistrationsPage() {
               <strong>{pendingDelete.teamName}</strong>? This deletes the registration
               and any linked payment records and cannot be undone.
             </Text>
+            {pendingDelete.mergedTeamNames && (
+              <Alert color="orange" variant="light">
+                This registration is what{' '}
+                <strong>{pendingDelete.mergedTeamNames}</strong> {' '}
+                {pendingDelete.mergedTeamNames.includes(',') ? 'are' : 'is'} billed
+                through. Removing it takes the group&rsquo;s payment record with it and
+                leaves them unpaid — unmerge first.
+              </Alert>
+            )}
             <Group justify="flex-end">
               <Button variant="default" radius="xl" onClick={closeDeleteModal} disabled={deleting}>
                 Cancel
@@ -1103,6 +1398,64 @@ export function RegistrationsPage() {
             </Group>
           </Stack>
         )}
+      </Modal>
+
+      <Modal
+        opened={mergeModalOpen}
+        onClose={() => { if (!mergeBusyId) setMergeModalOpen(false); }}
+        title="Merge registrations"
+        size="md"
+        centered
+      >
+        <Stack>
+          {mergeError && <Alert color="red" variant="light">{mergeError}</Alert>}
+          <Text size="sm">
+            These registrations will be billed as one payment. Choose which one the
+            payment hangs off — its subscription level prices the whole group, and its
+            team name is what appears on the Direct Debit.
+          </Text>
+          <Radio.Group value={mergePrimaryId ?? ''} onChange={setMergePrimaryId}>
+            <Stack gap="xs">
+              {selectedRows.map(r => (
+                <Radio
+                  key={r.registrationId}
+                  value={r.registrationId}
+                  label={
+                    <Box>
+                      <Text size="sm" fw={600}>{r.teamName}</Text>
+                      <Text size="xs" c={r.subscriptionLevelName ? 'dimmed' : 'orange'}>
+                        {r.subscriptionLevelName ?? 'No subscription level assigned'}
+                        {r.paymentStatus && ` · ${getSubscriptionStatus(r).label}`}
+                      </Text>
+                    </Box>
+                  }
+                />
+              ))}
+            </Stack>
+          </Radio.Group>
+          <Text size="xs" c="dimmed">
+            The other registrations keep their own level on record; it just stops being
+            charged. You can unmerge at any time before a payment is set up.
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              onClick={() => setMergeModalOpen(false)}
+              disabled={mergeBusyId !== null}
+            >
+              Cancel
+            </Button>
+            <Button
+              radius="xl"
+              onClick={handleConfirmMerge}
+              loading={mergeBusyId !== null}
+              disabled={!mergePrimaryId}
+            >
+              Merge
+            </Button>
+          </Group>
+        </Stack>
       </Modal>
     </Stack>
   );
