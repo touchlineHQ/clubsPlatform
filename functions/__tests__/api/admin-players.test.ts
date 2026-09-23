@@ -7,6 +7,7 @@ const mockCaptureImmediate = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
   hashPwd: vi.fn(async () => 'pbkdf2$fakehash'),
+  hashSeededPwd: vi.fn(async () => 'pbkdf2-seed$fakehash'),
 }));
 vi.mock('../../lib/posthog', () => ({
   getPostHog: mockGetPostHog,
@@ -196,8 +197,8 @@ describe('player-payments PATCH', () => {
 
 // ─── import-players.ts ────────────────────────────────────────────────────────
 
-import { onRequestPost as importPlayersPost } from '../../api/admin/import-players';
-import { hashPwd } from '../../lib/auth';
+import { onRequestPost as importPlayersPost, IMPORT_LIMITS } from '../../api/admin/import-players';
+import { hashSeededPwd } from '../../lib/auth';
 
 describe('import-players POST', () => {
   beforeEach(() => {
@@ -632,6 +633,134 @@ describe('import-players POST — counters and the import stamp', () => {
 
 // ─── import-players.ts: chunked writes ────────────────────────────────────────
 
+describe('import-players POST — an address-heavy write is refused', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** Few rows, but every address on them is an account to seed. */
+  const addressHeavy = (rows: number, per: number) =>
+    Array.from({ length: rows }, (_, i) => row({
+      fanId: `FAN${i}`,
+      parentEmails: Array.from({ length: per }, (_, j) => `p${i}-${j}@example.com`),
+    }));
+
+  it('refuses a batch inside the row limit but over the address limit', async () => {
+    // Rows are a poor proxy for cost: this is well under maxCommitRows and still
+    // more accounts than a request can seed inside the CPU budget.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, addressHeavy(10, IMPORT_LIMITS.maxParentEmails), false);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/email addresses/i);
+    expect(writes(db)).toEqual([]);
+    expect(hashSeededPwd).not.toHaveBeenCalled();
+  });
+
+  it('allows the same rows once they are inside the address limit', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, addressHeavy(4, IMPORT_LIMITS.maxParentEmails), false);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('counts an address shared between siblings once', async () => {
+    // One parent on every row would otherwise close a batch far too early.
+    const rows = Array.from({ length: IMPORT_LIMITS.maxCommitRows }, (_, i) =>
+      row({ fanId: `FAN${i}`, parentEmails: ['one@example.com'] }));
+    const { res } = await runImport(dbHolding([]), rows, false);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('lets a whole-file dry run through however many addresses it carries', async () => {
+    const { res } = await runImport(dbHolding([]), addressHeavy(10, IMPORT_LIMITS.maxParentEmails), true);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('import-players POST — a full batch fits the subrequest budget', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** Workers Free allows this many subrequests to internal services per request. */
+  const SUBREQUEST_LIMIT = 1_000;
+
+  it('stays well inside it at the worst email density the row limits allow', async () => {
+    // What sets maxCommitRows. A row may carry a player address plus
+    // maxParentEmails, and each address is an account, an account row and a
+    // link — so the worst case costs about four times a typical row.
+    const rows = Array.from({ length: IMPORT_LIMITS.maxCommitRows }, (_, i) => row({
+      fanId: `FAN${i}`,
+      playerEmail: `player${i}@example.com`,
+      parentEmails: Array.from(
+        { length: IMPORT_LIMITS.maxParentEmails },
+        (_, j) => `parent${i}-${j}@example.com`,
+      ),
+    }));
+    const db = makeDb({ all: [[], []], first: null, run: { meta: { changes: 1 } } });
+    await runImport(db, rows, false, { index: 0, total: 9 });
+
+    const calls = (db.prepare as Mock).mock.calls.length;
+    // Two thirds of the limit, so tuning the batch size up has to stay honest.
+    expect(calls).toBeLessThan(SUBREQUEST_LIMIT * 2 / 3);
+  });
+});
+
+describe('import-players POST — an unchunked commit is refused', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** A file bigger than one batch, as an out-of-date page would send it. */
+  const wholeFile = Array.from(
+    { length: IMPORT_LIMITS.maxCommitRows + 1 },
+    (_, i) => row({ fanId: `FAN${i}` }),
+  );
+
+  it('refuses a whole-file write and writes nothing', async () => {
+    // This is the path that was killing the Worker: ~49ms of PBKDF2 per new
+    // account, a club's worth in one request. Failing here costs one round trip.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, wholeFile, false);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/out of date/i);
+    expect(writes(db)).toEqual([]);
+    expect(hashSeededPwd).not.toHaveBeenCalled();
+  });
+
+  it('refuses it whether or not the page claims to be sending a part', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, wholeFile, false, { index: 0, total: 1 });
+
+    expect(res.status).toBe(400);
+    expect(writes(db)).toEqual([]);
+  });
+
+  it('still allows a whole-file dry run, which hashes nothing', async () => {
+    // The preview is how the admin sees counts and the stale list, so it has to
+    // take the whole file. It returns before any password is seeded.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, wholeFile, true);
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(hashSeededPwd).not.toHaveBeenCalled();
+  });
+
+  it('allows a commit that is within one batch', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, wholeFile.slice(0, IMPORT_LIMITS.maxCommitRows), false);
+
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('import-players POST — chunked writes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -759,7 +888,54 @@ describe('import-players POST — chunked writes', () => {
       false,
     );
 
-    expect(hashPwd).toHaveBeenCalledTimes(1);
+    expect(hashSeededPwd).toHaveBeenCalledTimes(1);
+  });
+
+  /** A later part: the run row, then no player matches. */
+  const laterPartDb = (users: unknown[], runStartedAt = 1000) => makeDb({
+    all: [[], users],
+    first: [{ createdAt: runStartedAt }, null],
+    run: { meta: { changes: 1 } },
+  });
+
+  it('counts an account an earlier part made as neither created nor already-existing', async () => {
+    // One parent, two children either side of a batch boundary. The parts are
+    // summed by the client, so counting this as "already existed" reported one
+    // person as both created and pre-existing.
+    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]);
+    const { body } = await runImport(
+      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+    );
+
+    expect(body.users).toEqual({ created: 0, skipped: 0 });
+  });
+
+  it('still counts an account that predates the run as already-existing', async () => {
+    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 500 }]);
+    const { body } = await runImport(
+      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+    );
+
+    expect(body.users).toEqual({ created: 0, skipped: 1 });
+  });
+
+  it('sums across a batch boundary to one parent, counted once', async () => {
+    // The whole point: two batches either side of a boundary, one person, and
+    // the client adds the parts up.
+    const first = await runImport(
+      makeDb({ all: [[], []], first: null, run: { meta: { changes: 1 } } }),
+      [row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] })], false, part(0, 3),
+    );
+    const second = await runImport(
+      laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]),
+      [row({ fanId: 'FAN002', parentEmails: ['parent@example.com'] })], false,
+      part(1, 3, 'imprun_test'),
+    );
+
+    expect({
+      created: first.body.users.created + second.body.users.created,
+      skipped: first.body.users.skipped + second.body.users.skipped,
+    }).toEqual({ created: 1, skipped: 0 });
   });
 
   it('pays no hash for a chunk whose accounts already exist', async () => {
@@ -771,7 +947,7 @@ describe('import-players POST — chunked writes', () => {
     });
     await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'));
 
-    expect(hashPwd).not.toHaveBeenCalled();
+    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('looks accounts up in one query rather than one per email', async () => {

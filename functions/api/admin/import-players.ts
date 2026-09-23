@@ -1,5 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
-import { hashPwd } from "../../lib/auth";
+import { hashSeededPwd } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import { normaliseTeamName } from "../../lib/team-name";
@@ -35,6 +35,32 @@ interface ImportResult {
 
 export const IMPORT_LIMITS = {
   maxRows: 5000,
+  /**
+   * Rows one write request may carry.
+   *
+   * Cloudflare counts every D1 round trip as a subrequest, and the Workers Free
+   * plan allows 1,000 to internal services per request. A row costs 9.2 of them
+   * on typical data, so 15 is ~140 — a wide margin, and a sane step for the
+   * progress the admin sees.
+   *
+   * The client batches to this; the server refuses more, so an out-of-date page
+   * fails with a message instead of a killed Worker. A dry run is exempt: it
+   * writes nothing, and only a whole-file pass can find stale registrations.
+   */
+  maxCommitRows: 15,
+  /**
+   * Distinct addresses one write request may carry, which is the real cost.
+   *
+   * Rows are a poor proxy: a row carries one address typically and up to
+   * maxParentEmails + 1, and each address is an account to seed, two inserts and
+   * a link. Fifteen rows is 30 addresses on real data but 165 at the worst these
+   * limits allow — 17ms, past Free's 10ms budget however few the rows.
+   *
+   * 45 costs ~5ms with the seeded hash at 0.1ms (SEEDED_ROUNDS, lib/auth.ts), so
+   * a batch fits whatever its shape: typical data batches on rows, address-heavy
+   * data batches sooner.
+   */
+  maxCommitEmails: 45,
   maxStringLen: 200,
   maxParentEmails: 10,
 } as const;
@@ -100,12 +126,12 @@ interface UserPlan {
 /**
  * One slice of a chunked import.
  *
- * Seeding a new user's password costs ~47ms of CPU (lib/auth.ts hashes the FAN
- * with PBKDF2 at 100k iterations), and Cloudflare bills that against a per-request
- * CPU limit — so a whole-club import in one request runs out of CPU part-way
- * through and leaves the club half-imported. The client sends slices instead.
+ * A whole-club import in one request exhausts the Worker's per-request budget
+ * and leaves the club half-imported, so the client sends slices. Seeding the
+ * accounts was the bulk of it until lazy hashing (SEEDED_ROUNDS in lib/auth.ts);
+ * what remains is the D1 round trips, which are subrequests.
  *
- * Absent means an unchunked import, which behaves exactly as it always did.
+ * Absent means an unchunked import, which maxCommitRows keeps small.
  */
 interface ImportPart {
   index: number;
@@ -213,12 +239,39 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
       return json({ error: "dryRun must be a boolean" }, { status: 400 });
     }
+    if (body.dryRun !== true && body.rows.length > IMPORT_LIMITS.maxCommitRows) {
+      return json(
+        {
+          error: `This page is out of date: it sent all ${body.rows.length} rows at once `
+            + `instead of in batches of ${IMPORT_LIMITS.maxCommitRows}. Reload and import again.`,
+        },
+        { status: 400 },
+      );
+    }
     const partError = validatePart(body.part);
     if (partError) return json({ error: partError }, { status: 400 });
     for (let i = 0; i < body.rows.length; i++) {
       const err = validateImportRow(body.rows[i]);
       if (err) {
         return json({ error: `Row ${i}: ${err}` }, { status: 400 });
+      }
+    }
+    if (body.dryRun !== true) {
+      const distinct = new Set<string>();
+      for (const r of body.rows as ParsedPlayerRow[]) {
+        for (const raw of [r.playerEmail, ...(r.parentEmails ?? [])]) {
+          const email = String(raw ?? '').trim().toLowerCase();
+          if (email) distinct.add(email);
+        }
+      }
+      if (distinct.size > IMPORT_LIMITS.maxCommitEmails) {
+        return json(
+          {
+            error: `This page is out of date: it sent ${distinct.size} email addresses at once `
+              + `instead of batching to ${IMPORT_LIMITS.maxCommitEmails}. Reload and import again.`,
+          },
+          { status: 400 },
+        );
       }
     }
     rows = body.rows as ParsedPlayerRow[];
@@ -231,15 +284,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const db = context.env.DB;
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   let importRunId: string | null = null;
+  /** When this run began; accounts at least this old are an earlier part's. */
+  let runStartedAt: number | null = null;
 
   // Claim the part before doing any import work. A later part can advance only
   // after every preceding claim has produced its immutable part record.
   if (!dryRun && part) {
     if (part.index === 0) {
       importRunId = randomId("imprun");
+      runStartedAt = nowMs();
       await db
         .prepare(`INSERT INTO "player_import_run" (id, clubSlug, adminId, totalParts, nextPart, createdAt) VALUES (?, ?, ?, ?, 1, ?)`)
-        .bind(importRunId, clubSlug, adminId, part.total, nowMs())
+        .bind(importRunId, clubSlug, adminId, part.total, runStartedAt)
         .run();
     } else {
       importRunId = part.runId!;
@@ -259,6 +315,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           { status: 409 },
         );
       }
+      const run = await db
+        .prepare(`SELECT createdAt FROM "player_import_run" WHERE id = ? AND clubSlug = ?`)
+        .bind(importRunId, clubSlug)
+        .first<{ createdAt: number }>();
+      runStartedAt = run?.createdAt ?? null;
     }
   }
 
@@ -407,17 +468,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // ── 5. Plan users (reads only) ───────────────────────────────────────────
   // One query per 90 emails rather than one per email: a 300-row file carries
   // hundreds of addresses, and that was hundreds of sequential round trips.
-  const existingUserIdByEmail = new Map<string, string>();
+  const existingUserByEmail = new Map<string, { id: string; createdAt: number }>();
   const emails = [...emailRelMap.keys()];
   for (const slice of inSlices(emails)) {
     try {
       const { results } = await db
         .prepare(
-          `SELECT id, email FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
+          `SELECT id, email, createdAt FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
         )
         .bind(...slice)
-        .all<{ id: string; email: string }>();
-      for (const row of results) existingUserIdByEmail.set(row.email, row.id);
+        .all<{ id: string; email: string; createdAt: number }>();
+      for (const row of results) {
+        existingUserByEmail.set(row.email, { id: row.id, createdAt: row.createdAt });
+      }
     } catch (err) {
       for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
     }
@@ -425,10 +488,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const userPlans: UserPlan[] = [];
   for (const [email, fanMap] of emailRelMap) {
-    const existingUserId = existingUserIdByEmail.get(email) ?? null;
+    const existing = existingUserByEmail.get(email) ?? null;
+    const existingUserId = existing?.id ?? null;
 
-    if (existingUserId) importResult.users.skipped++;
-    else importResult.users.created++;
+    // An account an earlier part of this run created counts as neither: the
+    // client sums the parts, so calling it "already existed" here would report
+    // one parent of two children as both created and pre-existing.
+    const madeByThisRun =
+      existing !== null && runStartedAt !== null && existing.createdAt >= runStartedAt;
+
+    if (!existing) importResult.users.created++;
+    else if (!madeByThisRun) importResult.users.skipped++;
 
     userPlans.push({
       email,
@@ -548,9 +618,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
       if (!userId) {
         userId = plan.newUserId;
+        // Seeded, not full strength: see SEEDED_ROUNDS in lib/auth.ts. The
+        // member's first sign-in re-hashes it properly.
         const hashedPassword = plan.passwordFan
-          ? await hashPwd(plan.passwordFan)
-          : await hashPwd(crypto.randomUUID());
+          ? await hashSeededPwd(plan.passwordFan)
+          : await hashSeededPwd(crypto.randomUUID());
 
         await db
           .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
