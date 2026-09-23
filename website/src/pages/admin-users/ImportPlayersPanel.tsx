@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Alert, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Table, Text, Title,
@@ -12,14 +12,55 @@ import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../
 /**
  * Rows per write request.
  *
- * A row costs about nine D1 round trips server-side, and Cloudflare counts each
- * as a subrequest against a per-request limit — sending a whole club at once is
- * what left clubs half-imported. Seeding accounts used to dominate too, until
- * lazy hashing (functions/lib/auth.ts).
+ * A row costs up to 36 D1 round trips server-side, and Cloudflare counts each as
+ * a subrequest against a per-request limit — 1,000 on the Free plan, which is
+ * what sets this. Sending a whole club at once is what left clubs half-imported.
  *
  * IMPORT_LIMITS.maxCommitRows mirrors this; the server refuses a larger write.
  */
-const IMPORT_CHUNK_ROWS = 25;
+export const IMPORT_CHUNK_ROWS = 15;
+
+/**
+ * Distinct addresses per write request — the limit that actually binds.
+ *
+ * Each address is an account the server seeds, and 15 rows is 30 of them on real
+ * data but 165 on a file carrying the maximum parent addresses on every row,
+ * which overruns the CPU budget however few the rows. Batching on both means a
+ * request fits whatever shape the file is.
+ *
+ * IMPORT_LIMITS.maxCommitEmails mirrors this; the server refuses a larger write.
+ */
+export const IMPORT_CHUNK_EMAILS = 45;
+
+/** Every address a row introduces, as the server counts them. */
+function emailsOf(row: ParsedPlayerRow): string[] {
+  return [row.playerEmail, ...(row.parentEmails ?? [])]
+    .map(e => String(e ?? '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** Split rows into requests that respect both limits. A row never exceeds either. */
+export function batchRows(rows: ParsedPlayerRow[]): ParsedPlayerRow[][] {
+  const batches: ParsedPlayerRow[][] = [];
+  let current: ParsedPlayerRow[] = [];
+  let emails = new Set<string>();
+
+  for (const row of rows) {
+    const next = new Set([...emails, ...emailsOf(row)]);
+    if (current.length > 0
+      && (current.length >= IMPORT_CHUNK_ROWS || next.size > IMPORT_CHUNK_EMAILS)) {
+      batches.push(current);
+      current = [];
+      emails = new Set(emailsOf(row));
+    } else {
+      emails = next;
+    }
+    current.push(row);
+  }
+
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
 
 /** A registration the club holds that the uploaded file no longer mentions. */
 interface StaleRegistration {
@@ -101,6 +142,8 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
   const [importedSoFar, setImportedSoFar] = useState(0);
+  /** Batches are uneven — an address-heavy row can close one early. */
+  const batches = useMemo(() => (rows ? batchRows(rows) : []), [rows]);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [apiError, setApiError] = useState('');
   const [preview, setPreview] = useState<ImportResult | null>(null);
@@ -193,10 +236,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     setApiError('');
     setImportedSoFar(0);
 
-    const chunks: ParsedPlayerRow[][] = [];
-    for (let i = 0; i < rows.length; i += IMPORT_CHUNK_ROWS) {
-      chunks.push(rows.slice(i, i + IMPORT_CHUNK_ROWS));
-    }
+    const chunks = batches;
 
     // Start from the preview's stale list: a chunk covers only its own teams, so
     // the server cannot compute staleness from one and does not try.
@@ -241,7 +281,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
         totals.users.skipped += data.users.skipped;
         totals.errors.push(...data.errors);
 
-        setImportedSoFar(Math.min((index + 1) * IMPORT_CHUNK_ROWS, rows.length));
+        setImportedSoFar(chunks.slice(0, index + 1).reduce((n, c) => n + c.length, 0));
       }
 
       setResult(totals);
@@ -374,11 +414,11 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               loading={importing}
               disabled={importing || previewing || !preview}
             >
-              {importing && rows.length > IMPORT_CHUNK_ROWS
+              {importing && batches.length > 1
                 ? `Importing ${importedSoFar} of ${rows.length}…`
                 : `Import ${rows.length} player${rows.length !== 1 ? 's' : ''}`}
             </Button>
-            {importing && rows.length > IMPORT_CHUNK_ROWS && (
+            {importing && batches.length > 1 && (
               <Text size="xs" c="dimmed" mt={6}>
                 Sent in batches so the import does not time out. Leave this page open.
               </Text>

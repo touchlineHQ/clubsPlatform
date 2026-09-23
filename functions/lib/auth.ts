@@ -14,8 +14,13 @@ const FULL_ROUNDS = 100_000;
  * importing a club. The first successful sign-in re-hashes at full strength
  * (see createAuth), and a password its owner picked is full strength from the
  * start.
+ *
+ * One, because the Workers Free plan allows 10ms of CPU per request: a batch of
+ * new accounts at 1,000 rounds costs 0.33ms each and overruns it. At one round
+ * this is a salted HMAC-SHA256, ~0.11ms, most of that the key import rather than
+ * the derivation. On a paid plan there is room to raise it.
  */
-const SEEDED_ROUNDS = 1_000;
+const SEEDED_ROUNDS = 1;
 
 const FULL_PREFIX = 'pbkdf2$';
 const SEEDED_PREFIX = 'pbkdf2-seed$';

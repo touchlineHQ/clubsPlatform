@@ -197,7 +197,7 @@ describe('player-payments PATCH', () => {
 
 // ─── import-players.ts ────────────────────────────────────────────────────────
 
-import { onRequestPost as importPlayersPost } from '../../api/admin/import-players';
+import { onRequestPost as importPlayersPost, IMPORT_LIMITS } from '../../api/admin/import-players';
 import { hashSeededPwd } from '../../lib/auth';
 
 describe('import-players POST', () => {
@@ -633,6 +633,83 @@ describe('import-players POST — counters and the import stamp', () => {
 
 // ─── import-players.ts: chunked writes ────────────────────────────────────────
 
+describe('import-players POST — an address-heavy write is refused', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** Few rows, but every address on them is an account to seed. */
+  const addressHeavy = (rows: number, per: number) =>
+    Array.from({ length: rows }, (_, i) => row({
+      fanId: `FAN${i}`,
+      parentEmails: Array.from({ length: per }, (_, j) => `p${i}-${j}@example.com`),
+    }));
+
+  it('refuses a batch inside the row limit but over the address limit', async () => {
+    // Rows are a poor proxy for cost: this is well under maxCommitRows and still
+    // more accounts than a request can seed inside the CPU budget.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, addressHeavy(10, IMPORT_LIMITS.maxParentEmails), false);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/email addresses/i);
+    expect(writes(db)).toEqual([]);
+    expect(hashSeededPwd).not.toHaveBeenCalled();
+  });
+
+  it('allows the same rows once they are inside the address limit', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, addressHeavy(4, IMPORT_LIMITS.maxParentEmails), false);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('counts an address shared between siblings once', async () => {
+    // One parent on every row would otherwise close a batch far too early.
+    const rows = Array.from({ length: IMPORT_LIMITS.maxCommitRows }, (_, i) =>
+      row({ fanId: `FAN${i}`, parentEmails: ['one@example.com'] }));
+    const { res } = await runImport(dbHolding([]), rows, false);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('lets a whole-file dry run through however many addresses it carries', async () => {
+    const { res } = await runImport(dbHolding([]), addressHeavy(10, IMPORT_LIMITS.maxParentEmails), true);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('import-players POST — a full batch fits the subrequest budget', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** Workers Free allows this many subrequests to internal services per request. */
+  const SUBREQUEST_LIMIT = 1_000;
+
+  it('stays well inside it at the worst email density the row limits allow', async () => {
+    // What sets maxCommitRows. A row may carry a player address plus
+    // maxParentEmails, and each address is an account, an account row and a
+    // link — so the worst case costs about four times a typical row.
+    const rows = Array.from({ length: IMPORT_LIMITS.maxCommitRows }, (_, i) => row({
+      fanId: `FAN${i}`,
+      playerEmail: `player${i}@example.com`,
+      parentEmails: Array.from(
+        { length: IMPORT_LIMITS.maxParentEmails },
+        (_, j) => `parent${i}-${j}@example.com`,
+      ),
+    }));
+    const db = makeDb({ all: [[], []], first: null, run: { meta: { changes: 1 } } });
+    await runImport(db, rows, false, { index: 0, total: 9 });
+
+    const calls = (db.prepare as Mock).mock.calls.length;
+    // Two thirds of the limit, so tuning the batch size up has to stay honest.
+    expect(calls).toBeLessThan(SUBREQUEST_LIMIT * 2 / 3);
+  });
+});
+
 describe('import-players POST — an unchunked commit is refused', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -640,7 +717,10 @@ describe('import-players POST — an unchunked commit is refused', () => {
   });
 
   /** A file bigger than one batch, as an out-of-date page would send it. */
-  const wholeFile = Array.from({ length: 26 }, (_, i) => row({ fanId: `FAN${i}` }));
+  const wholeFile = Array.from(
+    { length: IMPORT_LIMITS.maxCommitRows + 1 },
+    (_, i) => row({ fanId: `FAN${i}` }),
+  );
 
   it('refuses a whole-file write and writes nothing', async () => {
     // This is the path that was killing the Worker: ~49ms of PBKDF2 per new
@@ -675,7 +755,7 @@ describe('import-players POST — an unchunked commit is refused', () => {
 
   it('allows a commit that is within one batch', async () => {
     const db = dbHolding([]);
-    const { res } = await runImport(db, wholeFile.slice(0, 25), false);
+    const { res } = await runImport(db, wholeFile.slice(0, IMPORT_LIMITS.maxCommitRows), false);
 
     expect(res.status).toBe(200);
   });

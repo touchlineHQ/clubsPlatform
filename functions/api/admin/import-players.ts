@@ -38,14 +38,29 @@ export const IMPORT_LIMITS = {
   /**
    * Rows one write request may carry.
    *
-   * A row costs about nine D1 round trips and Cloudflare counts each one as a
-   * subrequest, so a whole club in a single request is roughly 13,700 against a
-   * 10,000 limit. The client batches to this; the server refuses more so an
-   * out-of-date page fails with a message instead of a killed Worker. A dry run
-   * is exempt: it writes nothing, and only a whole-file pass can find stale
-   * registrations.
+   * Cloudflare counts every D1 round trip as a subrequest, and the Workers Free
+   * plan allows 1,000 to internal services per request. A row costs 9.2 of them
+   * on typical data, so 15 is ~140 — a wide margin, and a sane step for the
+   * progress the admin sees.
+   *
+   * The client batches to this; the server refuses more, so an out-of-date page
+   * fails with a message instead of a killed Worker. A dry run is exempt: it
+   * writes nothing, and only a whole-file pass can find stale registrations.
    */
-  maxCommitRows: 25,
+  maxCommitRows: 15,
+  /**
+   * Distinct addresses one write request may carry, which is the real cost.
+   *
+   * Rows are a poor proxy: a row carries one address typically and up to
+   * maxParentEmails + 1, and each address is an account to seed, two inserts and
+   * a link. Fifteen rows is 30 addresses on real data but 165 at the worst these
+   * limits allow — 17ms, past Free's 10ms budget however few the rows.
+   *
+   * 45 costs ~5ms with the seeded hash at 0.1ms (SEEDED_ROUNDS, lib/auth.ts), so
+   * a batch fits whatever its shape: typical data batches on rows, address-heavy
+   * data batches sooner.
+   */
+  maxCommitEmails: 45,
   maxStringLen: 200,
   maxParentEmails: 10,
 } as const;
@@ -239,6 +254,24 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       const err = validateImportRow(body.rows[i]);
       if (err) {
         return json({ error: `Row ${i}: ${err}` }, { status: 400 });
+      }
+    }
+    if (body.dryRun !== true) {
+      const distinct = new Set<string>();
+      for (const r of body.rows as ParsedPlayerRow[]) {
+        for (const raw of [r.playerEmail, ...(r.parentEmails ?? [])]) {
+          const email = String(raw ?? '').trim().toLowerCase();
+          if (email) distinct.add(email);
+        }
+      }
+      if (distinct.size > IMPORT_LIMITS.maxCommitEmails) {
+        return json(
+          {
+            error: `This page is out of date: it sent ${distinct.size} email addresses at once `
+              + `instead of batching to ${IMPORT_LIMITS.maxCommitEmails}. Reload and import again.`,
+          },
+          { status: 400 },
+        );
       }
     }
     rows = body.rows as ParsedPlayerRow[];
