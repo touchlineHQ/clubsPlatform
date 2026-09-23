@@ -28,7 +28,7 @@ export interface DbConfig {
   /** Row returned by .first() — can be a value or a queue. */
   first?: unknown | unknown[];
   /** Meta returned by .run() */
-  run?: { meta?: { changes?: number } };
+  run?: { meta?: { changes?: number } } | { meta?: { changes?: number } }[];
   /** Results returned by .batch() */
   batch?: unknown[][];
 }
@@ -42,7 +42,11 @@ function dequeue<T>(store: T | T[]): () => T {
 export function makeDb(config: DbConfig = {}): Partial<D1Database> {
   const nextAll = dequeue(config.all ?? []);
   const nextFirst = dequeue(config.first ?? null);
-  const runMeta = config.run ?? { meta: { changes: 1 } };
+  const defaultRun = { meta: { changes: 1 } };
+  const nextRun = dequeue(config.run ?? defaultRun);
+  const batchRunMeta = Array.isArray(config.run)
+    ? (config.run[0] ?? defaultRun)
+    : (config.run ?? defaultRun);
   const batchResults = config.batch ?? [];
   let batchIdx = 0;
 
@@ -52,13 +56,13 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
       const boundObj = {
         all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
         first: vi.fn(async () => nextFirst()),
-        run: vi.fn(async () => ({ results: [], success: true, ...runMeta })),
+        run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
       };
       return {
         // Direct (no-bind) calls — forwards to the same queue
         all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
         first: vi.fn(async () => nextFirst()),
-        run: vi.fn(async () => ({ results: [], success: true, ...runMeta })),
+        run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
         bind: vi.fn(() => boundObj),
       };
     }) as unknown as D1Database['prepare'],
@@ -69,7 +73,7 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
       // batch guarded writes read meta.changes per statement.
       const results = configured
         ?? (Array.isArray(stmts) ? stmts.map(() => [] as unknown[]) : []);
-      return results.map((rows) => ({ results: rows, success: true, ...runMeta }));
+      return results.map((rows) => ({ results: rows, success: true, ...batchRunMeta }));
     }) as unknown as D1Database['batch'],
   };
 }

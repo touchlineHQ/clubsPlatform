@@ -57,6 +57,8 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "registration_merge" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "primaryRegistrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE RESTRICT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, CHECK ("registrationId" <> "primaryRegistrationId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_merge_primary" ON "registration_merge" ("primaryRegistrationId")`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_merge_clubSlug" ON "registration_merge" ("clubSlug")`,
+  `CREATE TABLE IF NOT EXISTS "registration_payment_state" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "generation" INTEGER NOT NULL DEFAULT 0, "claimId" TEXT NOT NULL DEFAULT '', "confirmationId" TEXT, "confirmationExpiresAt" INTEGER, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_registration_payment_state_clubSlug" ON "registration_payment_state" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "gc_webhook_event" ("id" TEXT PRIMARY KEY NOT NULL, "resourceType" TEXT NOT NULL, "action" TEXT NOT NULL, "mandateId" TEXT, "subscriptionId" TEXT, "paymentId" TEXT, "rawBody" TEXT NOT NULL, "receivedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_mandateId" ON "gc_webhook_event" ("mandateId")`,
   `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_subscriptionId" ON "gc_webhook_event" ("subscriptionId")`,

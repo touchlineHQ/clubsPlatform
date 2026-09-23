@@ -303,6 +303,13 @@ describe('GET /api/gocardless/confirm', () => {
     expect(res.status).toBe(302);
     const location = res.headers.get('location') ?? '';
     expect(location).toContain('/payment-success');
+    const preparedSql = (db.prepare as Mock).mock.calls.map(
+      (call: unknown[]) => String(call[0]),
+    );
+    expect(preparedSql.some(sql => sql.includes('INSERT INTO "registration_payment_state"')))
+      .toBe(true);
+    expect(preparedSql.some(sql => sql.includes('SET "confirmationId" = NULL')))
+      .toBe(true);
 
     vi.unstubAllGlobals();
   });
@@ -319,6 +326,55 @@ describe('GET /api/gocardless/confirm', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toContain('/payment-success');
 
+    vi.unstubAllGlobals();
+  });
+
+  it('does not fulfil a link invalidated by an unmerge claim', async () => {
+    const fetchMock = makeFetchMock({
+      brStatus: 'pending',
+      brMetadata: {
+        registration_id: 'reg_1',
+        registration_generation: '0',
+        reference: 'U11S-FAN001-SUBS',
+        payment_type: 'SUBS',
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const db = makeDb({ first: { ...defaultPricingRow, paymentGeneration: 1 } });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+
+    const res = await confirmOnRequestGet(
+      makeContext(new Request(makeConfirmUrl()), { env }) as any,
+    );
+
+    expect(res.headers.get('location')).toContain('registration_changed');
+    expect((fetchMock as Mock).mock.calls.some(
+      (call: unknown[]) => String(call[0]).includes('/actions/fulfil'),
+    )).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('cancels the subscription and mandate when the guarded payment write loses an unmerge race', async () => {
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+    const db = makeDb({
+      first: defaultPricingRow,
+      run: [
+        { meta: { changes: 1 } }, // confirmation claim
+        { meta: { changes: 0 } }, // guarded payment persistence
+        { meta: { changes: 1 } }, // claim release
+      ],
+    });
+    const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+
+    const res = await confirmOnRequestGet(
+      makeContext(new Request(makeConfirmUrl()), { env }) as any,
+    );
+
+    expect(res.headers.get('location')).toContain('persistence_failed');
+    const calledUrls = (fetchMock as Mock).mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(calledUrls).toContain('https://api-sandbox.gocardless.com/subscriptions/SUB-1/actions/cancel');
+    expect(calledUrls).toContain('https://api-sandbox.gocardless.com/mandates/MND-1/actions/cancel');
     vi.unstubAllGlobals();
   });
 
@@ -385,8 +441,9 @@ describe('GET /api/gocardless/confirm', () => {
         (c: unknown[]) => String(c[0]).includes('INSERT INTO "player_payment"'),
       );
       const binds = prepare.mock.results[upsertIdx].value.bind.mock.calls[0] ?? [];
-      expect(binds).toContain('reg_1');
-      expect(binds).not.toContain('reg_2');
+      expect(binds[2]).toBe('reg_1');
+      // The original id remains in the guard so an unmerge invalidates this write.
+      expect(binds).toContain('reg_2');
 
       vi.unstubAllGlobals();
     });

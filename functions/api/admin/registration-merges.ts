@@ -3,13 +3,18 @@ import {
   type Env,
   json,
   nowMs,
+  randomId,
   requireAdmin,
   getClubSlug,
 } from '../../lib/api-helpers';
 import { prepareAuditLog } from '../../lib/audit-log';
 import { getPostHog, clubGroups } from '../../lib/posthog';
 import { GC_BLOCKING_STATUSES } from '../../lib/payment-status';
-import { SUBSCRIPTION_LEVEL_ID_SQL, subscriptionLevelJoinSql } from '../../lib/registration-merge';
+import {
+  GROUP_MEMBER_IDS_SQL,
+  SUBSCRIPTION_LEVEL_ID_SQL,
+  subscriptionLevelJoinSql,
+} from '../../lib/registration-merge';
 
 /**
  * Merge registrations into one billing group — one payment, many registrations.
@@ -240,39 +245,83 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const now = nowMs();
 
-  // Conditional writes: two admins can form a chain from opposite ends, and a
-  // payment can land between the checks above and the write. Each guard is
-  // re-asserted here, with meta.changes reporting whether it held.
-  const statements = secondaryIds.map(secondaryId =>
-    context.env.DB
-      .prepare(
-        `INSERT INTO "registration_merge"
-           ("clubSlug", "registrationId", "primaryRegistrationId", "createdAt", "updatedAt")
-         SELECT ?, ?, ?, ?, ?
-          WHERE NOT EXISTS (
-                  SELECT 1 FROM "registration_merge" WHERE "registrationId" = ?
-                )
-            AND NOT EXISTS (
-                  SELECT 1 FROM "registration_merge" WHERE "primaryRegistrationId" = ?
-                )
-            AND NOT EXISTS (
-                  SELECT 1 FROM "player_payment"
-                   WHERE "registrationId" = ? AND "clubSlug" = ? AND "status" <> 'inactive'
-                )
-         ON CONFLICT("registrationId") DO UPDATE SET
-           "primaryRegistrationId" = excluded."primaryRegistrationId",
-           "updatedAt"             = excluded."updatedAt"`
-      )
-      .bind(
-        clubSlug, secondaryId, primaryId, now, now,
-        primaryId,      // the primary must not itself be a secondary
-        secondaryId,    // this member must not be some other group's primary
-        secondaryId, clubSlug,
-      ),
-  );
+  // One INSERT selects either every proposed member or none. The guarded audit
+  // deliberately violates its NOT NULL id when that invariant is false, which
+  // makes D1 roll the whole batch back instead of committing a partial group.
+  const proposedValues = secondaryIds.map(() => '(?)').join(', ');
+  const mergeStatement = context.env.DB
+    .prepare(
+      `WITH proposed("registrationId") AS (VALUES ${proposedValues})
+       INSERT INTO "registration_merge"
+         ("clubSlug", "registrationId", "primaryRegistrationId", "createdAt", "updatedAt")
+       SELECT ?, proposed."registrationId", ?, ?, ?
+         FROM proposed
+        WHERE NOT EXISTS (
+                SELECT 1 FROM "registration_merge" WHERE "registrationId" = ?
+              )
+          AND NOT EXISTS (
+                SELECT 1 FROM "registration_merge" rm
+                 WHERE rm."clubSlug" = ?
+                   AND rm."primaryRegistrationId" IN (SELECT "registrationId" FROM proposed)
+              )
+          AND NOT EXISTS (
+                SELECT 1 FROM "player_payment" pp
+                 WHERE pp."clubSlug" = ?
+                   AND pp."registrationId" IN (SELECT "registrationId" FROM proposed)
+                   AND pp."status" <> 'inactive'
+              )
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM "registration_merge" current_group
+                  JOIN "player_payment" pp
+                    ON pp."registrationId" = current_group."primaryRegistrationId"
+                   AND pp."clubSlug" = current_group."clubSlug"
+                 WHERE current_group."clubSlug" = ?
+                   AND current_group."registrationId" IN (
+                     SELECT "registrationId" FROM proposed
+                   )
+                   AND current_group."primaryRegistrationId" <> ?
+                   AND pp."status" <> 'inactive'
+              )
+       ON CONFLICT("registrationId") DO UPDATE SET
+         "primaryRegistrationId" = excluded."primaryRegistrationId",
+         "updatedAt"             = excluded."updatedAt"`,
+    )
+    .bind(
+      ...secondaryIds,
+      clubSlug, primaryId, now, now,
+      primaryId, clubSlug, clubSlug,
+      clubSlug, primaryId,
+    );
 
-  statements.push(
-    prepareAuditLog(context.env.DB, {
+  const secondaryPlaceholders = secondaryIds.map(() => '?').join(', ');
+  const auditGuardSql = `(
+    SELECT COUNT(*) FROM "registration_merge"
+     WHERE "clubSlug" = ?
+       AND "primaryRegistrationId" = ?
+       AND "updatedAt" = ?
+       AND "registrationId" IN (${secondaryPlaceholders})
+  ) = ?
+  AND NOT EXISTS (
+    SELECT 1 FROM "registration_merge" WHERE "registrationId" = ?
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "registration_merge"
+     WHERE "clubSlug" = ? AND "primaryRegistrationId" IN (${secondaryPlaceholders})
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM "player_payment"
+     WHERE "clubSlug" = ?
+       AND "registrationId" IN (${secondaryPlaceholders})
+       AND "status" <> 'inactive'
+  )`;
+  const auditGuardBindings = [
+    clubSlug, primaryId, now, ...secondaryIds, secondaryIds.length,
+    primaryId,
+    clubSlug, ...secondaryIds,
+    clubSlug, ...secondaryIds,
+  ];
+  const auditStatement = prepareAuditLog(context.env.DB, {
       clubSlug,
       adminId,
       action: 'registrations_merged',
@@ -280,34 +329,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       targetId: primaryId,
       newStatus: `primary:${primary.teamName}`,
       note: `Billed with: ${secondaries.map(s => s.teamName).join(', ')}`,
-    }),
-  );
+    }, { sql: auditGuardSql, bindings: auditGuardBindings });
 
-  const writes = await context.env.DB.batch(statements);
+  let writes: D1Result<unknown>[];
+  try {
+    writes = await context.env.DB.batch([mergeStatement, auditStatement]);
+  } catch (error) {
+    console.error('Registration merge transaction rejected', error);
+    return json(
+      { error: 'Another change landed while this merge was being saved. Reload and try again.' },
+      { status: 409 },
+    );
+  }
 
-  // A batch cannot abort mid-way, so a failed guard leaves the rest committed —
-  // roll those back rather than leave a half-formed group.
-  const merged = writes.slice(0, secondaryIds.length);
-  const failed = secondaryIds.filter((_, i) => (merged[i]?.meta?.changes ?? 0) === 0);
-
-  if (failed.length > 0) {
-    const written = secondaryIds.filter(id => !failed.includes(id));
-    if (written.length > 0) {
-      await context.env.DB
-        .prepare(
-          `DELETE FROM "registration_merge"
-            WHERE "clubSlug" = ?
-              AND "primaryRegistrationId" = ?
-              AND "registrationId" IN (${written.map(() => '?').join(',')})`
-        )
-        .bind(clubSlug, primaryId, ...written)
-        .run();
-    }
+  if ((writes[0]?.meta?.changes ?? 0) !== secondaryIds.length) {
     return json(
       {
         error: 'Another change landed while this merge was being saved. '
           + 'Reload the registrations and try again.',
-        conflictingRegistrationIds: failed,
+        conflictingRegistrationIds: secondaryIds,
       },
       { status: 409 },
     );
@@ -357,13 +397,13 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const livePayment = await context.env.DB
     .prepare(
       `SELECT status FROM "player_payment"
-        WHERE registrationId = ?
+        WHERE registrationId IN ${GROUP_MEMBER_IDS_SQL}
           AND clubSlug = ?
           AND status IN (${GC_BLOCKING_STATUSES.map(() => '?').join(',')})
           AND mandateId != ''
         LIMIT 1`
     )
-    .bind(primaryId, clubSlug, ...GC_BLOCKING_STATUSES)
+    .bind(primaryId, primaryId, clubSlug, ...GC_BLOCKING_STATUSES)
     .first<{ status: string }>();
 
   if (livePayment) {
@@ -391,14 +431,101 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     return json({ error: 'No merged registrations found for this primary' }, { status: 404 });
   }
 
-  await context.env.DB.batch([
-    context.env.DB
-      .prepare(
-        `DELETE FROM "registration_merge"
-          WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?`
-      )
-      .bind(primaryId, clubSlug),
-    prepareAuditLog(context.env.DB, {
+  const memberIds = [primaryId, ...members.results.map(member => member.registrationId)];
+  const mergedMemberIds = members.results.map(member => member.registrationId);
+  const candidateValues = memberIds.map(() => '(?)').join(', ');
+  const memberPlaceholders = memberIds.map(() => '?').join(', ');
+  const mergedMemberPlaceholders = mergedMemberIds.map(() => '?').join(', ');
+  const now = nowMs();
+  const claimId = randomId('unmerge');
+
+  const claimDeletion = context.env.DB
+    .prepare(
+      `WITH members("registrationId") AS (VALUES ${candidateValues})
+       INSERT INTO "registration_payment_state"
+         ("clubSlug", "registrationId", "generation", "claimId", "updatedAt")
+       SELECT ?, members."registrationId", 1, ?, ?
+         FROM members
+        WHERE NOT EXISTS (
+                SELECT 1 FROM "player_payment"
+                 WHERE "clubSlug" = ?
+                   AND "registrationId" IN (SELECT "registrationId" FROM members)
+                   AND "status" IN (${GC_BLOCKING_STATUSES.map(() => '?').join(', ')})
+                   AND "mandateId" != ''
+              )
+          AND NOT EXISTS (
+                SELECT 1 FROM "registration_payment_state"
+                 WHERE "clubSlug" = ?
+                   AND "registrationId" IN (SELECT "registrationId" FROM members)
+                   AND "confirmationId" IS NOT NULL
+                   AND "confirmationExpiresAt" > ?
+              )
+          AND (
+                SELECT COUNT(*) FROM "registration_merge"
+                 WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?
+              ) = ?
+          AND (
+                SELECT COUNT(*) FROM "registration_merge"
+                 WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?
+                   AND "registrationId" IN (${mergedMemberPlaceholders})
+              ) = ?
+       ON CONFLICT("registrationId") DO UPDATE SET
+         "generation" = "registration_payment_state"."generation" + 1,
+         "claimId" = excluded."claimId",
+         "confirmationId" = NULL,
+         "confirmationExpiresAt" = NULL,
+         "updatedAt" = excluded."updatedAt"`,
+    )
+    .bind(
+      ...memberIds,
+      clubSlug, claimId, now, clubSlug, ...GC_BLOCKING_STATUSES,
+      clubSlug, now,
+      primaryId, clubSlug, members.results.length,
+      primaryId, clubSlug, ...mergedMemberIds, members.results.length,
+    );
+
+  const deleteMappings = context.env.DB
+    .prepare(
+      `DELETE FROM "registration_merge"
+        WHERE "primaryRegistrationId" = ?
+          AND "clubSlug" = ?
+          AND "registrationId" IN (${mergedMemberPlaceholders})
+          AND (
+                SELECT COUNT(*) FROM "registration_payment_state"
+                 WHERE "clubSlug" = ? AND "claimId" = ?
+                   AND "registrationId" IN (${memberPlaceholders})
+              ) = ?
+          AND NOT EXISTS (
+                SELECT 1 FROM "player_payment"
+                 WHERE "clubSlug" = ?
+                   AND "registrationId" IN (${memberPlaceholders})
+                   AND "status" IN (${GC_BLOCKING_STATUSES.map(() => '?').join(', ')})
+                   AND "mandateId" != ''
+              )`
+    )
+    .bind(
+      primaryId, clubSlug, ...mergedMemberIds,
+      clubSlug, claimId, ...memberIds, memberIds.length,
+      clubSlug, ...memberIds, ...GC_BLOCKING_STATUSES,
+    );
+
+  const unmergeAuditGuard = `NOT EXISTS (
+    SELECT 1 FROM "registration_merge"
+     WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?
+  )
+  AND (
+    SELECT COUNT(*) FROM "registration_payment_state"
+     WHERE "clubSlug" = ? AND "claimId" = ?
+       AND "registrationId" IN (${memberPlaceholders})
+  ) = ?
+  AND NOT EXISTS (
+    SELECT 1 FROM "player_payment"
+     WHERE "clubSlug" = ?
+       AND "registrationId" IN (${memberPlaceholders})
+       AND "status" IN (${GC_BLOCKING_STATUSES.map(() => '?').join(', ')})
+       AND "mandateId" != ''
+  )`;
+  const unmergeAudit = prepareAuditLog(context.env.DB, {
       clubSlug,
       adminId,
       action: 'registrations_unmerged',
@@ -406,8 +533,35 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       targetId: primaryId,
       oldStatus: `primary:${primaryId}`,
       note: `Unmerged: ${members.results.map(m => m.teamName).join(', ')}`,
-    }),
-  ]);
+    }, {
+      sql: unmergeAuditGuard,
+      bindings: [
+        primaryId, clubSlug,
+        clubSlug, claimId, ...memberIds, memberIds.length,
+        clubSlug, ...memberIds, ...GC_BLOCKING_STATUSES,
+      ],
+    });
+
+  let writes: D1Result<unknown>[];
+  try {
+    writes = await context.env.DB.batch([claimDeletion, deleteMappings, unmergeAudit]);
+  } catch (error) {
+    console.error('Registration unmerge transaction rejected', error);
+    return json(
+      { error: 'A payment started while this group was being unmerged. Reload and try again.' },
+      { status: 409 },
+    );
+  }
+
+  if (
+    (writes[0]?.meta?.changes ?? 0) === 0
+    || (writes[1]?.meta?.changes ?? 0) !== members.results.length
+  ) {
+    return json(
+      { error: 'A payment started while this group was being unmerged. Reload and try again.' },
+      { status: 409 },
+    );
+  }
 
   const posthog = getPostHog(context.env);
   if (posthog) {

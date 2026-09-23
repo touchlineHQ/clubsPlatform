@@ -47,9 +47,31 @@ describe('suggestMerges', () => {
   it('says nothing about a set the admin has already ruled on', () => {
     // reg_2 is billed through reg_1; pulling reg_3 in would second-guess that.
     const rows = [
-      row({ registrationId: 'reg_1', billingRegistrationId: 'reg_1' }),
+      row({
+        registrationId: 'reg_1',
+        billingRegistrationId: 'reg_1',
+        mergedTeamNames: 'U15 Thursday',
+      }),
       row({ registrationId: 'reg_2', billingRegistrationId: 'reg_1' }),
       row({ registrationId: 'reg_3', billingRegistrationId: 'reg_3' }),
+    ];
+
+    expect(suggestMerges(rows)).toEqual([]);
+  });
+
+  it('excludes an existing primary before building suggestions', () => {
+    const rows = [
+      row({ registrationId: 'reg_primary', mergedTeamNames: 'U15 Thursday' }),
+      row({ registrationId: 'reg_unmerged' }),
+    ];
+
+    expect(suggestMerges(rows)).toEqual([]);
+  });
+
+  it('excludes an existing secondary before building suggestions', () => {
+    const rows = [
+      row({ registrationId: 'reg_secondary', billingRegistrationId: 'reg_primary' }),
+      row({ registrationId: 'reg_unmerged' }),
     ];
 
     expect(suggestMerges(rows)).toEqual([]);

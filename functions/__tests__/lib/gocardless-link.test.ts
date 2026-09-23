@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
 import { makeDb } from '../test-utils';
 import type { D1Database } from '@cloudflare/workers-types';
 
@@ -75,6 +75,23 @@ describe('createGoCardlessLink', () => {
     const result = await createGoCardlessLink({ ...baseInput, db });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(404);
+  });
+
+  it('allows a null club slug while still requiring the billing registration to match the source club', async () => {
+    const db = makeDb({ first: null }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+
+    await createGoCardlessLink({ ...baseInput, db, clubSlug: null });
+
+    const prepare = db.prepare as Mock;
+    const lookupIndex = prepare.mock.calls.findIndex(
+      (call: unknown[]) => String(call[0]).includes('sourceRegistrationId'),
+    );
+    const sql = String(prepare.mock.calls[lookupIndex][0]);
+    expect(sql).toContain('? IS NULL OR src.clubSlug = ?');
+    expect(sql).toContain('pr.clubSlug = src.clubSlug');
+    expect(prepare.mock.results[lookupIndex].value.bind.mock.calls[0])
+      .toEqual(['reg_1', null, null]);
   });
 
   it('returns 502 when billing request creation fails', async () => {
@@ -155,6 +172,28 @@ describe('createGoCardlessLink', () => {
 
     const firstCallBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
     expect(firstCallBody.billing_requests.metadata.tracking_info).toContain('x10');
+  });
+
+  it('stamps the source registration and payment generation into billing metadata', async () => {
+    const db = makeDb({
+      first: {
+        sourceRegistrationId: 'reg_secondary',
+        id: 'reg_primary',
+        teamName: 'First XI',
+        fanId: 'FAN001',
+        paymentGeneration: 3,
+      },
+    }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_requests: { id: 'br_001' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_request_flows: { authorisation_url: 'https://pay.gocardless.com' } }) });
+
+    await createGoCardlessLink({ ...baseInput, db });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.billing_requests.metadata.registration_id).toBe('reg_secondary');
+    expect(body.billing_requests.metadata.registration_generation).toBe('3');
   });
 
   it('forwards startDate via the confirm redirect URL', async () => {

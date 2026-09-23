@@ -956,12 +956,22 @@ export function RegistrationsPage() {
   // is stored until an admin decides.
   const suggestions = useMemo(() => suggestMerges(club ?? []), [club]);
   const suggestedIds = useMemo(() => suggestedRegistrationIds(suggestions), [suggestions]);
+  const suggestedPlayerCount = useMemo(
+    () => new Set(suggestions.map(suggestion => suggestion.fanId)).size,
+    [suggestions],
+  );
+
+  useEffect(() => {
+    if (suggestions.length === 0) setShowOnlySuggested(false);
+  }, [suggestions.length]);
 
   const filteredClub = useMemo(() => {
     if (!club) return null;
     const rows = applyClubFilters(club, filters);
-    return showOnlySuggested ? rows.filter(r => suggestedIds.has(r.registrationId)) : rows;
-  }, [club, filters, showOnlySuggested, suggestedIds]);
+    return showOnlySuggested && suggestions.length > 0
+      ? rows.filter(r => suggestedIds.has(r.registrationId))
+      : rows;
+  }, [club, filters, showOnlySuggested, suggestedIds, suggestions.length]);
 
   /** The selected rows, in the table's own order, for the primary picker. */
   const selectedRows = useMemo(
@@ -1187,9 +1197,9 @@ export function RegistrationsPage() {
         <Alert color="indigo" variant="light" icon={<IconArrowsJoin size={18} />}>
           <Group justify="space-between" wrap="wrap" gap="xs">
             <Text size="sm">
-              {suggestions.length === 1
+              {suggestedPlayerCount === 1
                 ? '1 player has registrations in the same age group that are billed separately.'
-                : `${suggestions.length} players have registrations in the same age group that are billed separately.`}
+                : `${suggestedPlayerCount} players have registrations in the same age group that are billed separately.`}
               {' '}
               <Text span size="sm" c="dimmed">
                 They may be one set of subs — or genuinely separate. Only you can tell.

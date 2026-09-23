@@ -506,6 +506,70 @@ describe('RegistrationsPage', () => {
       expect(statValue('Billable units')).toBe('2');
     });
 
+    it('counts distinct players when one player has suggestions in two age groups', async () => {
+      await renderClubTab([
+        tuesday,
+        thursday,
+        {
+          ...tuesday,
+          registrationId: 'reg_sat',
+          billingRegistrationId: 'reg_sat',
+          ageGroup: 'Open',
+          teamName: 'Saturday',
+        },
+        {
+          ...thursday,
+          registrationId: 'reg_sun',
+          billingRegistrationId: 'reg_sun',
+          ageGroup: 'Open',
+          teamName: 'Sunday',
+        },
+      ]);
+
+      expect(screen.getByText(/1 player has registrations in the same age group/i)).toBeTruthy();
+      expect(screen.queryByText(/2 players have registrations in the same age group/i)).toBeNull();
+    });
+
+    it('shows all registrations after the final visible suggestion is resolved', async () => {
+      const unrelated = {
+        ...tuesday,
+        registrationId: 'reg_other',
+        billingRegistrationId: 'reg_other',
+        fanId: 'FAN-OTHER',
+        teamName: 'Open Age',
+        ageGroup: 'Open',
+      };
+      await renderClubTab([tuesday, thursday, unrelated]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+      const openAgeTableCell = () => screen.queryAllByText('Open Age')
+        .find(element => element.closest('tr'));
+      await waitFor(() => expect(openAgeTableCell()).toBeUndefined());
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            personal: [],
+            club: [
+              { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+              { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+              unrelated,
+            ],
+            scope: 'admin',
+          }),
+        });
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/ }));
+
+      await waitFor(() => expect(openAgeTableCell()).toBeTruthy());
+      expect(screen.queryByRole('button', { name: 'Show all' })).toBeNull();
+    });
+
     it('says nothing when the age groups differ', async () => {
       // U18 plus Robins First is two commitments until the club says otherwise.
       await renderClubTab([

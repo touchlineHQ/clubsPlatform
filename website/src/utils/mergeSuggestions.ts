@@ -5,17 +5,14 @@ export interface SuggestionRow {
   ageGroup?: string | null;
   /** The registration this one is billed through — itself, unless merged. */
   billingRegistrationId?: string | null;
+  /** The other registrations billed through this one, when it is a primary. */
+  mergedTeamNames?: string | null;
 }
 
 export interface MergeSuggestion {
   fanId: string;
   ageGroup: string;
   registrationIds: string[];
-}
-
-/** The billing group a row belongs to; its own id when it is not merged. */
-function billingIdOf(row: SuggestionRow): string {
-  return row.billingRegistrationId || row.registrationId;
 }
 
 /** Case- and whitespace-insensitive, since age groups arrive from an FA export. */
@@ -38,6 +35,10 @@ export function suggestMerges(rows: readonly SuggestionRow[]): MergeSuggestion[]
 
   for (const row of rows) {
     if (!row.ageGroup?.trim()) continue;
+    if (
+      (row.billingRegistrationId && row.billingRegistrationId !== row.registrationId)
+      || row.mergedTeamNames
+    ) continue;
     const key = `${row.fanId}\u0000${normaliseAgeGroup(row.ageGroup)}`;
     const group = byPlayerAndAge.get(key);
     if (group) group.push(row);
@@ -48,10 +49,6 @@ export function suggestMerges(rows: readonly SuggestionRow[]): MergeSuggestion[]
 
   for (const candidates of byPlayerAndAge.values()) {
     if (candidates.length < 2) continue;
-
-    // Any shared billing group means this set has already been ruled on.
-    const billingIds = new Set(candidates.map(billingIdOf));
-    if (billingIds.size !== candidates.length) continue;
 
     suggestions.push({
       fanId: candidates[0].fanId,

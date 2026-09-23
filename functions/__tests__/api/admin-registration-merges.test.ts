@@ -287,7 +287,9 @@ describe('onRequestPost — writing the group', () => {
     expect(res.status).toBe(200);
     const insert = findSql(db, 'INSERT INTO "registration_merge"');
     expect(insert).toBeDefined();
-    expect(insert!.bindings.slice(0, 3)).toEqual(['test-club', 'reg_secondary', 'reg_primary']);
+    expect(insert!.bindings).toContain('test-club');
+    expect(insert!.bindings).toContain('reg_secondary');
+    expect(insert!.bindings).toContain('reg_primary');
   });
 
   it('re-asserts every guard in the write itself, not just in the reads', async () => {
@@ -299,6 +301,7 @@ describe('onRequestPost — writing the group', () => {
     expect(insert!.sql).toContain('NOT EXISTS');
     expect(insert!.sql).toContain('player_payment');
     expect(insert!.sql).toContain(`"status" <> 'inactive'`);
+    expect(insert!.sql).toContain('current_group."primaryRegistrationId"');
   });
 
   it('writes the audit row in the same batch as the merge', async () => {
@@ -315,6 +318,7 @@ describe('onRequestPost — writing the group', () => {
         targetTable: 'player_registration',
         targetId: 'reg_primary',
       }),
+      expect.objectContaining({ sql: expect.stringContaining('registration_merge') }),
     );
     const batched = (db.batch as Mock).mock.calls[0][0];
     expect(batched).toContainEqual({ __audit: true });
@@ -325,6 +329,7 @@ describe('onRequestPost — writing the group', () => {
     expect(prepareAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ note: 'Billed with: U15 Thursday' }),
+      expect.anything(),
     );
   });
 
@@ -381,6 +386,8 @@ describe('onRequestDelete', () => {
 
     const guard = findSql(db, `mandateId != ''`);
     expect(guard).toBeDefined();
+    expect(guard!.sql).toContain('registration_merge');
+    expect(guard!.bindings.slice(0, 2)).toEqual(['reg_primary', 'reg_primary']);
   });
 
   it('dissolves the group and audits it', async () => {
@@ -392,7 +399,7 @@ describe('onRequestDelete', () => {
 
     expect(res.status).toBe(200);
     const del = findSql(db, 'DELETE FROM "registration_merge"');
-    expect(del!.bindings).toEqual(['reg_primary', 'test-club']);
+    expect(del!.bindings.slice(0, 2)).toEqual(['reg_primary', 'test-club']);
     expect(prepareAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -400,7 +407,10 @@ describe('onRequestDelete', () => {
         targetId: 'reg_primary',
         note: 'Unmerged: U15 Thursday',
       }),
+      expect.objectContaining({ sql: expect.stringContaining('registration_payment_state') }),
     );
+    const claim = findSql(db, 'INSERT INTO "registration_payment_state"');
+    expect(claim!.sql).toContain('"confirmationId" IS NOT NULL');
   });
 
   it('unmerges freely when the only payment is a manual override', async () => {

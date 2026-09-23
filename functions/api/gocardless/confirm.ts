@@ -27,7 +27,8 @@ import {
  *
  * Appends the billing request ID to the reference to ensure each payment attempt
  * gets its own row. Replays of the same billing request become idempotent updates.
- * Skips silently if clubSlug or registrationId are missing.
+ * Throws if the registration changed or persistence cannot be completed, so the
+ * caller can compensate the remote GoCardless resources.
  */
 async function upsertPaymentRecord(
   db: D1Database,
@@ -39,6 +40,8 @@ async function upsertPaymentRecord(
     mandateId,
     subscriptionId,
     status,
+    linkedRegistrationId,
+    expectedGeneration,
   }: {
     clubSlug: string | null;
     registrationId: string;
@@ -47,20 +50,32 @@ async function upsertPaymentRecord(
     mandateId: string;
     subscriptionId: string | null;
     status: 'active' | 'completed' | 'mandate_only';
+    linkedRegistrationId: string;
+    expectedGeneration: number;
   }
 ): Promise<void> {
-  if (!clubSlug || !registrationId) return;
+  if (!clubSlug || !registrationId) {
+    throw new Error('Cannot persist payment without a club and registration');
+  }
   // Append the last 8 chars of the billing request ID so each distinct payment
   // attempt creates its own row rather than overwriting the previous one.
   // Same billing request replayed → same dbReference → idempotent UPDATE.
   const dbReference = buildDbReference(reference, billingRequestId);
   const now = nowMs();
-  await db
+  const write = await db
     .prepare(
       `INSERT INTO "player_payment"
          (id, clubSlug, registrationId, reference, mandateId, subscriptionId,
           status, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE COALESCE((
+                SELECT generation FROM "registration_payment_state"
+                 WHERE "registrationId" = ? AND "clubSlug" = ?
+              ), 0) = ?
+          AND ? = COALESCE((
+                SELECT "primaryRegistrationId" FROM "registration_merge"
+                 WHERE "registrationId" = ? AND "clubSlug" = ?
+              ), ?)
        ON CONFLICT(clubSlug, reference) DO UPDATE SET
          mandateId      = excluded.mandateId,
          subscriptionId = COALESCE(excluded.subscriptionId, subscriptionId),
@@ -84,9 +99,114 @@ async function upsertPaymentRecord(
       status,
       now,
       now,
+      linkedRegistrationId,
+      clubSlug,
+      expectedGeneration,
+      registrationId,
+      linkedRegistrationId,
+      clubSlug,
+      linkedRegistrationId,
       ...PAID_IN_FULL_STATUSES,
     )
     .run();
+
+  if ((write.meta.changes ?? 0) !== 1) {
+    throw new Error('Registration changed while the GoCardless flow was completing');
+  }
+}
+
+async function cancelGoCardlessResources(
+  gcBase: string,
+  gcHeaders: Record<string, string>,
+  mandateId: string,
+  subscriptionId: string | null,
+): Promise<void> {
+  const cancel = async (kind: 'subscriptions' | 'mandates', id: string) => {
+    try {
+      const response = await fetch(`${gcBase}/${kind}/${id}/actions/cancel`, {
+        method: 'POST',
+        headers: gcHeaders,
+        body: JSON.stringify({}),
+      });
+      if (!response.ok) console.error(`Failed to cancel GoCardless ${kind}`, { id, status: response.status });
+    } catch (error) {
+      console.error(`Failed to cancel GoCardless ${kind}`, { id, error });
+    }
+  };
+
+  if (subscriptionId) await cancel('subscriptions', subscriptionId);
+  await cancel('mandates', mandateId);
+}
+
+async function claimPaymentConfirmation(
+  db: D1Database,
+  {
+    clubSlug,
+    linkedRegistrationId,
+    registrationId,
+    expectedGeneration,
+    billingRequestId,
+  }: {
+    clubSlug: string;
+    linkedRegistrationId: string;
+    registrationId: string;
+    expectedGeneration: number;
+    billingRequestId: string;
+  },
+): Promise<boolean> {
+  const now = nowMs();
+  const expiresAt = now + 15 * 60_000;
+  const result = await db
+    .prepare(
+      `INSERT INTO "registration_payment_state"
+         ("clubSlug", "registrationId", "generation", "claimId",
+          "confirmationId", "confirmationExpiresAt", "updatedAt")
+       SELECT ?, ?, ?, '', ?, ?, ?
+        WHERE ? = COALESCE((
+                SELECT "primaryRegistrationId" FROM "registration_merge"
+                 WHERE "registrationId" = ? AND "clubSlug" = ?
+              ), ?)
+       ON CONFLICT("registrationId") DO UPDATE SET
+         "confirmationId" = excluded."confirmationId",
+         "confirmationExpiresAt" = excluded."confirmationExpiresAt",
+         "updatedAt" = excluded."updatedAt"
+       WHERE "registration_payment_state"."clubSlug" = excluded."clubSlug"
+         AND "registration_payment_state"."generation" = ?
+         AND (
+           "registration_payment_state"."confirmationId" IS NULL
+           OR "registration_payment_state"."confirmationExpiresAt" <= ?
+           OR "registration_payment_state"."confirmationId" = excluded."confirmationId"
+         )`,
+    )
+    .bind(
+      clubSlug, linkedRegistrationId, expectedGeneration, billingRequestId, expiresAt, now,
+      registrationId, linkedRegistrationId, clubSlug, linkedRegistrationId,
+      expectedGeneration, now,
+    )
+    .run();
+
+  return (result.meta.changes ?? 0) === 1;
+}
+
+async function releasePaymentConfirmation(
+  db: D1Database,
+  clubSlug: string,
+  linkedRegistrationId: string,
+  billingRequestId: string,
+): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `UPDATE "registration_payment_state"
+            SET "confirmationId" = NULL, "confirmationExpiresAt" = NULL, "updatedAt" = ?
+          WHERE "clubSlug" = ? AND "registrationId" = ? AND "confirmationId" = ?`,
+      )
+      .bind(nowMs(), clubSlug, linkedRegistrationId, billingRequestId)
+      .run();
+  } catch (error) {
+    // The lease expires, so a cleanup failure delays unmerge rather than blocking it forever.
+    console.error('Failed to release payment confirmation claim', error);
+  }
 }
 
 /**
@@ -167,11 +287,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const pricing = await env.DB
     .prepare(
       `SELECT pr.id AS registrationId, pr.clubSlug, pr.teamName, p.fanId,
-              sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate
+              sl.yearlyPriceInPence, sl.intervalCount, sl.intervalUnit, sl.startDate,
+              COALESCE(rps.generation, 0) AS paymentGeneration
          FROM player_registration src
          ${billingRegistrationJoinSql('src', 'pr')}
          JOIN player p ON p.id = pr.playerId
          ${subscriptionLevelJoinSql('pr')}
+         LEFT JOIN registration_payment_state rps ON rps.registrationId = src.id
         WHERE src.id = ?`
     )
     .bind(linkedRegistrationId)
@@ -184,6 +306,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       intervalCount: number | null;
       intervalUnit: 'monthly' | 'weekly' | 'yearly' | null;
       startDate: string | null;
+      paymentGeneration: number;
     }>();
 
   const registrationId = pricing?.registrationId ?? linkedRegistrationId;
@@ -209,8 +332,35 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const amountInPence = Math.round(pricing.yearlyPriceInPence / Math.max(1, pricing.intervalCount));
   const intervalUnit = pricing.intervalUnit;
   const subscriptionCount = pricing.intervalCount;
+  const stampedGeneration = br.metadata?.registration_generation;
+  const expectedGeneration = stampedGeneration === undefined
+    ? 0
+    : /^\d+$/.test(stampedGeneration) ? Number(stampedGeneration) : -1;
 
-  if (br.status !== 'fulfilled') {
+  // Unmerge advances this generation in the same transaction that removes the
+  // mappings. Old links are rejected before fulfilment; the guarded UPSERT below
+  // closes the remaining race if unmerge starts during a GoCardless request.
+  if ((pricing.paymentGeneration ?? 0) !== expectedGeneration) {
+    const mandateId = br.links?.mandate_request_mandate;
+    if (mandateId) await cancelGoCardlessResources(gcBase, gcHeaders, mandateId, null);
+    return Response.redirect(`${origin}/#/payment-cancelled?reason=registration_changed`, 302);
+  }
+
+  const confirmationClaimed = await claimPaymentConfirmation(env.DB, {
+    clubSlug,
+    linkedRegistrationId,
+    registrationId,
+    expectedGeneration,
+    billingRequestId,
+  });
+  if (!confirmationClaimed) {
+    const mandateId = br.links?.mandate_request_mandate;
+    if (mandateId) await cancelGoCardlessResources(gcBase, gcHeaders, mandateId, null);
+    return Response.redirect(`${origin}/#/payment-cancelled?reason=registration_changed`, 302);
+  }
+
+  try {
+    if (br.status !== 'fulfilled') {
     const fulfilRes = await fetch(
       `${gcBase}/billing_requests/${billingRequestId}/actions/fulfil`,
       {
@@ -323,9 +473,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           // The finder above only skips subscriptions that will never collect,
           // so a 'finished' one — the plan already paid in full — matches here.
           status: subscriptionStatusToPaymentStatus(match.status),
+          linkedRegistrationId,
+          expectedGeneration,
         });
       } catch (e) {
         console.error('Failed to upsert payment record (existing sub):', e);
+        await cancelGoCardlessResources(gcBase, gcHeaders, mandateId, match.id);
+        return Response.redirect(`${origin}/#/payment-cancelled?reason=persistence_failed`, 302);
       }
       return Response.redirect(
         `${origin}/#/payment-success?mandate=${mandateId}&subscription=${match.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}&existing=1`,
@@ -373,9 +527,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         clubSlug, registrationId, reference, billingRequestId,
         mandateId, subscriptionId: null,
         status: 'mandate_only',
+        linkedRegistrationId,
+        expectedGeneration,
       });
     } catch (e) {
       console.error('Failed to upsert payment record (mandate_only):', e);
+      await cancelGoCardlessResources(gcBase, gcHeaders, mandateId, null);
+      return Response.redirect(`${origin}/#/payment-cancelled?reason=persistence_failed`, 302);
     }
     const posthog = getPostHog(env);
     if (posthog) {
@@ -401,9 +559,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       clubSlug, registrationId, reference, billingRequestId,
       mandateId, subscriptionId: sub.id,
       status: 'active',
+      linkedRegistrationId,
+      expectedGeneration,
     });
   } catch (e) {
     console.error('Failed to upsert payment record:', e);
+    await cancelGoCardlessResources(gcBase, gcHeaders, mandateId, sub.id);
+    return Response.redirect(`${origin}/#/payment-cancelled?reason=persistence_failed`, 302);
   }
 
   const posthog = getPostHog(env);
@@ -425,8 +587,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }).catch(err => console.error('PostHog capture failed', err));
   }
 
-  return Response.redirect(
-    `${origin}/#/payment-success?mandate=${mandateId}&subscription=${sub.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}`,
-    302
-  );
+    return Response.redirect(
+      `${origin}/#/payment-success?mandate=${mandateId}&subscription=${sub.id}&ref=${encodeURIComponent(reference)}&amount=${amountInPence}&interval_unit=${intervalUnit}`,
+      302
+    );
+  } finally {
+    await releasePaymentConfirmation(env.DB, clubSlug, linkedRegistrationId, billingRequestId);
+  }
 };
