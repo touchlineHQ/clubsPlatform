@@ -811,6 +811,53 @@ describe('import-players POST — chunked writes', () => {
     expect(hashSeededPwd).toHaveBeenCalledTimes(1);
   });
 
+  /** A later part: the run row, then no player matches. */
+  const laterPartDb = (users: unknown[], runStartedAt = 1000) => makeDb({
+    all: [[], users],
+    first: [{ createdAt: runStartedAt }, null],
+    run: { meta: { changes: 1 } },
+  });
+
+  it('counts an account an earlier part made as neither created nor already-existing', async () => {
+    // One parent, two children either side of a batch boundary. The parts are
+    // summed by the client, so counting this as "already existed" reported one
+    // person as both created and pre-existing.
+    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]);
+    const { body } = await runImport(
+      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+    );
+
+    expect(body.users).toEqual({ created: 0, skipped: 0 });
+  });
+
+  it('still counts an account that predates the run as already-existing', async () => {
+    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 500 }]);
+    const { body } = await runImport(
+      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+    );
+
+    expect(body.users).toEqual({ created: 0, skipped: 1 });
+  });
+
+  it('sums across a batch boundary to one parent, counted once', async () => {
+    // The whole point: two batches either side of a boundary, one person, and
+    // the client adds the parts up.
+    const first = await runImport(
+      makeDb({ all: [[], []], first: null, run: { meta: { changes: 1 } } }),
+      [row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] })], false, part(0, 3),
+    );
+    const second = await runImport(
+      laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]),
+      [row({ fanId: 'FAN002', parentEmails: ['parent@example.com'] })], false,
+      part(1, 3, 'imprun_test'),
+    );
+
+    expect({
+      created: first.body.users.created + second.body.users.created,
+      skipped: first.body.users.skipped + second.body.users.skipped,
+    }).toEqual({ created: 1, skipped: 0 });
+  });
+
   it('pays no hash for a chunk whose accounts already exist', async () => {
     // The cross-chunk case: chunk 1 created the parent, so chunk 2 finds them.
     const db = makeDb({

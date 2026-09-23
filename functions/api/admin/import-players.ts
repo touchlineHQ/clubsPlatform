@@ -251,15 +251,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const db = context.env.DB;
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   let importRunId: string | null = null;
+  /** When this run began; accounts at least this old are an earlier part's. */
+  let runStartedAt: number | null = null;
 
   // Claim the part before doing any import work. A later part can advance only
   // after every preceding claim has produced its immutable part record.
   if (!dryRun && part) {
     if (part.index === 0) {
       importRunId = randomId("imprun");
+      runStartedAt = nowMs();
       await db
         .prepare(`INSERT INTO "player_import_run" (id, clubSlug, adminId, totalParts, nextPart, createdAt) VALUES (?, ?, ?, ?, 1, ?)`)
-        .bind(importRunId, clubSlug, adminId, part.total, nowMs())
+        .bind(importRunId, clubSlug, adminId, part.total, runStartedAt)
         .run();
     } else {
       importRunId = part.runId!;
@@ -279,6 +282,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           { status: 409 },
         );
       }
+      const run = await db
+        .prepare(`SELECT createdAt FROM "player_import_run" WHERE id = ? AND clubSlug = ?`)
+        .bind(importRunId, clubSlug)
+        .first<{ createdAt: number }>();
+      runStartedAt = run?.createdAt ?? null;
     }
   }
 
@@ -427,17 +435,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // ── 5. Plan users (reads only) ───────────────────────────────────────────
   // One query per 90 emails rather than one per email: a 300-row file carries
   // hundreds of addresses, and that was hundreds of sequential round trips.
-  const existingUserIdByEmail = new Map<string, string>();
+  const existingUserByEmail = new Map<string, { id: string; createdAt: number }>();
   const emails = [...emailRelMap.keys()];
   for (const slice of inSlices(emails)) {
     try {
       const { results } = await db
         .prepare(
-          `SELECT id, email FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
+          `SELECT id, email, createdAt FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
         )
         .bind(...slice)
-        .all<{ id: string; email: string }>();
-      for (const row of results) existingUserIdByEmail.set(row.email, row.id);
+        .all<{ id: string; email: string; createdAt: number }>();
+      for (const row of results) {
+        existingUserByEmail.set(row.email, { id: row.id, createdAt: row.createdAt });
+      }
     } catch (err) {
       for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
     }
@@ -445,10 +455,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const userPlans: UserPlan[] = [];
   for (const [email, fanMap] of emailRelMap) {
-    const existingUserId = existingUserIdByEmail.get(email) ?? null;
+    const existing = existingUserByEmail.get(email) ?? null;
+    const existingUserId = existing?.id ?? null;
 
-    if (existingUserId) importResult.users.skipped++;
-    else importResult.users.created++;
+    // An account an earlier part of this run created counts as neither: the
+    // client sums the parts, so calling it "already existed" here would report
+    // one parent of two children as both created and pre-existing.
+    const madeByThisRun =
+      existing !== null && runStartedAt !== null && existing.createdAt >= runStartedAt;
+
+    if (!existing) importResult.users.created++;
+    else if (!madeByThisRun) importResult.users.skipped++;
 
     userPlans.push({
       email,
