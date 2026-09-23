@@ -132,17 +132,17 @@ describe('onRequestPost — validation', () => {
   });
 
   it('refuses a group larger than D1 can take bindings for', async () => {
-    // The atomic INSERT binds one parameter per member plus nine, and the
-    // statements after it bind the list again; D1 caps a query at 100. A player
-    // in 26 teams at one club is not a real case anyway.
-    const ids = Array.from({ length: 26 }, (_, i) => `reg_${i}`);
+    // The guarded audit statement costs 33 + 6 per member (its guard binds the
+    // list three times, then UNION ALL repeats the whole thing); D1 caps a query
+    // at 100, so twelve members would bind 105.
+    const ids = Array.from({ length: 12 }, (_, i) => `reg_${i}`);
     const res = await onRequestPost(
       mergeCtx(postDb(), { primaryRegistrationId: 'reg_primary', registrationIds: ids }) as any,
     );
     const body = await res.json() as any;
 
     expect(res.status).toBe(400);
-    expect(body.error).toMatch(/at most 25/);
+    expect(body.error).toMatch(/at most 11/);
     expect(prepareAuditLog).not.toHaveBeenCalled();
   });
 
@@ -436,5 +436,69 @@ describe('onRequestDelete', () => {
     });
     const res = await onRequestDelete(unmergeCtx(db) as any);
     expect(res.status).toBe(200);
+  });
+});
+
+// ─── D1 binding budget ────────────────────────────────────────────────────────
+
+/** D1 refuses a query binding more parameters than this. */
+const D1_MAX_BINDINGS = 100;
+
+/**
+ * What prepareAuditLog will bind for a given guard: the entry's ten values, then
+ * the guard, then nine of the values and the guard again for the UNION ALL arm.
+ * It is mocked here, so its statement never reaches db.prepare to be counted.
+ */
+function auditBindingCount(guardBindings: unknown[]): number {
+  return 10 + guardBindings.length + 9 + guardBindings.length;
+}
+
+function guardOf(call: number): unknown[] {
+  return ((prepareAuditLog as Mock).mock.calls[call][2] as { bindings: unknown[] }).bindings;
+}
+
+describe('the cap keeps a full group inside D1s binding budget', () => {
+  beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
+
+  it('merges a group of MAX_MERGE_GROUP without overrunning any statement', async () => {
+    const secondaryIds = Array.from({ length: 11 }, (_, i) => `reg_s${i}`);
+    const db = makeDb({
+      all: [
+        [PRIMARY, ...secondaryIds.map(id => reg({ registrationId: id, teamName: id }))],
+        [],
+        [],
+      ],
+      run: { meta: { changes: secondaryIds.length } },
+    });
+
+    const res = await onRequestPost(
+      mergeCtx(db, { primaryRegistrationId: 'reg_primary', registrationIds: secondaryIds }) as any,
+    );
+    expect(res.status).toBe(200);
+
+    for (const { bindings } of prepared(db)) {
+      expect(bindings.length).toBeLessThanOrEqual(D1_MAX_BINDINGS);
+    }
+    expect(auditBindingCount(guardOf(0))).toBeLessThanOrEqual(D1_MAX_BINDINGS);
+  });
+
+  it('unmerges a group of MAX_MERGE_GROUP without overrunning any statement', async () => {
+    const members = Array.from({ length: 11 }, (_, i) => ({
+      registrationId: `reg_s${i}`,
+      teamName: `Team ${i}`,
+    }));
+    const db = makeDb({
+      first: null,
+      all: [members],
+      run: { meta: { changes: members.length } },
+    });
+
+    const res = await onRequestDelete(unmergeCtx(db) as any);
+    expect(res.status).toBe(200);
+
+    for (const { bindings } of prepared(db)) {
+      expect(bindings.length).toBeLessThanOrEqual(D1_MAX_BINDINGS);
+    }
+    expect(auditBindingCount(guardOf(0))).toBeLessThanOrEqual(D1_MAX_BINDINGS);
   });
 });

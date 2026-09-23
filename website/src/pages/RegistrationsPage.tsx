@@ -71,7 +71,7 @@ const DEFAULT_VALUE = '__default__';
  * told before meeting the 400. The server's cap is on the members *besides* the
  * primary, hence the +1 here.
  */
-const MAX_MERGE_SELECTION = 26;
+const MAX_MERGE_SELECTION = 12;
 
 type SortKey = 'fanId' | 'teamName' | 'registrationExpiry' | 'registrationStatus' | 'subscription' | 'subscriptionLevel' | 'sixthCol';
 type SortDir = 'asc' | 'desc';

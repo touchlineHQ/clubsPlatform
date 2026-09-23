@@ -29,13 +29,14 @@ import {
 /**
  * The most registrations one merge may name.
  *
- * D1 caps a query at 100 bound parameters, and the member list is bound several
- * times over: the atomic INSERT alone binds one per member plus nine, and the
- * statements after it bind the list again. An unbounded selection breaches that
- * and the merge fails outright. A player in more than a couple of dozen teams at
- * one club is not a real case, so capping is cheaper than slicing.
+ * D1 caps a query at 100 bound parameters. The guarded audit statement sets the
+ * limit, not the INSERT: prepareAuditLog repeats its guard across a UNION ALL
+ * and the guard binds the member list three times, so it costs 33 + 6 per
+ * member. Eleven keeps that at 99; the INSERT and both unmerge statements are
+ * well under. A player in eleven teams at one club is not a real case, so
+ * capping is cheaper than slicing.
  */
-const MAX_MERGE_GROUP = 25;
+const MAX_MERGE_GROUP = 11;
 
 interface RegistrationRow {
   registrationId: string;
