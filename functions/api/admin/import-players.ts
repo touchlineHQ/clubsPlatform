@@ -35,6 +35,15 @@ interface ImportResult {
 
 export const IMPORT_LIMITS = {
   maxRows: 5000,
+  /**
+   * Rows one write request may carry.
+   *
+   * Seeding a new account costs ~49ms of CPU (PBKDF2, lib/auth.ts), so a whole
+   * club in one request runs to minutes and Cloudflare kills it. The client
+   * batches to this; the server refuses more so an out-of-date page fails with
+   * a message instead of a CPU kill. A dry run hashes nothing, so it is exempt.
+   */
+  maxCommitRows: 25,
   maxStringLen: 200,
   maxParentEmails: 10,
 } as const;
@@ -212,6 +221,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
     if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
       return json({ error: "dryRun must be a boolean" }, { status: 400 });
+    }
+    if (body.dryRun !== true && body.rows.length > IMPORT_LIMITS.maxCommitRows) {
+      return json(
+        {
+          error: `This page is out of date: it sent all ${body.rows.length} rows at once `
+            + `instead of in batches of ${IMPORT_LIMITS.maxCommitRows}. Reload and import again.`,
+        },
+        { status: 400 },
+      );
     }
     const partError = validatePart(body.part);
     if (partError) return json({ error: partError }, { status: 400 });

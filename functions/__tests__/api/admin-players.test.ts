@@ -632,6 +632,54 @@ describe('import-players POST — counters and the import stamp', () => {
 
 // ─── import-players.ts: chunked writes ────────────────────────────────────────
 
+describe('import-players POST — an unchunked commit is refused', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+  });
+
+  /** A file bigger than one batch, as an out-of-date page would send it. */
+  const wholeFile = Array.from({ length: 26 }, (_, i) => row({ fanId: `FAN${i}` }));
+
+  it('refuses a whole-file write and writes nothing', async () => {
+    // This is the path that was killing the Worker: ~49ms of PBKDF2 per new
+    // account, a club's worth in one request. Failing here costs one round trip.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, wholeFile, false);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toMatch(/out of date/i);
+    expect(writes(db)).toEqual([]);
+    expect(hashPwd).not.toHaveBeenCalled();
+  });
+
+  it('refuses it whether or not the page claims to be sending a part', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, wholeFile, false, { index: 0, total: 1 });
+
+    expect(res.status).toBe(400);
+    expect(writes(db)).toEqual([]);
+  });
+
+  it('still allows a whole-file dry run, which hashes nothing', async () => {
+    // The preview is how the admin sees counts and the stale list, so it has to
+    // take the whole file. It returns before any password is seeded.
+    const db = dbHolding([]);
+    const { res, body } = await runImport(db, wholeFile, true);
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(hashPwd).not.toHaveBeenCalled();
+  });
+
+  it('allows a commit that is within one batch', async () => {
+    const db = dbHolding([]);
+    const { res } = await runImport(db, wholeFile.slice(0, 25), false);
+
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('import-players POST — chunked writes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
