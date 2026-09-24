@@ -9,10 +9,10 @@ import { TABLE_STATEMENTS } from "../lib/ensure-tables";
  * query from one that returns the wrong rows, or from one that does not parse.
  * Anything whose correctness lives in the SQL itself belongs here instead.
  *
- * `node:sqlite` is built into Node 22, which is what package.json requires and
- * what all three CI workflows install, so this costs no dependency. It is
- * reached through createRequire because Vite tries to resolve `node:sqlite` as
- * a bare specifier and fails.
+ * `node:sqlite` is available without a flag from Node 22.13, which is what
+ * package.json requires and CI's Node 22 installs. This costs no dependency.
+ * It is reached through createRequire because Vite tries to resolve
+ * `node:sqlite` as a bare specifier and fails.
  *
  * This is not D1. It shares D1's engine and dialect, not its limits — the
  * 100-parameter bind cap and the subrequest budget are invisible here, so
@@ -35,8 +35,8 @@ function load(): { DatabaseSync: new (path: string) => SqliteDb } {
     return require_("node:sqlite");
   } catch (err) {
     throw new Error(
-      "node:sqlite is unavailable — it needs Node 22 or newer, which is what "
-        + `package.json's engines field requires. Got ${process.version}. (${String(err)})`,
+      "node:sqlite is available without a flag from Node 22.13; earlier Node 22.x "
+        + `releases require --experimental-sqlite. Got ${process.version}. (${String(err)})`,
     );
   }
 }

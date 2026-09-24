@@ -59,7 +59,8 @@ export function billingMergeJoinSql(
                 ON ${merge}."registrationId" = ${alias}."id"
                AND ${merge}."clubSlug"       = ${alias}."clubSlug"
          LEFT JOIN "player_registration" ${billing}
-                ON ${billing}."id" = ${merge}."primaryRegistrationId"`;
+                ON ${billing}."id" = ${merge}."primaryRegistrationId"
+               AND ${billing}."clubSlug" = ${alias}."clubSlug"`;
 }
 
 /** The billing id, once {@link billingMergeJoinSql} has supplied the columns. */
