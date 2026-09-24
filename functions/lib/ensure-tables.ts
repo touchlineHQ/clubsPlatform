@@ -1,6 +1,13 @@
 import { D1Database } from "@cloudflare/workers-types";
 
-const TABLE_STATEMENTS = [
+/**
+ * The full current schema, idempotent.
+ *
+ * Exported so the SQLite-backed tests can stand up a real database from the
+ * same source the Worker uses, rather than keeping a third copy of the schema
+ * that would drift from this one and from migrations/.
+ */
+export const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user" ("id" TEXT PRIMARY KEY NOT NULL, "name" TEXT NOT NULL, "email" TEXT NOT NULL UNIQUE, "emailVerified" INTEGER NOT NULL DEFAULT 0, "image" TEXT, "role" TEXT NOT NULL DEFAULT 'member', "clubSlug" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "session" ("id" TEXT PRIMARY KEY NOT NULL, "expiresAt" INTEGER NOT NULL, "token" TEXT NOT NULL UNIQUE, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, "ipAddress" TEXT, "userAgent" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS "account" ("id" TEXT PRIMARY KEY NOT NULL, "accountId" TEXT NOT NULL, "providerId" TEXT NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "accessToken" TEXT, "refreshToken" TEXT, "idToken" TEXT, "accessTokenExpiresAt" INTEGER, "refreshTokenExpiresAt" INTEGER, "scope" TEXT, "password" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
@@ -37,6 +44,9 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "player_registration" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "ageGroup" TEXT, "registrationExpiry" TEXT, "registrationStatus" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "playerId", "teamName"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_clubSlug" ON "player_registration" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_playerId" ON "player_registration" ("playerId")`,
+  // COLLATE NOCASE is load-bearing: a BINARY index cannot serve a NOCASE ORDER BY.
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_team" ON "player_registration" ("clubSlug", "teamName" COLLATE NOCASE, "id")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_status" ON "player_registration" ("clubSlug", "registrationStatus" COLLATE NOCASE)`,
   `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
@@ -45,6 +55,8 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_registrationId" ON "player_payment" ("registrationId")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_mandateId" ON "player_payment" ("mandateId")`,
+  // Carries "status" so the merge-resolved payment-status probe is index-only.
+  `CREATE INDEX IF NOT EXISTS "idx_player_payment_reg_status" ON "player_payment" ("registrationId", "status")`,
   `CREATE TABLE IF NOT EXISTS "subscription_level" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "name" TEXT NOT NULL, "yearlyPriceInPence" INTEGER NOT NULL, "intervalCount" INTEGER NOT NULL DEFAULT 1, "intervalUnit" TEXT NOT NULL DEFAULT 'yearly' CHECK ("intervalUnit" IN ('weekly', 'monthly', 'yearly')), "startDate" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE ("clubSlug", "name"))`,
   `CREATE INDEX IF NOT EXISTS "idx_subscription_level_clubSlug" ON "subscription_level" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "team_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName"))`,
@@ -67,6 +79,10 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_clubSlug" ON "admin_audit_log" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_targetId" ON "admin_audit_log" ("targetId")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_createdAt" ON "admin_audit_log" ("createdAt")`,
+  // The three above are separate single-column indexes and SQLite does not
+  // intersect them, so the manual-attribution lookup could use only one of its
+  // three predicates. This composite serves the join probe and both residuals.
+  `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_target" ON "admin_audit_log" ("targetId", "clubSlug", "action", "createdAt")`,
   `CREATE TABLE IF NOT EXISTS "club_import_log" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "importedAt" INTEGER NOT NULL, "rowCount" INTEGER NOT NULL, "adminId" TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_club_import_log_clubSlug_importedAt" ON "club_import_log" ("clubSlug", "importedAt")`,
   `CREATE TABLE IF NOT EXISTS "player_import_run" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "adminId" TEXT NOT NULL, "totalParts" INTEGER NOT NULL, "nextPart" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "completedAt" INTEGER)`,

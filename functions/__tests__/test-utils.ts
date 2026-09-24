@@ -3,7 +3,14 @@ import type { Env } from '../lib/api-helpers';
 import type { D1Database } from '@cloudflare/workers-types';
 
 // ─── Mock ensure-tables globally ─────────────────────────────────────────────
-vi.mock('../lib/ensure-tables', () => ({ ensureTables: vi.fn(async () => {}) }));
+// Partial: only ensureTables is stubbed, so a handler under test never touches
+// the database on startup. The real TABLE_STATEMENTS stays reachable, which is
+// what sqlite-harness builds its schema from — blanking the module would leave
+// it with a third, drifting copy of the schema.
+vi.mock('../lib/ensure-tables', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/ensure-tables')>()),
+  ensureTables: vi.fn(async () => {}),
+}));
 
 // ─── Env builder ─────────────────────────────────────────────────────────────
 export const TEST_ENCRYPTION_KEY =

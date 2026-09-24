@@ -115,15 +115,15 @@ describe('onRequestGet', () => {
     mockGetSession.mockResolvedValue(adminSession);
     const manualRow = { ...clubRegistration, paymentStatus: 'manual' };
     const db = makeDb({
-      all: [
-        [sampleRegistration],
-        [manualRow],
+      all: [[sampleRegistration], [manualRow]],
+      // The attribution lookup is chunked, so it goes through batch() now.
+      batch: [[
         // Newest first — reg_2 was re-marked after an undo.
         [
           { registrationId: 'reg_2', manualPaidBy: 'alice@club.com', manualPaidAt: 200, manualNote: 'cash' },
           { registrationId: 'reg_2', manualPaidBy: 'bob@club.com', manualPaidAt: 100, manualNote: 'older' },
         ],
-      ],
+      ]],
     });
     const ctx = makeContext(
       getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
@@ -320,26 +320,25 @@ describe('onRequestDelete', () => {
 describe('merged registrations', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
 
-  const merge = (registrationId: string, primaryRegistrationId: string, teamName: string) =>
-    ({ registrationId, primaryRegistrationId, teamName });
+  /**
+   * A row as the SQL now hands it back. The merge is resolved in the query, so
+   * these three columns arrive on the row rather than being overlaid in JS from
+   * a separate whole-club read of registration_merge.
+   */
+  const merged = (over: Record<string, unknown>) => ({ ...clubRegistration, ...over });
 
   /**
-   * The admin read order: personal rows, club rows, the club's merges, then the
-   * manual-attribution audit lookup if any row is manual, then the import stamp.
+   * The admin read order: personal rows, club rows, then the import stamp via
+   * .first(). Manual attribution now goes through db.batch(), not .all().
    */
   function adminDb(over: {
     personal?: unknown[];
     club?: unknown[];
-    merges?: unknown[];
     audit?: unknown[];
   } = {}) {
     return makeDb({
-      all: [
-        over.personal ?? [],
-        over.club ?? [],
-        over.merges ?? [],
-        over.audit ?? [],
-      ],
+      all: [over.personal ?? [], over.club ?? []],
+      batch: [[over.audit ?? []]],
       first: null,
     });
   }
@@ -349,17 +348,109 @@ describe('merged registrations', () => {
     { env: { DB: db as any } },
   ) as any);
 
-  it('gives a secondary its group‘s payment status', async () => {
-    // The payment hangs off the primary, so the secondary has none of its own —
-    // without this it reads "Outstanding" and gets chased for money already paid.
-    const primary = { ...clubRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'active' };
-    const secondary = { ...clubRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null };
+  const sqlOf = (db: any) => (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0]));
 
-    const res = await get(adminDb({
-      club: [primary, secondary],
-      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
-    }));
-    const body = await res.json() as any;
+  // ─── The regression the SQL resolution exists to prevent ────────────────────
+
+  it('keys the payment status on the billing registration, not the row', async () => {
+    // THE load-bearing assertion in this file.
+    //
+    // Keyed on pr.id, a secondary's status was corrected in JS by copying its
+    // primary's — which only worked while every primary was guaranteed to be
+    // loaded alongside it. Paginate the read and the primary is frequently on
+    // another page, so the overlay silently leaves the secondary reading
+    // "Outstanding" and a player gets chased for money already paid.
+    //
+    // The D1 double cannot execute SQL, so this asserts the query is SHAPED to
+    // resolve the group rather than that it RETURNS the resolved rows. That is
+    // the strongest guarantee available here; an executable SQLite harness is
+    // what would close the gap.
+    const db = adminDb({ club: [clubRegistration] });
+    await get(db);
+
+    for (const sql of sqlOf(db).filter((q: string) => q.includes('AS paymentStatus'))) {
+      expect(sql).toMatch(/pp\.registrationId = COALESCE\(\s*rm0\."primaryRegistrationId"/);
+      expect(sql).not.toMatch(/pp\.registrationId = pr\.id/);
+    }
+  });
+
+  it('resolves the merge for the personal query too, not just the club one', async () => {
+    // Dropping the JS pass without doing this would leave the personal tab with
+    // no merge resolution at all.
+    const db = adminDb({ personal: [sampleRegistration], club: [clubRegistration] });
+    await get(db);
+
+    const withStatus = sqlOf(db).filter((q: string) => q.includes('AS paymentStatus'));
+    expect(withStatus).toHaveLength(2);
+    for (const sql of withStatus) {
+      expect(sql).toContain('billingRegistrationId');
+      expect(sql).toContain('mergedTeamNames');
+    }
+  });
+
+  it('scopes the merge join by club', async () => {
+    // registration_merge is keyed on registrationId alone. A cross-club row —
+    // which the API prevents but the schema permits — would otherwise pull
+    // another club's team name onto the page.
+    const db = adminDb({ club: [clubRegistration] });
+    await get(db);
+
+    for (const sql of sqlOf(db).filter((q: string) => q.includes('rm0'))) {
+      expect(sql).toMatch(/rm0\."clubSlug"\s*=\s*pr\."clubSlug"/);
+    }
+  });
+
+  it('joins to the billing row with LEFT, never INNER', async () => {
+    // An inner join would DELETE the registration from the result if the
+    // primary ever went missing. Hiding rows from the admin list is far worse
+    // than showing a blank badge.
+    const db = adminDb({ club: [clubRegistration] });
+    await get(db);
+
+    for (const sql of sqlOf(db).filter((q: string) => q.includes('rm0'))) {
+      expect(sql).toMatch(/LEFT JOIN "registration_merge" rm0/);
+      expect(sql).toMatch(/LEFT JOIN "player_registration" bpr/);
+    }
+  });
+
+  it('never reads the club‘s whole registration_merge table', async () => {
+    // The read this ticket exists to remove. Every remaining reference to
+    // registration_merge is correlated to a registration, not a club scan.
+    const db = adminDb({ club: [clubRegistration] });
+    await get(db);
+
+    for (const sql of sqlOf(db).filter((q: string) => /registration_merge/.test(q))) {
+      expect(sql).not.toMatch(/FROM "registration_merge" rm\s+JOIN/);
+    }
+  });
+
+  it('names a primary‘s siblings deterministically', async () => {
+    // GROUP_CONCAT over a join has no defined argument order, so the same row
+    // could list its teams differently on consecutive requests — which reads as
+    // the text flickering between pages.
+    const db = adminDb({ club: [clubRegistration] });
+    await get(db);
+
+    const sql = sqlOf(db).find((q: string) => q.includes('mergedTeamNames'));
+    expect(sql).toMatch(/ORDER BY mpr\."teamName" COLLATE NOCASE/);
+    expect(sql).toMatch(/rm2\."primaryRegistrationId" = pr\."id"/);
+  });
+
+  // ─── The wire contract ──────────────────────────────────────────────────────
+
+  it('passes the SQL-resolved merge fields straight through', async () => {
+    const primary = merged({
+      registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'active',
+      billingRegistrationId: null, billedWithTeamName: null,
+      mergedTeamNames: 'U15 Thursday',
+    });
+    const secondary = merged({
+      registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: 'active',
+      billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday',
+      mergedTeamNames: null,
+    });
+
+    const body = await (await get(adminDb({ club: [primary, secondary] }))).json() as any;
 
     const [p, sec] = body.club;
     expect(sec.paymentStatus).toBe('active');
@@ -368,93 +459,100 @@ describe('merged registrations', () => {
     expect(p.mergedTeamNames).toBe('U15 Thursday');
   });
 
-  it('names every team a primary is billed for', async () => {
-    const rows = ['reg_tue', 'reg_thu', 'reg_sun'].map((id, i) => ({
-      ...clubRegistration,
-      registrationId: id,
-      teamName: ['U15 Tuesday', 'U15 Thursday', 'U15 Sunday'][i],
-      paymentStatus: null,
-    }));
-
-    const res = await get(adminDb({
-      club: rows,
-      merges: [
-        merge('reg_thu', 'reg_tue', 'U15 Thursday'),
-        merge('reg_sun', 'reg_tue', 'U15 Sunday'),
-      ],
-    }));
-    const body = await res.json() as any;
-
-    expect(body.club[0].mergedTeamNames).toBe('U15 Thursday, U15 Sunday');
-  });
-
   it('sends no merge fields at all when the club has merged nothing', async () => {
-    // Which is every club today. Repeating an id equal to registrationId on every
-    // row grew the response by 25% for nothing.
-    const res = await get(adminDb({ club: [clubRegistration], merges: [] }));
-    const body = await res.json() as any;
+    // Which is every club today. SQL returns NULL for all three on an unmerged
+    // row; sending three null keys per row would be response weight for nothing
+    // and would break the shape the page was built against.
+    const unmerged = merged({
+      billingRegistrationId: null, billedWithTeamName: null, mergedTeamNames: null,
+    });
+    const body = await (await get(adminDb({ club: [unmerged] }))).json() as any;
 
     expect(body.club[0]).not.toHaveProperty('billingRegistrationId');
     expect(body.club[0]).not.toHaveProperty('billedWithTeamName');
     expect(body.club[0]).not.toHaveProperty('mergedTeamNames');
   });
 
-  it('reads the groups once, not once per row', async () => {
-    const db = adminDb({ club: [clubRegistration], merges: [] });
-    await get(db);
-
-    const sql = (db.prepare as any).mock.calls.map((c: unknown[]) => String(c[0]));
-    expect(sql.filter((q: string) => /registration_merge/.test(q))).toHaveLength(1);
-    // And never per row, inside the payment-status subquery.
-    const withStatus = sql.find((q: string) => q.includes('AS paymentStatus'));
-    expect(withStatus).not.toMatch(/registration_merge/);
-  });
-
-  it('groups a player‘s own registrations too', async () => {
-    const db = makeDb({
-      all: [[
-        { ...sampleRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'active' },
-        { ...sampleRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null },
-      ], [merge('reg_thu', 'reg_tue', 'U15 Thursday')]],
-      first: null,
-    });
-    mockGetSession.mockResolvedValue(memberSession);
-
-    const body = await (await get(db)).json() as any;
-    expect(body.personal[1].paymentStatus).toBe('active');
-    expect(body.personal[1].billedWithTeamName).toBe('U15 Tuesday');
-  });
-
-  it('keeps personal and club primary statuses separate for their secondaries', async () => {
-    const personalPrimary = { ...sampleRegistration, registrationId: 'reg_tue', paymentStatus: 'completed' };
-    const personalSecondary = { ...sampleRegistration, registrationId: 'reg_thu', paymentStatus: null };
-    const clubPrimary = { ...clubRegistration, registrationId: 'reg_tue', paymentStatus: 'manual' };
-    const clubSecondary = { ...clubRegistration, registrationId: 'reg_thu', paymentStatus: null };
-
+  it('keeps the merge fields on a row that is in a group', async () => {
     const body = await (await get(adminDb({
-      personal: [personalPrimary, personalSecondary],
-      club: [clubPrimary, clubSecondary],
-      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+      club: [merged({
+        billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday',
+        mergedTeamNames: null,
+      })],
     }))).json() as any;
 
-    expect(body.personal[1].paymentStatus).toBe('completed');
-    expect(body.club[1].paymentStatus).toBe('manual');
+    expect(body.club[0].billingRegistrationId).toBe('reg_tue');
+    expect(body.club[0].billedWithTeamName).toBe('U15 Tuesday');
   });
 
-  it('resolves manual attribution through the primary', async () => {
-    // The manual row hangs off the primary, so a secondary would otherwise show
-    // "Paid in full" with nobody's name against it.
-    const primary = { ...clubRegistration, registrationId: 'reg_tue', teamName: 'U15 Tuesday', paymentStatus: 'manual' };
-    const secondary = { ...clubRegistration, registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: null };
+  // ─── Manual attribution ─────────────────────────────────────────────────────
 
-    const res = await get(adminDb({
-      club: [primary, secondary],
-      merges: [merge('reg_thu', 'reg_tue', 'U15 Thursday')],
+  it('asks for manual attribution by billing id, bound not interpolated', async () => {
+    const secondary = merged({
+      registrationId: 'reg_thu', teamName: 'U15 Thursday', paymentStatus: 'manual',
+      billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday',
+    });
+    const db = adminDb({
+      club: [secondary],
       audit: [{ registrationId: 'reg_tue', manualPaidBy: 'admin@example.com', manualPaidAt: 1, manualNote: 'cash' }],
-    }));
-    const body = await res.json() as any;
+    });
+    const body = await (await get(db)).json() as any;
 
-    expect(body.club[1].manualPaidBy).toBe('admin@example.com');
-    expect(body.club[1].manualNote).toBe('cash');
+    // The override hangs off the primary, so a secondary would otherwise show
+    // "Paid in full" with nobody's name against it.
+    expect(body.club[0].manualPaidBy).toBe('admin@example.com');
+    expect(body.club[0].manualNote).toBe('cash');
+
+    const idx = sqlOf(db).findIndex((q: string) => /admin_audit_log/.test(q));
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(sqlOf(db)[idx]).toContain('pp.registrationId IN (?)');
+    expect(sqlOf(db)[idx]).not.toContain('reg_tue');
+    expect((db.prepare as any).mock.results[idx].value.bind.mock.calls[0])
+      .toEqual(['test-club', 'reg_tue']);
+  });
+
+  it('bounds the attribution lookup by id rather than scanning the club', async () => {
+    // The unbounded form filtered only on clubSlug/targetTable/action, so it
+    // degraded with admin activity rather than data volume.
+    const db = adminDb({
+      club: [merged({ paymentStatus: 'manual' })],
+      audit: [],
+    });
+    await get(db);
+
+    const sql = sqlOf(db).find((q: string) => /admin_audit_log/.test(q))!;
+    expect(sql).toMatch(/pp\.registrationId IN \(/);
+  });
+
+  it('chunks the id list so a full page cannot breach D1‘s bind cap', async () => {
+    // D1 caps a query at 100 bound parameters, which is why MAX_MERGE_GROUP is
+    // 11. A 200-row page of distinct manual billing ids would be 201 bindings.
+    const club = Array.from({ length: 200 }, (_, i) => merged({
+      registrationId: `reg_${i}`, paymentStatus: 'manual',
+      billingRegistrationId: null, billedWithTeamName: null, mergedTeamNames: null,
+    }));
+    const db = adminDb({ club, audit: [] });
+    await get(db);
+
+    const auditIdxs = sqlOf(db)
+      .map((q: string, i: number) => (/admin_audit_log/.test(q) ? i : -1))
+      .filter((i: number) => i >= 0);
+
+    expect(auditIdxs.length).toBe(3); // 200 ids at 80 per statement
+    for (const i of auditIdxs) {
+      const binds = (db.prepare as any).mock.results[i].value.bind.mock.calls[0];
+      expect(binds.length).toBeLessThanOrEqual(100);
+    }
+    // One round trip, not three.
+    expect((db.batch as any).mock.calls).toHaveLength(1);
+    expect((db.batch as any).mock.calls[0][0]).toHaveLength(3);
+  });
+
+  it('skips the lookup entirely when no row is manual', async () => {
+    const db = adminDb({ club: [merged({ paymentStatus: 'active' })] });
+    await get(db);
+
+    expect(sqlOf(db).some((q: string) => /admin_audit_log/.test(q))).toBe(false);
+    expect((db.batch as any).mock.calls).toHaveLength(0);
   });
 });
