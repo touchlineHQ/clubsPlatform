@@ -6,6 +6,13 @@ vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
 
+// Without this the read-cost tests build a real client and it attempts an HTTP
+// call to the fake host, so the assertion passes while the test does I/O.
+const mockCaptureImmediate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('posthog-node', () => ({
+  PostHog: vi.fn(() => ({ captureImmediate: mockCaptureImmediate })),
+}));
+
 import { onRequestGet, onRequestDelete } from '../../api/my-registrations';
 
 const sampleRegistration = {
@@ -320,6 +327,8 @@ describe('onRequestDelete', () => {
 describe('naming which read failed (#107)', () => {
   beforeEach(() => {
     mockGetSession.mockResolvedValue(adminSession);
+    // Re-armed here because the afterEach below strips it back to a bare vi.fn().
+    mockCaptureImmediate.mockResolvedValue(undefined);
     // These tests fail reads on purpose; the handler logs each one by design.
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -366,6 +375,23 @@ describe('naming which read failed (#107)', () => {
     expect(body.read).toBe('club_scan');
   });
 
+  it('names the audit read when it is the one that dies', async () => {
+    // Reached only when a row is manual, and it goes through db.batch() rather
+    // than .all(), so failingAllAt cannot get near it.
+    const db = makeDb({
+      all: [[], [{ ...clubRegistration, paymentStatus: 'manual' }]],
+      batch: [[[]]],
+      first: null,
+    });
+    (db as any).batch = vi.fn(() => Promise.reject(new Error('D1_ERROR: too much')));
+
+    const res = await get(db);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('audit_read');
+  });
+
   it('names the import stamp when it is the one that dies', async () => {
     const db = makeDb({ all: [[], []], batch: [[[]]], first: null });
     const realPrepare = db.prepare as any;
@@ -409,6 +435,7 @@ describe('naming which read failed (#107)', () => {
 
     expect(res.status).toBe(200);
     expect(captured).toHaveLength(0);
+    expect(mockCaptureImmediate).not.toHaveBeenCalled();
   });
 
   it('reports read cost for a large club', async () => {
@@ -425,6 +452,21 @@ describe('naming which read failed (#107)', () => {
 
     // Off the response path, so it cannot add latency to the slow case.
     expect(captured).toHaveLength(1);
+    expect(mockCaptureImmediate).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'registrations read',
+      groups: { club: 'test-club' },
+      properties: expect.objectContaining({
+        club_slug: 'test-club',
+        scope: 'admin',
+        club_rows: 1000,
+        personal_rows: 0,
+      }),
+    }));
+
+    // Counts and durations only — a FAN number here would put personal data in
+    // PostHog, which is the guardrail #94 set for the status report.
+    const [payload] = mockCaptureImmediate.mock.calls[0];
+    expect(JSON.stringify(payload)).not.toMatch(/fan_/i);
   });
 });
 

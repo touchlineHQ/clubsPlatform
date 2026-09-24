@@ -795,9 +795,14 @@ async function describeFailure(res: globalThis.Response): Promise<RegistrationsL
   let body: string | null = text ? text.slice(0, ERROR_BODY_CHARS) : null;
 
   try {
-    const parsed = JSON.parse(text) as { read?: string };
-    if (typeof parsed.read === 'string') read = parsed.read;
-    body = null; // Recognised and understood; the label is the useful part.
+    const parsed = JSON.parse(text) as { read?: string } | null;
+    if (typeof parsed?.read === 'string') {
+      read = parsed.read;
+      body = null; // Recognised and understood; the label is the useful part.
+    }
+    // JSON without a `read` is still ours — the 400 for a missing club header,
+    // the 403 for a club mismatch, the 401 from requireAuth. Its `error` text is
+    // the only evidence those give, so the snippet has to survive.
   } catch {
     // Not our JSON — an edge error page. Keep the snippet; it names the limit.
   }

@@ -180,6 +180,32 @@ describe('RegistrationsPage', () => {
     });
   });
 
+  it('keeps the error text when the JSON carries no read label', async () => {
+    // The endpoint's own 400/401/403 answers are JSON but name no read, and
+    // their `error` text is the only evidence they give.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: 'Access denied: club mismatch' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          status: 403,
+          read: null,
+          body: expect.stringContaining('club mismatch'),
+        }),
+      );
+    });
+  });
+
   it('shows Export to Excel button next to Import Players in Club Registrations tab', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
     mockFetch.mockResolvedValue({
