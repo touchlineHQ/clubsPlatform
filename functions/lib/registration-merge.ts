@@ -30,6 +30,68 @@ export function billingRegistrationIdSql(alias: string): string {
 }
 
 /**
+ * The club-scoped LEFT JOINs that resolve a registration to its billing row.
+ *
+ * Prefer this over {@link billingRegistrationJoinSql} on a read that also wants
+ * the group's team names. Three reasons:
+ *
+ * - **LEFT, not INNER.** `primaryRegistrationId` is `ON DELETE RESTRICT`, so a
+ *   dangling primary is unreachable today — but an inner join would *delete the
+ *   row from the result* if that ever broke, and a merge bug that hides
+ *   registrations from the admin list is far worse than one that shows a blank
+ *   badge.
+ * - **Club-scoped.** `billingRegistrationIdSql` does not constrain
+ *   `registration_merge` by club, so a cross-club row (which the API prevents
+ *   but the schema permits) would pull another club's team name onto the page.
+ * - **Real columns.** `${merge}."primaryRegistrationId"` is then a column rather
+ *   than a correlated subquery, so {@link billingIdFromJoinSql} is a COALESCE
+ *   over two columns and stays cheap wherever it is repeated.
+ *
+ * `${merge}` is a PK seek (`registration_merge.registrationId` is the PRIMARY
+ * KEY) and `${billing}` is a PK seek.
+ */
+export function billingMergeJoinSql(
+  alias: string,
+  merge = "rm0",
+  billing = "bpr",
+): string {
+  return `LEFT JOIN "registration_merge" ${merge}
+                ON ${merge}."registrationId" = ${alias}."id"
+               AND ${merge}."clubSlug"       = ${alias}."clubSlug"
+         LEFT JOIN "player_registration" ${billing}
+                ON ${billing}."id" = ${merge}."primaryRegistrationId"`;
+}
+
+/** The billing id, once {@link billingMergeJoinSql} has supplied the columns. */
+export function billingIdFromJoinSql(alias: string, merge = "rm0"): string {
+  return `COALESCE(${merge}."primaryRegistrationId", ${alias}."id")`;
+}
+
+/**
+ * The other teams a primary is billed for, as a `', '`-joined string.
+ *
+ * Walks `idx_registration_merge_primary`, so a primary names every sibling
+ * whether or not the sibling is in the caller's result set — which is the whole
+ * point once the caller only sees one page.
+ *
+ * Ordered by team name in a nested subquery rather than with `GROUP_CONCAT(x, s
+ * ORDER BY y)`: that form needs SQLite 3.44+, and D1's version is pinned
+ * nowhere in this repo. Without an explicit order `GROUP_CONCAT` is free to
+ * return its arguments in any order, which reads as text flickering between
+ * requests.
+ */
+export function mergedTeamNamesSql(alias: string): string {
+  return `(SELECT GROUP_CONCAT(mt."t", ', ') FROM (
+      SELECT mpr."teamName" AS "t"
+        FROM "registration_merge" rm2
+        JOIN "player_registration" mpr ON mpr."id" = rm2."registrationId"
+       WHERE rm2."primaryRegistrationId" = ${alias}."id"
+         AND rm2."clubSlug"              = ${alias}."clubSlug"
+       ORDER BY mpr."teamName" COLLATE NOCASE
+    ) mt)`;
+}
+
+/**
  * Joins `src` to the registration its money hangs off, bound to `dest`.
  *
  * A join rather than a separate lookup, so resolving costs no extra round trip.
