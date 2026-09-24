@@ -28,7 +28,10 @@ describe('player-registrations GET', () => {
     mockGetSession.mockResolvedValue(adminSession);
   });
 
-  it('returns an array of player registrations', async () => {
+  it('returns a page of matches for a search', async () => {
+    // No longer returns the club: it takes ?q= and searches. The executed
+    // behaviour — prefixes, escaping, club scope, rehydration by id — lives in
+    // admin-player-registrations.test.ts against real SQLite.
     const registrationRows = [
       {
         fanId: 'FAN001',
@@ -44,32 +47,30 @@ describe('player-registrations GET', () => {
         intervalCount: 1,
         intervalUnit: 'yearly',
       },
-      {
-        fanId: 'FAN002',
-        registrationId: 'preg_2',
-        teamName: 'U13 Girls',
-        ageGroup: 'U13',
-        registrationExpiry: '2025-07-31',
-        registrationStatus: 'active',
-        linkedAccounts: null,
-        subscriptionLevelId: null,
-        subscriptionLevelName: null,
-        yearlyPriceInPence: null,
-        intervalCount: null,
-        intervalUnit: null,
-      },
     ];
 
     const db = makeDb({ all: [registrationRows] });
-    const req = getReq('/api/admin/player-registrations', { 'X-Club-Slug': 'test-club' });
+    const req = getReq('/api/admin/player-registrations?q=FAN', { 'X-Club-Slug': 'test-club' });
     const ctx = makeContext(req, { env: { DB: db as any } });
 
     const res = await playerRegistrationsGet(ctx as any);
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(Array.isArray(body.registrations)).toBe(true);
-    expect(body.registrations.length).toBe(2);
     expect(body.registrations[0].fanId).toBe('FAN001');
+  });
+
+  it('returns nothing rather than the whole club when no query is given', async () => {
+    // The read this endpoint used to do on every page load.
+    const db = makeDb({ all: [[{ fanId: 'FAN001' }]] });
+    const req = getReq('/api/admin/player-registrations', { 'X-Club-Slug': 'test-club' });
+    const ctx = makeContext(req, { env: { DB: db as any } });
+
+    const res = await playerRegistrationsGet(ctx as any);
+    const body = await res.json() as any;
+
+    expect(body.registrations).toEqual([]);
+    expect((db.prepare as any).mock.calls).toHaveLength(0);
   });
 
   it('returns 401 when not authenticated', async () => {

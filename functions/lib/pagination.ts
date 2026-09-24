@@ -133,6 +133,9 @@ export function decodeCursor(raw: string): Cursor | null {
 }
 
 function clampLimit(raw: string | number | null | undefined): number {
+  // A blank string is absent, not zero. Number("") is 0 and Number.isFinite(0)
+  // is true, so parsing without this turns `?limit=` into one row per page.
+  if (typeof raw === "string" && raw.trim() === "") return LIMIT_DEFAULT;
   const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n)) return LIMIT_DEFAULT;
   return Math.min(LIMIT_MAX, Math.max(LIMIT_MIN, Math.trunc(n)));

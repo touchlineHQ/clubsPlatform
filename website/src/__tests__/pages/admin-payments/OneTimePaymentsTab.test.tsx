@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { renderWithMantine, mockAdmin, mockSingleClub } from '../../test-utils';
 
 const mockFetch = vi.fn();
@@ -20,13 +20,19 @@ import { OneTimePaymentsTab } from '../../../pages/admin-payments/OneTimePayment
 const clubHeaders: HeadersInit = { 'x-club-slug': 'test-club' };
 
 describe('OneTimePaymentsTab', () => {
-  it('shows loader initially when fetch never resolves', () => {
+  it('renders the picker without first loading the whole club', () => {
+    // The club-wide load this replaces was the same unbounded read #114
+    // removed from the registrations table; the picker searches instead.
     mockFetch.mockImplementation(() => new Promise(() => {}));
     renderWithMantine(<OneTimePaymentsTab clubHeaders={clubHeaders} />, {
       authValue: mockAdmin,
       clubValue: mockSingleClub,
     });
-    expect(document.querySelector('.mantine-Loader-root')).toBeTruthy();
+
+    expect(screen.getByPlaceholderText(/Search by FAN number or team/i)).toBeTruthy();
+    expect(mockFetch.mock.calls.some(
+      c => String(c[0]).startsWith('/api/admin/player-registrations'),
+    )).toBe(false);
   });
 
   it('renders component headings after loading', async () => {
@@ -73,7 +79,9 @@ describe('OneTimePaymentsTab', () => {
     });
   });
 
-  it('shows an error alert when fetch fails', async () => {
+  it('shows an error alert when a search fails', async () => {
+    // Nothing is fetched until the admin types, so the failure surfaces on the
+    // search rather than on mount.
     mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
 
     renderWithMantine(<OneTimePaymentsTab clubHeaders={clubHeaders} />, {
@@ -81,9 +89,12 @@ describe('OneTimePaymentsTab', () => {
       clubValue: mockSingleClub,
     });
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('alert').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+      target: { value: 'Under' },
     });
-    expect(screen.getByText(/Failed to load player registrations/i)).toBeTruthy();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to search player registrations/i)).toBeTruthy();
+    });
   });
 });

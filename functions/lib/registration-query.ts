@@ -105,7 +105,7 @@ export interface RegistrationFilters {
 }
 
 /** Escapes the LIKE wildcards, or a `q` of '%' matches the whole club. */
-function escapeLike(value: string): string {
+export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 

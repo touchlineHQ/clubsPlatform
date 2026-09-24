@@ -77,6 +77,10 @@ describe('parsePageRequest', () => {
     expect(limitOf('75')).toBe(75);
     expect(limitOf('not a number')).toBe(LIMIT_DEFAULT);
     expect(limitOf(null)).toBe(LIMIT_DEFAULT);
+    // `?limit=` is absent, not zero: Number('') is 0 and 0 is finite, so
+    // without the guard this pages one row at a time.
+    expect(limitOf('')).toBe(LIMIT_DEFAULT);
+    expect(limitOf('   ')).toBe(LIMIT_DEFAULT);
   });
 
   it('rejects a cursor minted under a different sort', () => {

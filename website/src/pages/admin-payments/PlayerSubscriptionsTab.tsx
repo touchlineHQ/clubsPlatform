@@ -10,9 +10,9 @@ import {
 } from '@tabler/icons-react';
 import { clubDesign } from '../../theme';
 import {
-  formatGBP, INTERVAL_OPTIONS, type IntervalUnit,
-  type PlayerPaymentRow, type PlayerRegistrationRow,
+  formatGBP, INTERVAL_OPTIONS, type IntervalUnit, type PlayerPaymentRow,
 } from './types';
+import { usePlayerRegistrationSearch } from './usePlayerRegistrationSearch';
 
 interface Props {
   clubSlug: string | null;
@@ -20,8 +20,7 @@ interface Props {
 }
 
 export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
-  const [registrations, setRegistrations] = useState<PlayerRegistrationRow[]>([]);
-  const [loadingPlayers, setLoadingPlayers] = useState(true);
+  const search = usePlayerRegistrationSearch(clubHeaders);
   const [loadError, setLoadError] = useState('');
 
   const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
@@ -39,37 +38,30 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   const [generatedRef, setGeneratedRef] = useState('');
   const [copied, setCopied] = useState(false);
 
+  // Players are searched rather than listed, so only the payments load here.
+  // clubSlug is in the deps now: these never refetched when the club changed.
   useEffect(() => {
-    fetch('/api/admin/player-registrations', { headers: clubHeaders })
-      .then(r => r.ok ? r.json() as Promise<{ registrations: PlayerRegistrationRow[] }> : Promise.reject())
-      .then(d => setRegistrations(d.registrations))
-      .catch(() => setLoadError('Failed to load player registrations.'))
-      .finally(() => setLoadingPlayers(false));
-
     fetch('/api/admin/player-payments', { headers: clubHeaders })
       .then(r => r.ok ? r.json() as Promise<{ payments: PlayerPaymentRow[] }> : Promise.reject())
       .then(d => setPayments(d.payments))
       .catch(() => { /* non-fatal */ });
-  }, []);
+  }, [clubSlug]);
 
-  const playerOptions = registrations.map(r => ({
-    value: r.registrationId,
-    label: `FAN ${r.fanId} — ${r.teamName}`,
-  }));
-
-  const selectedReg = registrations.find(r => r.registrationId === selectedRegId) ?? null;
+  const selectedReg = search.selected;
 
   const publicUrl = selectedReg && clubSlug
     ? `${window.location.origin}/${clubSlug}/payments/SUBS/${selectedReg.fanId}`
     : null;
 
-  const handleSelect = (regId: string | null) => {
+  const handleSelect = async (regId: string | null) => {
     setSelectedRegId(regId);
     setGeneratedLink('');
     setGeneratedRef('');
     setGenError('');
 
-    const reg = registrations.find(r => r.registrationId === regId);
+    // Awaited: a registration chosen from a search the user has since typed
+    // past is fetched by id, and the pricing fields drive the autofill below.
+    const reg = await search.select(regId);
     if (reg && reg.yearlyPriceInPence != null && reg.intervalCount != null && reg.intervalUnit) {
       setTotalGbp(reg.yearlyPriceInPence / 100);
       setIntervalUnit(reg.intervalUnit);
@@ -149,24 +141,22 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
       <Paper p={{ base: 'md', sm: 'lg' }} withBorder radius="md">
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registration</Text>
-          {loadingPlayers ? (
-            <Center h={60}><Loader size="sm" /></Center>
-          ) : registrations.length === 0 ? (
-            <Box p="md" style={{ background: clubDesign.color.n1, border: `1px dashed ${clubDesign.color.n3}`, borderRadius: 8 }}>
-              <Text size="sm" c="dimmed" ta="center">
-                No registered players found. Import players first via Admin → Import.
-              </Text>
-            </Box>
-          ) : (
+          {(
             <Select
               placeholder="Search by FAN number or team…"
-              data={playerOptions}
+              data={search.options}
               value={selectedRegId}
               onChange={handleSelect}
               searchable
               clearable
               radius="md"
-              nothingFoundMessage="No players match your search"
+              searchValue={search.query}
+              onSearchChange={search.setQuery}
+              // The club is not loaded up front any more, so the list cannot be
+              // narrowed locally — every keystroke is a query.
+              filter={({ options }) => options}
+              nothingFoundMessage={search.nothingFoundMessage}
+              rightSection={search.searching ? <Loader size="xs" /> : undefined}
             />
           )}
 
