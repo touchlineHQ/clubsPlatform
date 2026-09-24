@@ -8,6 +8,7 @@ import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { httpError } from '../lib/http';
 
 interface SecretRow {
   id: string;
@@ -51,7 +52,7 @@ export function AdminSecretsPage() {
   const fetchSecrets = async () => {
     try {
       const res = await fetch('/api/admin/secrets', { headers: clubHeaders });
-      if (!res.ok) throw new Error('Failed to load secrets');
+      if (!res.ok) throw await httpError('Failed to load secrets', res, '/api/admin/secrets');
       const data = await res.json() as { secrets: SecretRow[]; publicKey: string | null };
       setSecrets(data.secrets);
       setPublicKey(data.publicKey);

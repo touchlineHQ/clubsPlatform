@@ -9,6 +9,8 @@ import {
   IconTrash, IconUsersGroup, IconX,
 } from '@tabler/icons-react';
 import { clubDesign } from '../../theme';
+import { httpError } from '../../lib/http';
+import { captureError } from '../../lib/posthog';
 import {
   formatGBP, INTERVAL_OPTIONS, type IntervalUnit,
   type StatusRate, type SubscriptionLevel, type TeamRow, type TeamStatusRate,
@@ -51,9 +53,9 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
         fetch('/api/admin/team-subscription-levels', { headers: clubHeaders }),
         fetch('/api/admin/status-subscription-levels', { headers: clubHeaders }),
       ]);
-      if (!lvlRes.ok) throw new Error('Failed to load subscription levels');
-      if (!teamsRes.ok) throw new Error('Failed to load teams');
-      if (!statusRes.ok) throw new Error('Failed to load status rates');
+      if (!lvlRes.ok) throw await httpError('Failed to load subscription levels', lvlRes, '/api/admin/subscription-levels');
+      if (!teamsRes.ok) throw await httpError('Failed to load teams', teamsRes, '/api/admin/team-subscription-levels');
+      if (!statusRes.ok) throw await httpError('Failed to load status rates', statusRes, '/api/admin/status-subscription-levels');
       const lvlData = await lvlRes.json() as { levels: SubscriptionLevel[] };
       const teamsData = await teamsRes.json() as { teams: TeamRow[] };
       const statusData = await statusRes.json() as { statuses: string[]; clubRates: StatusRate[]; teamRates: TeamStatusRate[] };
@@ -63,6 +65,7 @@ export function SubscriptionLevelsTab({ clubHeaders }: Props) {
       setClubRates(statusData.clubRates);
       setTeamRates(statusData.teamRates);
     } catch (e) {
+      captureError(e, { op: 'subscriptionLevels.refresh' });
       setLoadError(e instanceof Error ? e.message : 'Failed to load');
     } finally {
       setLoading(false);

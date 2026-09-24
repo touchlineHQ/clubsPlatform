@@ -696,6 +696,28 @@ describe('RegistrationsPage', () => {
       });
     });
 
+    it('says the merge was saved when only the reload after it fails', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+
+      // The POST commits; the refresh behind it does not.
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+        .mockResolvedValue({ ok: false, status: 500, json: async () => ({ error: 'Internal error' }) });
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Registrations merged, but the list could not reload/i)).toBeTruthy();
+      });
+      expect(screen.queryByText(/Failed to merge/i)).toBeNull();
+      expect(screen.queryByTestId('modal')).toBeNull();
+    });
+
     it('defaults the primary to the registration that has a level', async () => {
       // A primary without a level would render a dead card for a payable player.
       await renderClubTab([

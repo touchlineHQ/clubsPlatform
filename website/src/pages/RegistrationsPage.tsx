@@ -17,6 +17,7 @@ import { clubDesign } from '../theme';
 import { ImportPlayersPanel } from './admin-users/ImportPlayersPanel';
 import { StatusReportPanel } from './registrations/StatusReportPanel';
 import { captureError, captureEvent } from '../lib/posthog';
+import { httpError } from '../lib/http';
 import { timeAgo } from '../utils/timeAgo';
 import { getSubscriptionStatus } from '../utils/subscriptionStatus';
 import { buildPaymentLink } from '../utils/paymentLink';
@@ -791,15 +792,21 @@ export function RegistrationsPage() {
   const [mergeError, setMergeError] = useState('');
   const [showOnlySuggested, setShowOnlySuggested] = useState(false);
 
-  /** Reload the registrations and import timestamp for the active club. */
-  const refresh = useCallback(async () => {
+  /**
+   * Reload the registrations and import timestamp for the active club.
+   *
+   * `savedChange` names a write that has already committed. A reload that fails
+   * after one must say so: the table still shows the old rows, and a bare
+   * "Failed to load" beside them reads as the write having failed.
+   */
+  const refresh = useCallback(async (savedChange?: string) => {
     setLoading(true);
     setError('');
     try {
       const res = await fetch('/api/my-registrations', {
         headers: { 'X-Club-Slug': clubSlug },
       });
-      if (!res.ok) throw new Error('Failed to load registrations');
+      if (!res.ok) throw await httpError('Failed to load registrations', res, '/api/my-registrations');
       const data = await res.json() as Partial<Response>;
       // Defaulted, not trusted: the page reads `personal.length` directly, so a
       // missing field would white-screen the table rather than show an error.
@@ -808,8 +815,10 @@ export function RegistrationsPage() {
       setScope(data.scope ?? 'user');
       setLastImportedAt(data.lastImportedAt ?? null);
     } catch (e) {
-      captureError(e, { op: 'registrations.refresh' });
-      setError('Failed to load registrations');
+      captureError(e, { op: 'registrations.refresh', after_write: savedChange ?? null });
+      setError(savedChange
+        ? `${savedChange}, but the list could not reload. Reload the page to see the change before making another.`
+        : 'Failed to load registrations');
     } finally {
       setLoading(false);
     }
@@ -874,7 +883,7 @@ export function RegistrationsPage() {
       }
       // Refresh in the background to pick up the authoritative resolved level
       // (e.g. when clearing an override and a status/team rule kicks in).
-      refresh();
+      refresh('Subscription level saved');
     } catch (e) {
       setLevelError(e instanceof Error ? e.message : 'Failed to update subscription level');
       // Roll back the optimistic update.
@@ -926,7 +935,7 @@ export function RegistrationsPage() {
       setManualNote('');
       // Refresh rather than patch locally — the server owns the attribution
       // (who/when) shown in the badge tooltip.
-      await refresh();
+      await refresh('Marked as paid');
     } catch (e) {
       setManualError(e instanceof Error ? e.message : 'Failed to mark as paid');
     } finally {
@@ -946,7 +955,7 @@ export function RegistrationsPage() {
         const body = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(body.error ?? 'Failed to remove the manual override');
       }
-      await refresh();
+      await refresh('Manual payment removed');
     } catch (e) {
       setUnmarkPaidError(e instanceof Error ? e.message : 'Failed to remove the manual override');
     } finally {
@@ -1050,7 +1059,7 @@ export function RegistrationsPage() {
       setSelectedForMerge(new Set());
       // Refresh, not patch: the server owns the grouping and the whole group's
       // payment status moves with it.
-      await refresh();
+      await refresh('Registrations merged');
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : 'Failed to merge registrations');
     } finally {
@@ -1071,7 +1080,7 @@ export function RegistrationsPage() {
         throw new Error(body.error ?? 'Failed to unmerge registrations');
       }
       captureEvent('registrations unmerged', { club_slug: clubSlug });
-      await refresh();
+      await refresh('Registrations unmerged');
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : 'Failed to unmerge registrations');
     } finally {
