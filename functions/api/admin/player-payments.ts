@@ -9,6 +9,7 @@ import {
 } from '../../lib/gocardless-link';
 import { stripReferenceSuffix } from '../../lib/payment-reference';
 import { subscriptionStatusToPaymentStatus } from '../../lib/payment-status';
+import { gcMetadata } from '../../lib/gc-metadata';
 import type { GCSubscription } from '../gocardless/_types';
 
 /**
@@ -307,7 +308,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         // Without this the subscription is open-ended and collects forever.
         count: payment.intervalCount,
         name: logicalRef,
-        metadata: { reference: logicalRef, customer_ref: logicalRef },
+        metadata: gcMetadata(['reference', logicalRef], ['customer_ref', logicalRef]),
         links: { mandate: payment.mandateId },
         ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },

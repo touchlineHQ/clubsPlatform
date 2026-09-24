@@ -13,6 +13,7 @@ import {
   resolveSubscriptionStartDate,
   fetchNextPossibleChargeDate,
 } from '../../lib/gocardless-link';
+import { GC_METADATA_MAX_KEYS } from '../../lib/gc-metadata';
 
 const baseEnv = {
   DB: {} as D1Database,
@@ -160,7 +161,7 @@ describe('createGoCardlessLink', () => {
     expect(firstCallUrl).toContain('sandbox');
   });
 
-  it('includes count in metadata when count is specified', async () => {
+  it('carries count into the hosted description and the confirm redirect', async () => {
     const db = makeDb({ first: { id: 'reg_1', teamName: 'First XI', fanId: 'FAN001' } }) as unknown as D1Database;
     mockGetSecret.mockResolvedValue('gc_token_123');
 
@@ -170,8 +171,48 @@ describe('createGoCardlessLink', () => {
 
     await createGoCardlessLink({ ...baseInput, db, count: 10 });
 
-    const firstCallBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
-    expect(firstCallBody.billing_requests.metadata.tracking_info).toContain('x10');
+    // count used to ride along in a tracking_info metadata key. That key cost a
+    // third of the 3-key budget and nothing read it, so the two places the count
+    // actually has to reach are the payer's mandate page and confirm.ts.
+    const brBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(brBody.billing_requests.mandate_request.description).toContain('for 10 payments');
+
+    const flowBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(flowBody.billing_request_flows.redirect_uri).toContain('count=10');
+  });
+
+  it('sends no more than three metadata keys on the billing request', async () => {
+    const db = makeDb({ first: { id: 'reg_1', teamName: 'First XI', fanId: 'FAN001' } }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_requests: { id: 'br_001' } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ billing_request_flows: { authorisation_url: 'https://pay.gocardless.com' } }) });
+
+    await createGoCardlessLink({ ...baseInput, db, count: 10 });
+
+    // GoCardless 422s a 4th key and the payer never reaches the hosted page.
+    // 813ded0 cut this back from 5 to 3; bfb4be9 and 280f698 walked it back up
+    // to 5 and killed every payment link, because nothing counted the keys.
+    // Repack or drop before you add one.
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    const keys = Object.keys(body.billing_requests.metadata);
+    expect(keys.length).toBeLessThanOrEqual(GC_METADATA_MAX_KEYS);
+    expect(keys.sort()).toEqual(['reference', 'registration_generation', 'registration_id']);
+  });
+
+  it('refuses a payment type that would not survive the reference round trip', async () => {
+    const db = makeDb({ first: { id: 'reg_1', teamName: 'First XI', fanId: 'FAN001' } }) as unknown as D1Database;
+    mockGetSecret.mockResolvedValue('gc_token_123');
+
+    // confirm.ts recovers the type from the reference's last hyphen segment, so
+    // a hyphen here would rebuild a different reference, miss the existing
+    // subscription and collect from the player twice.
+    const result = await createGoCardlessLink({ ...baseInput, db, paymentType: 'KIT-EXTRA' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('stamps the source registration and payment generation into billing metadata', async () => {

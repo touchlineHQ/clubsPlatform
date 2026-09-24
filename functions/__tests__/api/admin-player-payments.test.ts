@@ -204,6 +204,8 @@ describe('POST /api/admin/player-payments — number of payments', () => {
 
     expect(captured.value.metadata.reference).toBe(LOGICAL_REFERENCE);
     expect(captured.value.metadata.customer_ref).toBe(LOGICAL_REFERENCE);
+    // The 3-key cap is per GoCardless resource, not just billing requests.
+    expect(Object.keys(captured.value.metadata).length).toBeLessThanOrEqual(3);
     expect(captured.value.name).toBe(LOGICAL_REFERENCE);
 
     vi.unstubAllGlobals();

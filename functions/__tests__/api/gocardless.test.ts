@@ -202,7 +202,7 @@ describe('GET /api/gocardless/confirm', () => {
       mandateId = 'MND-1',
       existingSubscriptions = [],
       newSubscription = { id: 'SUB-1', status: 'active' },
-      brMetadata = { registration_id: 'reg_1', reference: 'U11S-FAN001-SUBS', payment_type: 'SUBS' },
+      brMetadata = { registration_id: 'reg_1', reference: 'U11S-FAN001-SUBS' },
       capturedSubscriptionBody,
       mandate,
       mandateStatus,
@@ -336,7 +336,6 @@ describe('GET /api/gocardless/confirm', () => {
         registration_id: 'reg_1',
         registration_generation: '0',
         reference: 'U11S-FAN001-SUBS',
-        payment_type: 'SUBS',
       },
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -420,7 +419,7 @@ describe('GET /api/gocardless/confirm', () => {
 
     it('resolves the registration id through the merge before doing anything else', async () => {
       const fetchMock = makeFetchMock({
-        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS' },
       });
       vi.stubGlobal('fetch', fetchMock);
 
@@ -451,7 +450,7 @@ describe('GET /api/gocardless/confirm', () => {
     it('rebuilds the reference from the primary, so the group keeps one identity', async () => {
       // A stale reference fails the subscription match on the same mandate.
       const fetchMock = makeFetchMock({
-        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS' },
       });
       vi.stubGlobal('fetch', fetchMock);
 
@@ -467,6 +466,54 @@ describe('GET /api/gocardless/confirm', () => {
       vi.unstubAllGlobals();
     });
 
+    it('derives the payment type from the reference when metadata does not carry it', async () => {
+      // payment_type is not stamped: the billing request has room for three
+      // metadata keys and the other three earn their place. The type comes back
+      // out of the reference's last segment instead.
+      const fetchMock = makeFetchMock({
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-KIT' },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({ first: resolvedPricingRow, run: { meta: { changes: 1 } } });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      const res = await confirmOnRequestGet(
+        makeContext(new Request(makeConfirmUrl()), { env }) as any,
+      );
+
+      // Rebuilt against the primary, but still a KIT payment.
+      expect(res.headers.get('location')).toContain('ref=U11S-FAN001-KIT');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('confirms a link minted before payment_type and registration_generation existed', async () => {
+      // Links sitting in payers' inboxes from before the merge work carry the
+      // old three keys. They must still complete.
+      const fetchMock = makeFetchMock({
+        brMetadata: {
+          registration_id: 'reg_1',
+          reference: 'U11S-FAN001-SUBS',
+          tracking_info: 'team:U11s|fan:FAN001|type:SUBS|1000p-monthly',
+        },
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const db = makeDb({
+        first: { ...resolvedPricingRow, paymentGeneration: 0 },
+        run: { meta: { changes: 1 } },
+      });
+      const env = makeEnv({ DB: db as any, GC_ENVIRONMENT: 'sandbox' });
+      const res = await confirmOnRequestGet(
+        makeContext(new Request(makeConfirmUrl()), { env }) as any,
+      );
+
+      expect(res.headers.get('location')).toContain('/payment-success');
+      expect(res.headers.get('location')).toContain('ref=U11S-FAN001-SUBS');
+
+      vi.unstubAllGlobals();
+    });
+
     it('reuses the group‘s existing subscription instead of creating a second one', async () => {
       // The regression that matters: pay via A, merge B into A, then finish B's link.
       const existingSub = {
@@ -477,7 +524,7 @@ describe('GET /api/gocardless/confirm', () => {
       };
       const fetchMock = makeFetchMock({
         existingSubscriptions: [existingSub],
-        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS' },
       });
       vi.stubGlobal('fetch', fetchMock);
 
@@ -503,7 +550,7 @@ describe('GET /api/gocardless/confirm', () => {
       // secondary's, so matching on it would miss the case dedupe exists for.
       const fetchMock = makeFetchMock({
         mandateId: 'MND-NEW',
-        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS', payment_type: 'SUBS' },
+        brMetadata: { registration_id: 'reg_2', reference: 'SUNDAYVETS-FAN001-SUBS' },
       });
       vi.stubGlobal('fetch', fetchMock);
 
@@ -620,6 +667,8 @@ describe('GET /api/gocardless/confirm', () => {
     expect(captured.value.amount).toBe(1000);
     expect(captured.value.interval_unit).toBe('monthly');
     expect(captured.value.count).toBe(12);
+    // The 3-key cap is per GoCardless resource, not just billing requests.
+    expect(Object.keys(captured.value.metadata).length).toBeLessThanOrEqual(3);
 
     vi.unstubAllGlobals();
   });
