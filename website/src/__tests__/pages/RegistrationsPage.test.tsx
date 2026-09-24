@@ -17,6 +17,13 @@ vi.mock('@mantine/core', async (importOriginal) => {
   };
 });
 
+vi.mock('../../lib/posthog', () => ({
+  captureEvent: vi.fn(),
+  captureError: vi.fn(),
+}));
+
+import { captureError } from '../../lib/posthog';
+
 const mockFetch = vi.fn();
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch);
@@ -105,7 +112,12 @@ describe('RegistrationsPage', () => {
   });
 
   it('shows an error when fetch fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async () => '',
+    });
 
     renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
@@ -114,6 +126,83 @@ describe('RegistrationsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/failed to load/i)).toBeTruthy();
+    });
+  });
+
+  it('reports which read failed, so #107 names a cause', async () => {
+    // The bare !res.ok this replaces sent PostHog nothing but the string
+    // "Failed to load registrations", which is why #93 was closed as
+    // not_planned and then recurred as #107.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({ error: 'Failed to load registrations', read: 'club_scan' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ op: 'registrations.refresh', status: 500, read: 'club_scan' }),
+      );
+    });
+  });
+
+  it('keeps the body when the edge answers instead of the Worker', async () => {
+    // A Worker killed by a CPU or subrequest limit never reaches our handler,
+    // so the response is the edge's HTML and there is no `read` to report. The
+    // status and the snippet are then the only evidence of what happened.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => '<!DOCTYPE html><title>Worker exceeded resource limits</title>',
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          op: 'registrations.refresh',
+          status: 503,
+          read: null,
+          body: expect.stringContaining('exceeded resource limits'),
+        }),
+      );
+    });
+  });
+
+  it('keeps the error text when the JSON carries no read label', async () => {
+    // The endpoint's own 400/401/403 answers are JSON but name no read, and
+    // their `error` text is the only evidence they give.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: 'Access denied: club mismatch' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          status: 403,
+          read: null,
+          body: expect.stringContaining('club mismatch'),
+        }),
+      );
     });
   });
 

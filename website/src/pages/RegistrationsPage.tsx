@@ -761,6 +761,55 @@ function exportRegistrationsToXlsx(
   XLSX.writeFile(wb, filename);
 }
 
+/**
+ * A failed registrations load, carrying enough to say what failed.
+ *
+ * #107 and #93 were both filed from a bare `!res.ok` that read neither the
+ * status nor the body, so the only thing that reached PostHog was the string
+ * "Failed to load registrations" — which named no cause and got #93 closed as
+ * `not_planned` before it recurred.
+ */
+class RegistrationsLoadError extends Error {
+  constructor(readonly context: { status: number; read: string | null; body: string | null }) {
+    super('Failed to load registrations');
+    this.name = 'RegistrationsLoadError';
+  }
+}
+
+/** How much of an unrecognised error body to keep. Enough to identify it. */
+const ERROR_BODY_CHARS = 200;
+
+/**
+ * Reads what a failed response can tell us.
+ *
+ * Two shapes matter and they mean different things. The API answers with
+ * `{ error, read }`, where `read` names the query that died. A Worker killed by
+ * a CPU or subrequest limit never reaches that code at all — the edge answers
+ * instead, with HTML — so a body that will not parse is itself the signal, and
+ * the status is the only thing distinguishing the cases. Neither carries
+ * personal data, and the snippet is truncated regardless.
+ */
+async function describeFailure(res: globalThis.Response): Promise<RegistrationsLoadError> {
+  const text = await res.text().catch(() => '');
+  let read: string | null = null;
+  let body: string | null = text ? text.slice(0, ERROR_BODY_CHARS) : null;
+
+  try {
+    const parsed = JSON.parse(text) as { read?: string } | null;
+    if (typeof parsed?.read === 'string') {
+      read = parsed.read;
+      body = null; // Recognised and understood; the label is the useful part.
+    }
+    // JSON without a `read` is still ours — the 400 for a missing club header,
+    // the 403 for a club mismatch, the 401 from requireAuth. Its `error` text is
+    // the only evidence those give, so the snippet has to survive.
+  } catch {
+    // Not our JSON — an edge error page. Keep the snippet; it names the limit.
+  }
+
+  return new RegistrationsLoadError({ status: res.status, read, body });
+}
+
 /** Display personal or club registrations and the latest player-import time. */
 export function RegistrationsPage() {
   const { clubSlug } = useClub();
@@ -799,7 +848,7 @@ export function RegistrationsPage() {
       const res = await fetch('/api/my-registrations', {
         headers: { 'X-Club-Slug': clubSlug },
       });
-      if (!res.ok) throw new Error('Failed to load registrations');
+      if (!res.ok) throw await describeFailure(res);
       const data = await res.json() as Partial<Response>;
       // Defaulted, not trusted: the page reads `personal.length` directly, so a
       // missing field would white-screen the table rather than show an error.
@@ -808,7 +857,10 @@ export function RegistrationsPage() {
       setScope(data.scope ?? 'user');
       setLastImportedAt(data.lastImportedAt ?? null);
     } catch (e) {
-      captureError(e, { op: 'registrations.refresh' });
+      captureError(e, {
+        op: 'registrations.refresh',
+        ...(e instanceof RegistrationsLoadError ? e.context : { status: null, read: null }),
+      });
       setError('Failed to load registrations');
     } finally {
       setLoading(false);
