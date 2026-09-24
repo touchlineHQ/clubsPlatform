@@ -4,6 +4,7 @@ import type { Env, GCBillingRequest, GCSubscription } from './_types';
 import { getSecret } from '../../lib/secrets';
 import { getPostHog, clubGroups } from '../../lib/posthog';
 import { resolveFanIdFromRegistration } from '../../lib/posthog-identity';
+import { gcMetadata } from '../../lib/gc-metadata';
 import {
   resolveSubscriptionStartDate,
   fetchNextPossibleChargeDate,
@@ -312,8 +313,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const registrationId = pricing?.registrationId ?? linkedRegistrationId;
 
   // Rebuilt from the billing registration so a group keeps one stable reference;
-  // identical when unmerged. The parse is a fallback for pre-payment_type links.
-  const paymentType = br.metadata?.payment_type ?? paymentTypeFromReference(linkedReference);
+  // identical when unmerged. The type is recovered from the reference's last
+  // segment by design rather than stamped: metadata is capped at three keys and
+  // the other three carry their weight. createGoCardlessLink rejects a payment
+  // type that would not survive the round trip, so this is exact.
+  const paymentType = paymentTypeFromReference(linkedReference);
   const reference = pricing
     ? buildLogicalReference(pricing.teamName, pricing.fanId, paymentType)
     : linkedReference;
@@ -511,7 +515,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         interval: 1,
         count: subscriptionCount,
         name: description || reference,
-        metadata: { reference, customer_ref: reference },
+        metadata: gcMetadata(['reference', reference], ['customer_ref', reference]),
         links: { mandate: mandateId },
         ...(resolvedStartDate ? { start_date: resolvedStartDate } : {}),
       },
