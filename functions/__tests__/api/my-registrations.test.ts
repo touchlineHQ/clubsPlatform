@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeContext, makeDb, makeEnv, adminSession, memberSession, getReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -316,6 +316,117 @@ describe('onRequestDelete', () => {
 });
 
 // ─── Merged registrations ─────────────────────────────────────────────────────
+
+describe('naming which read failed (#107)', () => {
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue(adminSession);
+    // These tests fail reads on purpose; the handler logs each one by design.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const get = (db: any) => onRequestGet(makeContext(
+    getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+    { env: { DB: db as any } },
+  ) as any);
+
+  /** A db whose Nth .all() rejects, the rest succeeding. */
+  function failingAllAt(n: number) {
+    const db = makeDb({ all: [[], []], batch: [[[]]], first: null });
+    let call = 0;
+    const realPrepare = db.prepare as any;
+    (db as any).prepare = vi.fn((sql: string) => {
+      const stmt = realPrepare(sql);
+      const bound = stmt.bind();
+      const guard = () => {
+        call += 1;
+        return call === n
+          ? Promise.reject(new Error('D1_ERROR: too much'))
+          : bound.all();
+      };
+      return { ...stmt, bind: vi.fn(() => ({ ...bound, all: guard })) };
+    });
+    return db;
+  }
+
+  it('names the personal scan when it is the one that dies', async () => {
+    const res = await get(failingAllAt(1));
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('personal_scan');
+    expect(body.error).toBe('Failed to load registrations');
+  });
+
+  it('names the club scan when it is the one that dies', async () => {
+    const res = await get(failingAllAt(2));
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('club_scan');
+  });
+
+  it('names the import stamp when it is the one that dies', async () => {
+    const db = makeDb({ all: [[], []], batch: [[[]]], first: null });
+    const realPrepare = db.prepare as any;
+    (db as any).prepare = vi.fn((sql: string) => {
+      const stmt = realPrepare(sql);
+      if (!/club_import_log/.test(sql)) return stmt;
+      return {
+        ...stmt,
+        bind: vi.fn(() => ({ first: () => Promise.reject(new Error('boom')) })),
+      };
+    });
+
+    const res = await get(db);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('import_stamp');
+  });
+
+  it('logs the failing read rather than swallowing it', async () => {
+    await get(failingAllAt(2));
+
+    expect(console.error).toHaveBeenCalledWith('my-registrations read failed', expect.objectContaining({
+      read: 'club_scan',
+      clubSlug: 'test-club',
+    }));
+  });
+
+  it('does not report read cost on a small, fast load', async () => {
+    // The endpoint suspected of being killed by a resource limit must not pay
+    // for a capture on the healthy path.
+    const captured: unknown[] = [];
+    const ctx: any = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({ all: [[], []], batch: [[[]]], first: null }) as any,
+               POSTHOG_API_KEY: 'k', POSTHOG_HOST: 'https://ph.example.com' } },
+    );
+    ctx.waitUntil = (p: unknown) => captured.push(p);
+
+    const res = await onRequestGet(ctx);
+
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(0);
+  });
+
+  it('reports read cost for a large club', async () => {
+    const captured: unknown[] = [];
+    const club = Array.from({ length: 1000 }, (_, i) => ({ ...clubRegistration, registrationId: `r${i}` }));
+    const ctx: any = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({ all: [[], club], batch: [[[]]], first: null }) as any,
+               POSTHOG_API_KEY: 'k', POSTHOG_HOST: 'https://ph.example.com' } },
+    );
+    ctx.waitUntil = (p: unknown) => captured.push(p);
+
+    await onRequestGet(ctx);
+
+    // Off the response path, so it cannot add latency to the slow case.
+    expect(captured).toHaveLength(1);
+  });
+});
 
 describe('merged registrations', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));

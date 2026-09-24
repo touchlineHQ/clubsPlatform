@@ -1,4 +1,5 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
+import { getPostHog, clubGroups } from "../lib/posthog";
 import {
   billingIdFromJoinSql,
   billingMergeJoinSql,
@@ -239,6 +240,103 @@ function omitMergeFieldsWhenUnmerged(rows: RegistrationRow[]): RegistrationRow[]
   });
 }
 
+/** Which read a failure came from. The client reports this back on #107. */
+type ReadLabel = "personal_scan" | "club_scan" | "audit_read" | "import_stamp";
+
+/** Carries the label of the read that failed up to the handler's catch. */
+class ReadFailure extends Error {
+  constructor(readonly read: ReadLabel, readonly cause: unknown) {
+    super(`my-registrations ${read} failed`);
+    this.name = "ReadFailure";
+  }
+}
+
+interface ReadTiming {
+  read: ReadLabel;
+  ms: number;
+}
+
+/**
+ * Runs one read, timing it and labelling any failure.
+ *
+ * #107 arrived as a bare client-side "Failed to load registrations" fired off a
+ * `!res.ok` that read neither the status nor the body, so nobody could say
+ * which of this endpoint's reads had died. This is the server half of fixing
+ * that: a failure now names itself, both in the log and in the response.
+ */
+async function timedRead<T>(
+  read: ReadLabel,
+  timings: ReadTiming[],
+  run: () => Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  try {
+    const value = await run();
+    timings.push({ read, ms: Date.now() - started });
+    return value;
+  } catch (err) {
+    timings.push({ read, ms: Date.now() - started });
+    throw new ReadFailure(read, err);
+  }
+}
+
+/** Wall-clock total past which a load is worth recording. */
+const SLOW_READ_MS = 250;
+/** Club size worth recording before it gets slow. */
+const LARGE_CLUB_ROWS = 1000;
+
+/**
+ * Records how long the reads took and how much they returned — but only for a
+ * load that was slow or a club that is big.
+ *
+ * Deliberately not on every request. This endpoint is the one suspected of
+ * being killed by a resource limit, and the Workers Free plan allows 10ms of
+ * CPU per request (see lib/auth.ts and api/admin/import-players.ts, both of
+ * which are already shaped around it). Serialising a capture payload is CPU,
+ * and the HTTP call is a subrequest, so making every healthy load pay for them
+ * would push the very requests we are diagnosing closer to the edge. Sampling
+ * the slow ones costs the healthy path nothing and is what we actually want to
+ * read back.
+ *
+ * Sent through waitUntil so it is off the response path entirely. Counts and
+ * durations only — no FAN numbers, no emails.
+ *
+ * A load that is *killed* reports nothing here, by definition. That case is
+ * covered from the browser instead, by the status and body the page now reads.
+ */
+function reportReadCost(
+  context: EventContext<Env, string, unknown>,
+  userId: string,
+  clubSlug: string,
+  scope: "admin" | "user",
+  timings: ReadTiming[],
+  counts: { personal: number; club: number },
+): void {
+  const totalMs = timings.reduce((n, t) => n + t.ms, 0);
+  if (totalMs < SLOW_READ_MS && counts.club < LARGE_CLUB_ROWS) return;
+
+  const posthog = getPostHog(context.env);
+  if (!posthog) return;
+
+  context.waitUntil(
+    posthog
+      .captureImmediate({
+        distinctId: userId,
+        event: "registrations read",
+        ...clubGroups(clubSlug),
+        properties: {
+          club_slug: clubSlug,
+          scope,
+          total_ms: totalMs,
+          personal_rows: counts.personal,
+          club_rows: counts.club,
+          ...Object.fromEntries(timings.map((t) => [`${t.read}_ms`, t.ms])),
+        },
+      })
+      .catch((err) => console.error("PostHog capture failed", err)),
+  );
+}
+
 /**
  * GET handler — fetches registrations for the authenticated user.
  *
@@ -268,7 +366,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return json({ error: "Access denied: club mismatch" }, { status: 403 });
   }
 
-  const personalRows = await context.env.DB
+  const timings: ReadTiming[] = [];
+
+  try {
+  const personalRows = await timedRead("personal_scan", timings, () => context.env.DB
     .prepare(
       `SELECT
          pr.id            AS registrationId,
@@ -293,9 +394,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        ORDER BY pr.teamName ASC, p.fanId ASC`
     )
     .bind(userId, clubSlug)
-    .all<RegistrationRow>();
+    .all<RegistrationRow>());
 
   if (!isAdmin) {
+    reportReadCost(context, userId, clubSlug, "user", timings, {
+      personal: personalRows.results.length,
+      club: 0,
+    });
     return json({
       personal: omitMergeFieldsWhenUnmerged(personalRows.results),
       club: null,
@@ -304,7 +409,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     });
   }
 
-  const clubRows = await context.env.DB
+  const clubRows = await timedRead("club_scan", timings, () => context.env.DB
     .prepare(
       `SELECT
          pr.id            AS registrationId,
@@ -328,23 +433,28 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        ORDER BY pr.teamName ASC, p.fanId ASC`
     )
     .bind(clubSlug)
-    .all<RegistrationRow>();
+    .all<RegistrationRow>());
 
   // Both queries resolved their own billing groups in SQL, so there is no
   // whole-club registration_merge read here any more — and no JS pass that can
   // only reach a primary it happens to have loaded.
-  const club = await attachManualAttribution(
+  const club = await timedRead("audit_read", timings, () => attachManualAttribution(
     context.env.DB,
     clubSlug,
     clubRows.results,
-  );
+  ));
 
   // Lets the page say how old the numbers on screen are. Dry-run previews write
   // no log row, so this only ever moves on a committed import.
-  const lastImport = await context.env.DB
+  const lastImport = await timedRead("import_stamp", timings, () => context.env.DB
     .prepare(`SELECT MAX(importedAt) AS importedAt FROM "club_import_log" WHERE clubSlug = ?`)
     .bind(clubSlug)
-    .first<{ importedAt: number | null }>();
+    .first<{ importedAt: number | null }>());
+
+  reportReadCost(context, userId, clubSlug, "admin", timings, {
+    personal: personalRows.results.length,
+    club: club.length,
+  });
 
   return json({
     personal: omitMergeFieldsWhenUnmerged(personalRows.results),
@@ -352,6 +462,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     scope: "admin",
     lastImportedAt: lastImport?.importedAt ?? null,
   });
+  } catch (err) {
+    if (!(err instanceof ReadFailure)) throw err;
+    // Named, so #107 stops being "something in here broke". The log line is
+    // free; the response body is what the browser reports back to PostHog.
+    console.error("my-registrations read failed", {
+      read: err.read,
+      clubSlug,
+      ms: timings.find((t) => t.read === err.read)?.ms ?? null,
+      cause: String(err.cause),
+    });
+    return json(
+      { error: "Failed to load registrations", read: err.read },
+      { status: 500 },
+    );
+  }
 };
 
 /**
