@@ -207,7 +207,7 @@
     "event": "registrations exported",
     "description": "An admin exports the registrations table to a spreadsheet.",
     "files": [
-      "website/src/pages/RegistrationsPage.tsx"
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
     ]
   },
   {
@@ -215,7 +215,7 @@
     "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only — no FAN numbers.",
     "files": [
       "functions/api/admin/registration-merges.ts",
-      "website/src/pages/RegistrationsPage.tsx"
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
     ]
   },
   {
@@ -230,7 +230,7 @@
     "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only — no FAN numbers.",
     "files": [
       "functions/api/admin/registration-merges.ts",
-      "website/src/pages/RegistrationsPage.tsx"
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
     ]
   },
   {

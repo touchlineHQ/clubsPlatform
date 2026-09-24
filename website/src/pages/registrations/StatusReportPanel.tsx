@@ -17,8 +17,15 @@ import {
 } from '../../utils/statusReport';
 
 interface StatusReportPanelProps {
-  /** The club rows the table is showing — already filtered by the page. */
-  registrations: StatusReportRegistration[];
+  /**
+   * Loads every registration matching the page's filters.
+   *
+   * A loader rather than an array: the table only holds one page now, so a prop
+   * would narrow the report to whatever happened to be on screen. Called after
+   * the workbook parses rather than when the modal opens, so an admin who opens
+   * the dialog and changes their mind costs nothing.
+   */
+  loadRegistrations: () => Promise<StatusReportRegistration[]>;
   /** The same filters, as they apply to FA rows with no registration. */
   faFilter: FaRowFilter;
   clubSlug: string;
@@ -31,11 +38,13 @@ interface StatusReportPanelProps {
  * Parsed, joined and written in the browser; no name or DOB leaves the page (#94).
  */
 export function StatusReportPanel({
-  registrations,
+  loadRegistrations,
   faFilter,
   clubSlug,
   filtersActive,
 }: StatusReportPanelProps) {
+  const [registrations, setRegistrations] = useState<StatusReportRegistration[] | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [fileName, setFileName] = useState('');
   const [faRows, setFaRows] = useState<FaReportPlayerRow[] | null>(null);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
@@ -46,7 +55,7 @@ export function StatusReportPanel({
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
 
   const rows = useMemo(
-    () => (faRows === null ? [] : buildStatusReport(faRows, registrations, {
+    () => (faRows === null || registrations === null ? [] : buildStatusReport(faRows, registrations, {
       includeCancelled,
       faFilter,
       paymentLink: fanId => buildPaymentLink(origin, clubSlug, fanId),
@@ -74,6 +83,15 @@ export function StatusReportPanel({
         } else {
           setFaRows(parsed);
           setWarnings(found);
+          // Only now: a file that does not parse needs no registrations, and
+          // fetching them is a walk over every page of the filtered set.
+          setLoadError('');
+          loadRegistrations()
+            .then((rows) => { if (readToken === readSequence.current) setRegistrations(rows); })
+            .catch((err) => {
+              if (readToken !== readSequence.current) return;
+              setLoadError(err instanceof Error ? err.message : 'Failed to load registrations');
+            });
         }
       } catch (err) {
         setParseErrors([`Failed to read file: ${String(err)}`]);
@@ -112,6 +130,12 @@ export function StatusReportPanel({
       </Text>
 
       {!faRows && <FileDropzone onFile={handleFile} />}
+
+      {loadError && (
+        <Alert color="red" variant="light" icon={<IconAlertCircle size={18} />}>
+          {loadError}
+        </Alert>
+      )}
 
       {parseErrors.length > 0 && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not parse file">
@@ -177,7 +201,7 @@ export function StatusReportPanel({
           leftSection={<IconFileSpreadsheet size={16} />}
           onClick={handleDownload}
           radius="xl"
-          disabled={faRows === null}
+          disabled={faRows === null || registrations === null}
         >
           Download status report
         </Button>

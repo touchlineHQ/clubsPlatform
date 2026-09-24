@@ -13,6 +13,7 @@ import {
   parsePageRequest,
   takePage,
 } from "../../lib/pagination";
+import { attachManualAttribution } from "../../lib/registration-attribution";
 import {
   REGISTRATION_SORTS,
   buildRegistrationFilters,
@@ -51,6 +52,9 @@ interface RegistrationRow {
   billingRegistrationId: string | null;
   billedWithTeamName: string | null;
   mergedTeamNames: string | null;
+  manualPaidBy?: string | null;
+  manualPaidAt?: number | null;
+  manualNote?: string | null;
   /** The sort key, carried out of SQL so the cursor is never re-derived in JS. */
   __cursor?: string;
 }
@@ -139,8 +143,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     id: row.registrationId,
   }));
 
+  // Bounded by the page's own ids, so this does not reintroduce the whole-club
+  // audit-log scan that made the old endpoint degrade with admin activity.
+  const withAttribution = await attachManualAttribution(context.env.DB, clubSlug, items);
+
   return json({
-    rows: omitMergeFieldsWhenUnmerged(items),
+    rows: omitMergeFieldsWhenUnmerged(withAttribution),
     nextCursor,
     limit: page.limit,
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, screen, fireEvent } from '@testing-library/react';
+import { act, screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithMantine, mockAdmin } from '../../test-utils';
 
 // Stubbing SheetJS keeps these about the panel; parsing and joining have their own tests.
@@ -79,11 +79,17 @@ const registrations = [
   },
 ];
 
-/** Render the panel with the club's rows and return a file-selecting helper. */
+/**
+ * Render the panel and return a file-selecting helper.
+ *
+ * The rows arrive through a loader now rather than a prop: the table holds one
+ * page, so a prop would narrow the report to whatever was on screen. The loader
+ * is called after the workbook parses, which is why every assertion here waits.
+ */
 function renderPanel(props: Partial<React.ComponentProps<typeof StatusReportPanel>> = {}) {
   const { container } = renderWithMantine(
     <StatusReportPanel
-      registrations={registrations}
+      loadRegistrations={async () => registrations}
       faFilter={{}}
       clubSlug="test-club"
       filtersActive={false}
@@ -91,14 +97,26 @@ function renderPanel(props: Partial<React.ComponentProps<typeof StatusReportPane
     />,
     { authValue: mockAdmin },
   );
-  const select = (name = 'fa-report.xlsx') => {
+  /**
+   * Choose a file and wait for the rows.
+   *
+   * Awaited because loadRegistrations is a promise: the panel parses the
+   * workbook first and only then asks for the registrations, so the join does
+   * not exist on the synchronous tick the way it did with a rows prop.
+   */
+  const choose = (name = 'fa-report.xlsx') => {
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     const file = new File(['x'], name, {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
     fireEvent.change(input, { target: { files: [file] } });
   };
-  return { container, select };
+  const select = async (name = 'fa-report.xlsx') => {
+    choose(name);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Download status report/ })).toBeEnabled());
+  };
+  return { container, select, choose };
 }
 
 describe('StatusReportPanel', () => {
@@ -112,17 +130,17 @@ describe('StatusReportPanel', () => {
     sheetToJson.mockReturnValue(SHEET);
   });
 
-  it('keeps the download button disabled until a file parses', () => {
+  it('keeps the download button disabled until a file parses', async () => {
     const { select } = renderPanel();
 
     expect(screen.getByRole('button', { name: /Download status report/ })).toBeDisabled();
 
-    select();
+    await select();
 
     expect(screen.getByRole('button', { name: /Download status report/ })).toBeEnabled();
   });
 
-  it('opens the file picker with Enter and Space and prevents Space scrolling', () => {
+  it('opens the file picker with Enter and Space and prevents Space scrolling', async () => {
     const { container } = renderPanel();
     const dropzone = screen.getByRole('button', { name: /Drop a file here or click to browse/ });
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
@@ -135,13 +153,14 @@ describe('StatusReportPanel', () => {
     expect(click).toHaveBeenCalledTimes(2);
   });
 
-  it('ignores a stale file read after a newer file has finished', () => {
+  it('ignores a stale file read after a newer file has finished', async () => {
+    // `choose`, not `select`: the point is that nothing becomes ready.
     DeferredFileReader.instances = [];
     vi.stubGlobal('FileReader', DeferredFileReader);
-    const { select } = renderPanel();
+    const { choose } = renderPanel();
 
-    select('first.xlsx');
-    select('second.xlsx');
+    choose('first.xlsx');
+    choose('second.xlsx');
     act(() => {
       DeferredFileReader.instances[1].resolve();
       DeferredFileReader.instances[0].resolve();
@@ -152,9 +171,9 @@ describe('StatusReportPanel', () => {
     expect(sheetToJson).toHaveBeenCalledTimes(1);
   });
 
-  it('previews the three classifications', () => {
+  it('previews the three classifications', async () => {
     const { select } = renderPanel();
-    select();
+    await select();
 
     // FAN001 in both, FAN003 file only, FAN999 registration only, FAN002 Cancelled.
     expect(screen.getByText('1 matched')).toBeInTheDocument();
@@ -162,42 +181,42 @@ describe('StatusReportPanel', () => {
     expect(screen.getByText('1 subs only')).toBeInTheDocument();
   });
 
-  it('brings Cancelled rows back when the checkbox is ticked', () => {
+  it('brings Cancelled rows back when the checkbox is ticked', async () => {
     const { select } = renderPanel();
-    select();
+    await select();
 
     fireEvent.click(screen.getByLabelText(/Include FA rows marked Cancelled or Transferred/));
 
     expect(screen.getByText('2 no subs record')).toBeInTheDocument();
   });
 
-  it('renders a parse error without crashing and leaves the button disabled', () => {
+  it('renders a parse error without crashing and leaves the button disabled', async () => {
     sheetToJson.mockReturnValue([['Name', 'Team'], ['Ada', 'U15 Reds']]);
-    const { select } = renderPanel();
+    const { choose } = renderPanel();
 
-    select();
+    choose();
 
     expect(screen.getByText('Could not parse file')).toBeInTheDocument();
     expect(screen.getByText(/Could not find a header row containing "FAN ID"/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download status report/ })).toBeDisabled();
   });
 
-  it('warns rather than fails when the file has no date-of-birth column', () => {
+  it('warns rather than fails when the file has no date-of-birth column', async () => {
     sheetToJson.mockReturnValue([
       ['FAN ID', 'Surname', 'Team'],
       ['FAN001', 'Lovelace', 'U15 Reds'],
     ]);
     const { select } = renderPanel();
 
-    select();
+    await select();
 
     expect(screen.getByText('Some columns are missing')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download status report/ })).toBeEnabled();
   });
 
-  it('writes one Status Report sheet to a dated, club-scoped filename', () => {
+  it('writes one Status Report sheet to a dated, club-scoped filename', async () => {
     const { select } = renderPanel();
-    select();
+    await select();
 
     fireEvent.click(screen.getByRole('button', { name: /Download status report/ }));
 
@@ -207,9 +226,9 @@ describe('StatusReportPanel', () => {
   });
 
   // Guards #94: a name or FAN number here would put personal data in PostHog.
-  it('reports counts only to analytics', () => {
+  it('reports counts only to analytics', async () => {
     const { select } = renderPanel();
-    select();
+    await select();
 
     fireEvent.click(screen.getByRole('button', { name: /Download status report/ }));
 
@@ -224,9 +243,9 @@ describe('StatusReportPanel', () => {
     expect(JSON.stringify(payload)).not.toMatch(/Lovelace|Turing|FAN00/);
   });
 
-  it('says so when a subscription filter is hiding players with no subs record', () => {
+  it('says so when a subscription filter is hiding players with no subs record', async () => {
     const { select } = renderPanel({ faFilter: { dropFaOnly: true }, filtersActive: true });
-    select();
+    await select();
 
     expect(screen.getByText(/players with no subs record are left out/)).toBeInTheDocument();
     expect(screen.getByText('0 no subs record')).toBeInTheDocument();
