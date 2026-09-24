@@ -109,18 +109,33 @@ describe('my-registrations SQL, executed', () => {
   });
 
   it('never lets the merge join cross clubs', async () => {
-    // registration_merge is keyed on registrationId alone, so an unscoped join
-    // would pull the other club's team name onto this club's page.
+    // The registrations belong to this club, but the merge row does not.
     const { club } = await capture([]);
-    seedMergedGroup(db);
-    db.exec(`INSERT INTO "player" VALUES ('p2','FAN002',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "player" VALUES ('p1','FAN001',${NOW},${NOW})`);
     db.exec(`INSERT INTO "player_registration" VALUES
-      ('reg_other','other-club','p2','Other United','U15','2026-07-31','Registered',${NOW},${NOW})`);
+      ('reg_primary','${CLUB}','p1','U15 Tuesday','U15','2026-07-31','Registered',${NOW},${NOW}),
+      ('reg_secondary','${CLUB}','p1','U15 Thursday','U15','2026-07-31','Registered',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "registration_merge" VALUES ('other-club','reg_secondary','reg_primary',${NOW},${NOW})`);
 
     const rows = db.prepare(club!).all(CLUB) as Record<string, unknown>[];
+    const secondary = rows.find(r => r.registrationId === 'reg_secondary')!;
 
     expect(rows).toHaveLength(2);
-    expect(rows.every(r => r.registrationId !== 'reg_other')).toBe(true);
+    expect(secondary.billingRegistrationId).toBe(null);
+    expect(secondary.billedWithTeamName).toBe(null);
+  });
+
+  it('does not read a billing team from another club', async () => {
+    const { club } = await capture([]);
+    db.exec(`INSERT INTO "player" VALUES ('p1','FAN001',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "player_registration" VALUES
+      ('reg_secondary','${CLUB}','p1','U15 Thursday','U15','2026-07-31','Registered',${NOW},${NOW}),
+      ('reg_primary','other-club','p1','Other United','U15','2026-07-31','Registered',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "registration_merge" VALUES ('${CLUB}','reg_secondary','reg_primary',${NOW},${NOW})`);
+
+    const [secondary] = db.prepare(club!).all(CLUB) as Record<string, unknown>[];
+
+    expect(secondary.billedWithTeamName).toBe(null);
   });
 
   it('returns one row per registration however many guardians are linked', async () => {
