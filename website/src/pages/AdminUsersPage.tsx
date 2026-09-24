@@ -9,6 +9,7 @@ import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { httpError } from '../lib/http';
 import { dedupeOptions } from '../utils/selectOptions';
 
 interface UserRow {
@@ -59,7 +60,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const fetchUsers = async () => {
     try {
       const res = await fetch('/api/admin/users', { headers: clubHeaders });
-      if (!res.ok) throw new Error('Failed to load users');
+      if (!res.ok) throw await httpError('Failed to load users', res, '/api/admin/users');
       const data = await res.json() as { users: UserRow[] };
       setUsers(data.users);
     } catch (e) {
@@ -73,7 +74,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const fetchAssignments = async () => {
     try {
       const res = await fetch('/api/admin/user-team-roles', { headers: clubHeaders });
-      if (!res.ok) throw new Error('Failed to load assignments');
+      if (!res.ok) throw await httpError('Failed to load assignments', res, '/api/admin/user-team-roles');
       const data = await res.json() as { assignments: TeamRoleAssignment[] };
       setAssignments(data.assignments);
     } catch (e) {

@@ -204,6 +204,35 @@ describe('captureError()', () => {
     expect((reported as Error).message).toBe('just a string');
   });
 
+  it('attaches the status, path and API message of a failed response', async () => {
+    const mod = await loadActive();
+    // Imported after loadActive's resetModules, so instanceof sees one class.
+    const { httpError } = await import('../../lib/http');
+    const res = new Response(JSON.stringify({ error: 'Access denied: club mismatch' }), { status: 403 });
+
+    mod.captureError(await httpError('Failed to load registrations', res, '/api/my-registrations'));
+
+    const [reported, props] = mockPosthog.captureException.mock.calls[0];
+    expect((reported as Error).message).toBe('Failed to load registrations');
+    expect(props).toMatchObject({
+      http_status: 403,
+      http_path: '/api/my-registrations',
+      server_error: 'Access denied: club mismatch',
+    });
+  });
+
+  it('still reports a failed response whose body is not JSON', async () => {
+    const mod = await loadActive();
+    const { httpError } = await import('../../lib/http');
+    const res = new Response('<html>502 Bad Gateway</html>', { status: 502 });
+
+    mod.captureError(await httpError('Failed to load secrets', res, '/api/admin/secrets'));
+
+    const props = mockPosthog.captureException.mock.calls[0][1];
+    expect(props).toMatchObject({ http_status: 502, http_path: '/api/admin/secrets' });
+    expect(props.server_error).toBeUndefined();
+  });
+
   it('lets caller context override the defaults', async () => {
     const mod = await loadActive();
 

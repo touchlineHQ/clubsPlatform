@@ -1,4 +1,5 @@
 import posthog from 'posthog-js';
+import { HttpError } from './http';
 
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_API_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST;
@@ -103,6 +104,11 @@ export function captureError(error: unknown, context: Record<string, unknown> = 
       $current_url: window.location.href,
       route: currentRoute(),
       handled: true,
+      ...(error instanceof HttpError && {
+        http_status: error.status,
+        http_path: error.path,
+        server_error: error.serverError,
+      }),
       ...context,
     },
   );
