@@ -48,6 +48,8 @@ export interface ClubRegistrationsState {
   page: number;
   hasNext: boolean;
   hasPrev: boolean;
+  /** Review mode: the table is narrowed to the club's merge suggestions. */
+  suggestedOnly: boolean;
 }
 
 const EMPTY_FACETS = { teams: [], statuses: [] };
@@ -69,6 +71,16 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
   const [search, setSearchState] = useState('');
   const [appliedSearch] = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
   const [sort, setSortState] = useState<SortState>({ key: 'teamName', dir: 'asc' });
+  /**
+   * "Review them" on the merge-suggestions banner.
+   *
+   * Sent on the list request only, deliberately not through `queryFor`: that
+   * also builds the summary request, and the tiles count the club rather than
+   * the review slice. Treating it as a filter there would silently re-scope
+   * them, which is the same reason the server keeps the predicate out of its
+   * shared filter builder.
+   */
+  const [suggestedOnly, setSuggestedOnlyState] = useState(false);
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [error, setError] = useState('');
@@ -106,6 +118,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
       params.set('sort', sort.key);
       params.set('dir', sort.dir);
       if (cursor) params.set('cursor', cursor);
+      if (suggestedOnly) params.set('suggestedOnly', '1');
 
       const res = await fetch(`/api/admin/registrations?${params}`, { headers });
       if (!res.ok) {
@@ -126,7 +139,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
-  }, [clubSlug, filters, appliedSearch, sort]);
+  }, [clubSlug, filters, appliedSearch, sort, suggestedOnly]);
 
   const loadSummary = useCallback(async () => {
     const version = ++summaryVersion.current;
@@ -175,11 +188,12 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     setPageIndex(0);
     loadPage(null);
     loadSummary();
-  }, [enabled, filters, appliedSearch, sort, reloadToken, loadPage, loadSummary]);
+  }, [enabled, filters, appliedSearch, sort, suggestedOnly, reloadToken, loadPage, loadSummary]);
 
   const setFilters = useCallback((next: ClubFilters) => setFiltersState(next), []);
   const setSearch = useCallback((next: string) => setSearchState(next), []);
   const setSort = useCallback((next: SortState) => setSortState(next), []);
+  const setSuggestedOnly = useCallback((next: boolean) => setSuggestedOnlyState(next), []);
 
   const goNext = useCallback(() => {
     if (!nextCursor) return;
@@ -230,6 +244,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     page: pageIndex + 1,
     hasNext: nextCursor !== null,
     hasPrev: pageIndex > 0,
+    suggestedOnly,
   };
 
   return {
@@ -237,6 +252,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     setFilters,
     setSearch,
     setSort,
+    setSuggestedOnly,
     goNext,
     goPrev,
     refresh,

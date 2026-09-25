@@ -11,9 +11,11 @@ import { ClubFilterBar } from './ClubFilterBar';
 import { EmptyState } from './EmptyState';
 import { RegistrationsSummary } from './RegistrationsSummary';
 import { RegistrationsTable } from './RegistrationsTable';
+import { MergeSuggestionsBanner } from './MergeSuggestionsBanner';
 import { exportRegistrationsToXlsx } from './exportRegistrations';
 import { useClubRegistrations } from './useClubRegistrations';
 import { ExportTooLargeError, useAllClubRegistrations } from './useAllClubRegistrations';
+import { useMergeSuggestions } from './useMergeSuggestions';
 import { ALL, MAX_MERGE_SELECTION, type RegistrationRow, type SubscriptionLevel } from './types';
 
 /**
@@ -45,6 +47,9 @@ export function ClubRegistrationsTab({
     loadAll: loadRowsForExport, progress: exportProgress, running: exporting,
   } = useAllClubRegistrations(clubSlug);
   const { loadAll: loadRowsForReport } = useAllClubRegistrations(clubSlug);
+  // Club-wide, so the banner's count survives paging. Reloaded by an import,
+  // which can add the registration that makes a set worth suggesting.
+  const mergeSuggestions = useMergeSuggestions(clubSlug, true, reloadToken);
 
   const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
   const [levelError, setLevelError] = useState('');
@@ -257,6 +262,27 @@ export function ClubRegistrationsTab({
     }
   };
 
+  /**
+   * Record that a suggested set is genuinely separate.
+   *
+   * The banner drops the set itself, so the table is only refreshed while
+   * review mode is narrowing it — outside review mode the rows have not
+   * changed, and reloading would throw away the reader's place for nothing.
+   *
+   * The event is captured server-side, which is where the set size is known
+   * authoritatively. Errors are raised for the banner to show next to the set
+   * they belong to.
+   */
+  const handleDismissSuggestion = async (playerId: string, ageGroup: string) => {
+    await mergeSuggestions.dismiss(playerId, ageGroup);
+    if (club.suggestedOnly) club.refresh();
+  };
+
+  const handleRestoreSuggestion = async (playerId: string, ageGroup: string) => {
+    await mergeSuggestions.restore(playerId, ageGroup);
+    if (club.suggestedOnly) club.refresh();
+  };
+
   const handleUnmerge = async (row: RegistrationRow) => {
     setMergeBusyId(row.registrationId);
     setMergeError('');
@@ -447,6 +473,20 @@ export function ClubRegistrationsTab({
           </Group>
         </Group>
       )}
+
+      <MergeSuggestionsBanner
+        suggestions={mergeSuggestions.suggestions}
+        dismissed={mergeSuggestions.dismissed}
+        openCount={mergeSuggestions.openCount}
+        dismissedCount={mergeSuggestions.dismissedCount}
+        truncated={mergeSuggestions.truncated}
+        dismissedLoading={mergeSuggestions.dismissedLoading}
+        reviewing={club.suggestedOnly}
+        onToggleReview={() => club.setSuggestedOnly(!club.suggestedOnly)}
+        onLoadDismissed={mergeSuggestions.loadDismissed}
+        onDismiss={handleDismissSuggestion}
+        onRestore={handleRestoreSuggestion}
+      />
 
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
       {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}

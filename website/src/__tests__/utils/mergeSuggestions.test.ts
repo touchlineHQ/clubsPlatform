@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  normaliseAgeGroup,
   suggestMerges,
   suggestedRegistrationIds,
   type SuggestionRow,
@@ -147,5 +148,37 @@ describe('suggestedRegistrationIds', () => {
 
   it('is empty when there is nothing to suggest', () => {
     expect(suggestedRegistrationIds([]).size).toBe(0);
+  });
+});
+
+/**
+ * The age key, asserted on its own.
+ *
+ * There are three copies of this rule now: here, `normaliseAgeGroup` in
+ * `functions/lib/merge-suggestions.ts`, and `LOWER(TRIM(...))` in the candidate
+ * scan's SQL. `website/src` cannot import from `functions/`, so the copies
+ * cannot be shared — only the cases can, and these are the ones
+ * `functions/__tests__/api/admin-merge-suggestions.test.ts` asserts against the
+ * SQL. A drift between them splits one candidate set into two silently, which
+ * is a suggestion quietly not being made rather than an error.
+ */
+describe('normaliseAgeGroup', () => {
+  it('folds case and surrounding whitespace into one key', () => {
+    expect(normaliseAgeGroup(' U15 ')).toBe('u15');
+    expect(normaliseAgeGroup('u15')).toBe('u15');
+    expect(normaliseAgeGroup('U15')).toBe('u15');
+  });
+
+  it('leaves a blank age group blank, so it can be rejected as one', () => {
+    // The candidate scan's own WHERE drops these; the key must not turn a blank
+    // into something that could group with another blank.
+    expect(normaliseAgeGroup('')).toBe('');
+    expect(normaliseAgeGroup('   ')).toBe('');
+  });
+
+  it('keeps inner spacing, which distinguishes real age groups', () => {
+    // 'Open Age' and 'OpenAge' are not the same squad, and TRIM is deliberately
+    // not a general whitespace collapse.
+    expect(normaliseAgeGroup(' Open Age ')).toBe('open age');
   });
 });

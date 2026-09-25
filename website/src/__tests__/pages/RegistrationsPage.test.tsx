@@ -50,14 +50,23 @@ const sampleRow = {
 /**
  * Routes fetch by URL.
  *
- * The club tab is four endpoints now — a page of rows, the facets, the summary
- * and the levels — so one blanket resolution no longer describes it. Facets and
- * summary are derived from the same rows the page endpoint serves, which keeps
- * a fixture a single source of truth.
+ * The club tab is five endpoints now — a page of rows, the facets, the summary,
+ * the levels and the merge suggestions — so one blanket resolution no longer
+ * describes it. Facets and summary are derived from the same rows the page
+ * endpoint serves, which keeps a fixture a single source of truth.
+ *
+ * Suggestions are passed in rather than derived: computing them here would
+ * reimplement the grouping the server now owns, and a test that agrees with its
+ * own reimplementation proves nothing about what the endpoint returns.
  */
 function routeClubApi(rows: Record<string, unknown>[], over: {
   personal?: unknown[];
   nextCursor?: string | null;
+  suggestions?: Record<string, unknown>[];
+  dismissed?: Record<string, unknown>[];
+  /** The club's count, which is deliberately not the length of the page above. */
+  openCount?: number;
+  dismissedCount?: number;
 } = {}) {
   mockFetch.mockImplementation((url: string) => {
     const u = String(url);
@@ -73,11 +82,29 @@ function routeClubApi(rows: Record<string, unknown>[], over: {
         statuses: [...new Set(rows.map(r => r.registrationStatus as string))].filter(Boolean).sort(),
       });
     }
+    if (u.startsWith('/api/admin/registration-merge-suggestions')) {
+      const params = new URLSearchParams(u.split('?')[1] ?? '');
+      if (params.get('state') === 'dismissed') {
+        return json({ suggestions: over.dismissed ?? [], nextCursor: null, limit: 50 });
+      }
+      const open = over.suggestions ?? [];
+      return json({
+        suggestions: open,
+        nextCursor: null,
+        limit: 50,
+        openCount: over.openCount ?? open.length,
+        dismissedCount: over.dismissedCount ?? (over.dismissed?.length ?? 0),
+      });
+    }
     if (u.startsWith('/api/admin/registration-summary')) {
       return json(summariseRegistrations(applyQuery(rows, u) as never));
     }
     if (u.startsWith('/api/admin/registrations')) {
-      return json({ rows: applyQuery(rows, u), nextCursor: over.nextCursor ?? null, limit: 50 });
+      return json({
+        rows: applyQuery(rows, u, suggestedIds(over.suggestions)),
+        nextCursor: over.nextCursor ?? null,
+        limit: 50,
+      });
     }
     if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
     if (u.startsWith('/api/my-registrations')) {
@@ -91,9 +118,14 @@ function routeClubApi(rows: Record<string, unknown>[], over: {
  * Applies the query string the way the endpoint does.
  *
  * Filtering moved to SQL, so a mock that ignored these would let a page that
- * forgot to send them pass.
+ * forgot to send them pass. `suggestedOnly` is in here for the same reason: the
+ * toggle is only worth anything if it reaches the request.
  */
-function applyQuery(rows: Record<string, unknown>[], url: string) {
+function applyQuery(
+  rows: Record<string, unknown>[],
+  url: string,
+  suggested: Set<string> = new Set(),
+) {
   const params = new URLSearchParams(url.split('?')[1] ?? '');
   const team = params.get('team');
   const status = params.get('status');
@@ -101,6 +133,7 @@ function applyQuery(rows: Record<string, unknown>[], url: string) {
   const q = params.get('q')?.toLowerCase();
 
   return rows.filter(r => {
+    if (params.get('suggestedOnly') === '1' && !suggested.has(String(r.registrationId))) return false;
     if (team && r.teamName !== team) return false;
     if (status && (r.registrationStatus ?? '') !== status) return false;
     if (subscription && getSubscriptionStatus(r as never).status !== subscription) return false;
@@ -111,6 +144,11 @@ function applyQuery(rows: Record<string, unknown>[], url: string) {
     }
     return true;
   });
+}
+
+/** Every registration id named by a suggestion fixture. */
+function suggestedIds(suggestions?: Record<string, unknown>[]): Set<string> {
+  return new Set((suggestions ?? []).flatMap(s => (s.registrationIds as string[]) ?? []));
 }
 
 /** How many calls have been made to an endpoint, by URL prefix. */
@@ -127,8 +165,11 @@ function lastListQuery(): URLSearchParams {
 
 describe('RegistrationsPage', () => {
   /** Renders as an admin and switches to the Club Registrations tab. */
-  async function renderClubTab(club: Record<string, unknown>[]) {
-    routeClubApi(club);
+  async function renderClubTab(
+    club: Record<string, unknown>[],
+    over: Parameters<typeof routeClubApi>[1] = {},
+  ) {
+    routeClubApi(club, over);
 
     renderWithMantine(<RegistrationsPage />, {
       authValue: mockAdmin,
@@ -802,23 +843,205 @@ describe('RegistrationsPage', () => {
       return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
     }
 
-    it('does not offer merge suggestions while they would only cover one page', async () => {
-      // suggestMerges grouped by player and age group across the whole club.
-      // Page-scoped it would quietly under-count, and a hint that misses most
-      // of its cases is worse than no hint. It returns in #115, computed
-      // server-side. Asserted so the removal stays deliberate.
-      await renderClubTab([tuesday, thursday]);
+    /** What the suggestions endpoint returns for the tuesday/thursday pair. */
+    const pairSuggestion = {
+      playerId: 'p_1',
+      fanId: 'fan_1',
+      ageGroup: 'U15',
+      setSize: 2,
+      registrationIds: ['reg_thu', 'reg_tue'],
+      teamNames: ['U15 Thursday', 'U15 Tuesday'],
+    };
+
+    it('offers merge suggestions computed over the whole club', async () => {
+      // Replaces the assertion that the banner was withdrawn in #114. The
+      // grouping is the server's now, so the banner is fed by the endpoint
+      // rather than by suggestMerges over whatever page is loaded (#115).
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Review them' })).toBeTruthy();
+    });
+
+    it('counts the club, not the loaded page', async () => {
+      // The regression #114 created: a pair split across two pages was no
+      // longer suggested and the count silently meant "on this page". Here the
+      // page holds neither member of the eleven suggested sets.
+      await renderClubTab([{ ...tuesday, ageGroup: 'U16' }], {
+        suggestions: [pairSuggestion],
+        openCount: 11,
+      });
+
+      expect(screen.getByText(/11 players have registrations in the same age group/i)).toBeTruthy();
+    });
+
+    it('asks the server for the suggested rows rather than filtering in memory', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+      // And the toggle comes back off, so the admin is not stranded in it.
+      fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBeNull());
+    });
+
+    it('leaves the summary tiles counting the club while reviewing', async () => {
+      // The tiles describe the club, not the review slice. Re-scoping them with
+      // the toggle is the trap the server-side predicate avoids by staying out
+      // of the shared filter builder.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+
+      const summaryCall = [...mockFetch.mock.calls].reverse()
+        .find(c => String(c[0]).startsWith('/api/admin/registration-summary'));
+      expect(new URLSearchParams(String(summaryCall?.[0]).split('?')[1]).get('suggestedOnly')).toBeNull();
+    });
+
+    it('dismisses a set and drops it from the banner without reloading the table', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+      const pagesBefore = callsTo('/api/admin/registrations?');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls
+          .find(c => String(c[0]) === '/api/admin/registration-merge-suggestions'
+            && (c[1] as { method?: string })?.method === 'POST');
+        expect(JSON.parse((call?.[1] as { body: string }).body))
+          .toEqual({ playerId: 'p_1', ageGroup: 'U15' });
+      });
+
+      // Gone from the banner, and the count moved with it.
+      await waitFor(() => expect(screen.queryByText(/same age group/i)).toBeNull());
+      expect(screen.getByText(/1 suggestion dismissed/i)).toBeTruthy();
+      // The rows did not change, so the table was not re-read.
+      expect(callsTo('/api/admin/registrations?')).toBe(pagesBefore);
+    });
+
+    it('lists what has been dismissed, and undoes one', async () => {
+      // A suppression list nobody can see is a support ticket waiting to happen.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [],
+        dismissed: [{
+          playerId: 'p_1', fanId: 'fan_1', ageKey: 'u15', ageGroup: 'U15',
+          setSize: 2, dismissedBy: 'user_1', dismissedAt: 1_700_000_000_000,
+        }],
+      });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Review dismissed' }));
+
+      const restore = await screen.findByRole('button', { name: 'Restore' });
+      fireEvent.click(restore);
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(c =>
+          String(c[0]).startsWith('/api/admin/registration-merge-suggestions?')
+          && (c[1] as { method?: string })?.method === 'DELETE');
+        const params = new URLSearchParams(String(call?.[0]).split('?')[1]);
+        expect(params.get('playerId')).toBe('p_1');
+        expect(params.get('ageGroup')).toBe('U15');
+      });
+    });
+
+    it('says why a dismissal failed rather than pretending it worked', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        json: async () => ({ error: 'no merge suggestion for this player and age group' }),
+        text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      expect(await screen.findByText(/no merge suggestion for this player/i)).toBeTruthy();
+      // Still listed, because nothing was recorded.
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+    });
+
+    it('says so when a restore fails, and keeps the dismissal listed', async () => {
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [],
+        dismissed: [{
+          playerId: 'p_1', fanId: 'fan_1', ageKey: 'u15', ageGroup: 'U15',
+          setSize: 2, dismissedBy: 'user_1', dismissedAt: 1_700_000_000_000,
+        }],
+      });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Review dismissed' }));
+      const restore = await screen.findByRole('button', { name: 'Restore' });
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        json: async () => ({ error: 'dismissal not found' }),
+        text: async () => '',
+      }));
+      fireEvent.click(restore);
+
+      expect(await screen.findByText(/dismissal not found/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy();
+    });
+
+    it('still offers the suggestions when the dismissed list cannot be loaded', async () => {
+      // The dismissals are a secondary read; failing it must not take the
+      // banner's own suggestions down with it.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [pairSuggestion],
+        dismissedCount: 1,
+      });
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false, json: async () => ({}), text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Review dismissed' }));
+
+      expect(await screen.findByText(/nothing dismissed/i)).toBeTruthy();
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+    });
+
+    it('hides the banner rather than blocking the table when its read fails', async () => {
+      routeClubApi([tuesday, thursday]);
+      const routed = mockFetch.getMockImplementation()!;
+      mockFetch.mockImplementation((url: string) =>
+        String(url).startsWith('/api/admin/registration-merge-suggestions')
+          ? Promise.resolve({ ok: false, json: async () => ({ error: 'suggestions unavailable' }), text: async () => '' })
+          : routed(url));
+
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+
+      // The table still renders, and the banner is simply absent: it is a hint
+      // over the rows, not a precondition for them. captureError carries the
+      // failure instead of an alert the admin can do nothing about.
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+      expect(screen.queryByText(/suggestions unavailable/i)).toBeNull();
+      expect(captureError).toHaveBeenCalledWith(
+        expect.anything(), expect.objectContaining({ op: 'registrations.suggestions' }),
+      );
+    });
+
+    it('says nothing at all when the club has no suggestions and no dismissals', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [], openCount: 0 });
 
       expect(screen.queryByText(/same age group/i)).toBeNull();
       expect(screen.queryByRole('button', { name: 'Review them' })).toBeNull();
     });
 
-    it('says nothing when the age groups differ', async () => {
-      // U18 plus Robins First is two commitments until the club says otherwise.
-      await renderClubTab([
-        tuesday,
-        { ...thursday, ageGroup: 'Open', teamName: 'Robins First' },
-      ]);
+    it('never invents a suggestion from the rows on screen', async () => {
+      // U18 plus Robins First is two commitments until the club says otherwise
+      // — but that judgement is the server's now, and is asserted in SQL by
+      // functions/__tests__/api/admin-merge-suggestions.test.ts. What matters
+      // here is that the page shows the endpoint's answer and does not re-derive
+      // one from the page it happens to hold: a pair of rows that looks
+      // suggestible must stay silent when the endpoint says nothing.
+      await renderClubTab([tuesday, thursday], { suggestions: [], openCount: 0 });
 
       expect(screen.queryByText(/same age group/i)).toBeNull();
     });
@@ -831,8 +1054,8 @@ describe('RegistrationsPage', () => {
 
       expect(statValue('Registrations')).toBe('2');
       expect(statValue('Billable units')).toBe('1');
-      // Already ruled on, so no nagging.
-      expect(screen.queryByText(/same age group/i)).toBeNull();
+      // A merged group is already ruled on, so it is not a candidate — excluded
+      // by the endpoint's two anti-joins rather than by anything on this page.
     });
 
     it('explains on the row why a merged registration reads as paid', async () => {
