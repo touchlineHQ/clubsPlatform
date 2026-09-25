@@ -66,11 +66,14 @@ export function ClubRegistrationsTab({
   const [mergeBusyId, setMergeBusyId] = useState<string | null>(null);
   const [mergeError, setMergeError] = useState('');
 
+  // The applied term, not the typed one: these three decide what the export and
+  // the FA report cover, and they must match the rows on screen rather than a
+  // keystroke the table has not requested yet.
   const filtersActive =
     club.filters.team !== ALL
     || club.filters.status !== ALL
     || club.filters.subscription !== ALL
-    || club.search.trim() !== '';
+    || club.appliedSearch.trim() !== '';
 
   const handleLevelChange = useCallback(async (row: RegistrationRow, levelId: string | null) => {
     setUpdatingLevelId(row.registrationId);
@@ -276,8 +279,8 @@ export function ClubRegistrationsTab({
    * on screen, or each silently narrows to whatever happens to be visible.
    */
   const loadFilteredRows = useCallback(
-    () => loadAll(club.filters, club.search),
-    [loadAll, club.filters, club.search],
+    () => loadAll(club.filters, club.appliedSearch),
+    [loadAll, club.filters, club.appliedSearch],
   );
 
   const handleExport = async () => {
@@ -317,9 +320,25 @@ export function ClubRegistrationsTab({
         const body = await res.json().catch(() => ({})) as { error?: string };
         throw new Error(body.error ?? 'Delete failed');
       }
+      const deletedId = pendingDelete.registrationId;
+      // Read before removing: `removeRow` schedules a state update, so
+      // `club.rows` still describes the page this delete is emptying.
+      const wasLastOnPage = club.rows.length === 1 && club.hasPrev;
+
       // Drop it locally rather than refetching: the rest of the page is still
-      // valid, and a refetch would pull a row forward from the next page.
-      club.removeRow(pendingDelete.registrationId);
+      // valid, and a refetch would pull a row forward from the next page. The
+      // counts are a separate request, so they do have to be re-read or the
+      // strip over-reports by this row.
+      club.removeRow(deletedId);
+      club.refreshSummary();
+      setSelectedForMerge(prev => {
+        if (!prev.has(deletedId)) return prev;
+        const next = new Map(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      // Otherwise page 2 renders the club's empty state with a pager under it.
+      if (wasLastOnPage) club.goPrev();
       setPendingDelete(null);
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : 'Delete failed');
@@ -339,7 +358,7 @@ export function ClubRegistrationsTab({
     {
       team: club.filters.team !== ALL ? club.filters.team : null,
       registrationStatus: club.filters.status !== ALL ? club.filters.status : null,
-      dropFaOnly: club.filters.subscription !== ALL || club.search.trim() !== '',
+      dropFaOnly: club.filters.subscription !== ALL || club.appliedSearch.trim() !== '',
     },
     filtersActive,
   );

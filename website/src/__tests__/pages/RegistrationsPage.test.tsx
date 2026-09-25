@@ -113,6 +113,11 @@ function applyQuery(rows: Record<string, unknown>[], url: string) {
   });
 }
 
+/** How many calls have been made to an endpoint, by URL prefix. */
+function callsTo(prefix: string): number {
+  return mockFetch.mock.calls.filter(c => String(c[0]).startsWith(prefix)).length;
+}
+
 /** The query string of the last call to the paginated list endpoint. */
 function lastListQuery(): URLSearchParams {
   const call = [...mockFetch.mock.calls].reverse()
@@ -570,6 +575,23 @@ describe('RegistrationsPage', () => {
       await renderClubTab(pageRows);
       expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
     });
+
+    it('debounces the search box rather than scanning the club per keystroke', async () => {
+      // The summary aggregates the whole filtered set, so an undebounced box
+      // sends one club-wide scan per character typed.
+      await renderClubTab(pageRows);
+      const listBefore = callsTo('/api/admin/registrations?');
+      const summaryBefore = callsTo('/api/admin/registration-summary');
+
+      const box = screen.getByLabelText('Search registrations');
+      for (const value of ['F', 'FA', 'FAN', 'FAN-', 'FAN-2']) {
+        fireEvent.change(box, { target: { value } });
+      }
+
+      await waitFor(() => expect(lastListQuery().get('q')).toBe('FAN-2'));
+      expect(callsTo('/api/admin/registrations?') - listBefore).toBe(1);
+      expect(callsTo('/api/admin/registration-summary') - summaryBefore).toBe(1);
+    });
   });
 
   describe('summary strip', () => {
@@ -670,6 +692,87 @@ describe('RegistrationsPage', () => {
 
       expect(screen.queryByRole('group', { name: /registrations summary/i })).toBeNull();
       expect(screen.getByText(/No registrations yet for this club/i)).toBeTruthy();
+    });
+  });
+
+  // ── Deleting a registration ────────────────────────────────────────────────
+
+  describe('deleting a registration', () => {
+    const rowA = { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Alpha' };
+    const rowB = { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Beta' };
+
+    /** Opens the confirm modal for one row and confirms it. */
+    async function removeRow(teamName: string) {
+      const row = screen.getByLabelText(`Select ${teamName} for merging`).closest('tr')!;
+      fireEvent.click(within(row).getByRole('button', { name: /Remove registration/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Remove$/ }));
+    }
+
+    it('re-reads the counts, which the local row drop cannot do', async () => {
+      // The row leaves the page without a refetch, but the summary is its own
+      // request — left alone it keeps over-reporting by the deleted row.
+      await renderClubTab([rowA, rowB]);
+      const before = callsTo('/api/admin/registration-summary');
+
+      await removeRow('Alpha');
+
+      // By the row's checkbox, not its team name — that also names a facet
+      // option in the team filter's dropdown.
+      await waitFor(() => expect(screen.queryByLabelText('Select Alpha for merging')).toBeNull());
+      expect(callsTo('/api/admin/registration-summary')).toBeGreaterThan(before);
+    });
+
+    it('drops the deleted row from the merge selection', async () => {
+      // It is held by value, captured at toggle time, so nothing else would.
+      await renderClubTab([rowA, rowB]);
+
+      fireEvent.click(screen.getByLabelText('Select Alpha for merging'));
+      fireEvent.click(screen.getByLabelText('Select Beta for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+
+      await removeRow('Alpha');
+
+      await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+    });
+
+    it('steps back a page when the delete empties page 2', async () => {
+      // Otherwise the club's empty state renders with a pager reading Page 2
+      // underneath it.
+      mockFetch.mockImplementation((url: string) => {
+        const u = String(url);
+        const json = (body: unknown) => Promise.resolve({
+          ok: true,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        });
+
+        if (u.startsWith('/api/admin/registration-facets')) return json({ teams: [], statuses: [] });
+        if (u.startsWith('/api/admin/registration-summary')) {
+          return json(summariseRegistrations([rowA, rowB] as never));
+        }
+        if (u.startsWith('/api/admin/registrations')) {
+          const cursor = new URLSearchParams(u.split('?')[1] ?? '').get('cursor');
+          return cursor
+            ? json({ rows: [rowB], nextCursor: null, limit: 50 })
+            : json({ rows: [rowA], nextCursor: 'CURSOR_ONE', limit: 50 });
+        }
+        if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
+        return json({ personal: [], scope: 'admin' });
+      });
+
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(screen.getByText('Page 2')).toBeTruthy());
+
+      await removeRow('Beta');
+
+      await waitFor(() => expect(screen.getByText('Page 1')).toBeTruthy());
+      expect(screen.queryByText(/No registrations yet for this club/i)).toBeNull();
     });
   });
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDebouncedValue } from '@mantine/hooks';
 import { captureError } from '../../lib/posthog';
 import type { RegistrationSummary } from '../../utils/registrationSummary';
 import { ALL, type ClubFilters, type RegistrationRow, type SortState } from './types';
@@ -19,12 +20,26 @@ import { ALL, type ClubFilters, type RegistrationRow, type SortState } from './t
 
 export const PAGE_SIZE = 50;
 
+/**
+ * How long a keystroke waits before it reaches the network.
+ *
+ * Every change to the search term costs a page read *and* a club-wide aggregate
+ * over the whole filtered set, so typing a FAN number unthrottled fires one of
+ * each per character. 250ms matches the player picker
+ * (admin-payments/usePlayerRegistrationSearch.ts) so both search boxes feel the
+ * same.
+ */
+export const SEARCH_DEBOUNCE_MS = 250;
+
 export interface ClubRegistrationsState {
   rows: RegistrationRow[];
   facets: { teams: string[]; statuses: string[] };
   summary: RegistrationSummary | null;
   filters: ClubFilters;
+  /** What is in the box. Debounced into `appliedSearch` before it is requested. */
   search: string;
+  /** The term the rows and counts on screen actually describe. */
+  appliedSearch: string;
   sort: SortState;
   loading: boolean;
   /** The summary lags the page; the strip renders a loading state from this. */
@@ -52,6 +67,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
   const [summary, setSummary] = useState<RegistrationSummary | null>(null);
   const [filters, setFiltersState] = useState<ClubFilters>({ team: ALL, status: ALL, subscription: ALL });
   const [search, setSearchState] = useState('');
+  const [appliedSearch] = useDebouncedValue(search, SEARCH_DEBOUNCE_MS);
   const [sort, setSortState] = useState<SortState>({ key: 'teamName', dir: 'asc' });
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -69,6 +85,14 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
 
   /** Discards a response that a newer request has already superseded. */
   const requestVersion = useRef(0);
+  /**
+   * The same guard for the summary, and deliberately a second ref.
+   *
+   * The two requests are superseded independently — the summary is not sent on
+   * a page change — so sharing one counter would have `goNext` discard a summary
+   * response that is still current.
+   */
+  const summaryVersion = useRef(0);
 
   const headers = { 'X-Club-Slug': clubSlug };
 
@@ -77,7 +101,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     setLoading(true);
     setError('');
     try {
-      const params = queryFor(filters, search);
+      const params = queryFor(filters, appliedSearch);
       params.set('limit', String(PAGE_SIZE));
       params.set('sort', sort.key);
       params.set('dir', sort.dir);
@@ -102,24 +126,29 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
-  }, [clubSlug, filters, search, sort]);
+  }, [clubSlug, filters, appliedSearch, sort]);
 
   const loadSummary = useCallback(async () => {
+    const version = ++summaryVersion.current;
     setSummaryLoading(true);
     try {
       const res = await fetch(
-        `/api/admin/registration-summary?${queryFor(filters, search)}`,
+        `/api/admin/registration-summary?${queryFor(filters, appliedSearch)}`,
         { headers },
       );
       if (!res.ok) throw new Error('summary unavailable');
-      setSummary(await res.json() as RegistrationSummary);
+      const data = await res.json() as RegistrationSummary;
+      // A late response for an older filter set would put counts on screen that
+      // no longer describe the rows beneath them, and stay there until the next
+      // change.
+      if (version === summaryVersion.current) setSummary(data);
     } catch {
       // Non-fatal: the strip hides rather than blocking the table.
-      setSummary(null);
+      if (version === summaryVersion.current) setSummary(null);
     } finally {
-      setSummaryLoading(false);
+      if (version === summaryVersion.current) setSummaryLoading(false);
     }
-  }, [clubSlug, filters, search]);
+  }, [clubSlug, filters, appliedSearch]);
 
   const loadFacets = useCallback(async () => {
     try {
@@ -146,7 +175,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     setPageIndex(0);
     loadPage(null);
     loadSummary();
-  }, [enabled, filters, search, sort, reloadToken, loadPage, loadSummary]);
+  }, [enabled, filters, appliedSearch, sort, reloadToken, loadPage, loadSummary]);
 
   const setFilters = useCallback((next: ClubFilters) => setFiltersState(next), []);
   const setSearch = useCallback((next: string) => setSearchState(next), []);
@@ -193,6 +222,7 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     summary,
     filters,
     search,
+    appliedSearch,
     sort,
     loading,
     summaryLoading,
@@ -202,5 +232,16 @@ export function useClubRegistrations(clubSlug: string, enabled: boolean, reloadT
     hasPrev: pageIndex > 0,
   };
 
-  return { ...state, setFilters, setSearch, setSort, goNext, goPrev, refresh, removeRow, patchRow };
+  return {
+    ...state,
+    setFilters,
+    setSearch,
+    setSort,
+    goNext,
+    goPrev,
+    refresh,
+    refreshSummary: loadSummary,
+    removeRow,
+    patchRow,
+  };
 }
