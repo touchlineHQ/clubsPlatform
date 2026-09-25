@@ -347,4 +347,28 @@ describe('PlayerSubscriptionsTab', () => {
       expect(screen.queryByText(/GC token not configured/i)).toBeTruthy();
     });
   });
+
+  it('shows an error alert when a player search fails', async () => {
+    // The tab used to own its own load error; the picker owns it now, and a
+    // failed query that says nothing reads as "no such player".
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/api/admin/player-registrations')) {
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({ payments: [] }) };
+    });
+
+    renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+      target: { value: 'Under' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to search player registrations/i)).toBeTruthy();
+    });
+  });
 });

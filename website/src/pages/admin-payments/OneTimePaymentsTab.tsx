@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
-  Alert, Badge, Box, Button, Center, Code, Divider, Group,
+  Alert, Badge, Box, Button, Code, Divider, Group,
   Loader, Paper, Select, SimpleGrid, Stack, Text, TextInput,
 } from '@mantine/core';
 import {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  ActionIcon, Alert, Badge, Box, Button, Center, Code, Divider, Group,
+  ActionIcon, Alert, Badge, Button, Code, Divider, Group,
   Loader, NumberInput, Paper, Select, SimpleGrid, Stack, Text, Tooltip,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
@@ -21,7 +21,6 @@ interface Props {
 
 export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
   const search = usePlayerRegistrationSearch(clubHeaders);
-  const [loadError, setLoadError] = useState('');
 
   const [payments, setPayments] = useState<PlayerPaymentRow[]>([]);
 
@@ -131,9 +130,12 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
 
   return (
     <Stack gap="lg">
-      {loadError && (
+      {/* The picker searches server-side now, so its failures are the only
+          load errors this tab has left — and they have to be visible, or a
+          failed query reads as "no such player". */}
+      {search.error && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" radius="md">
-          {loadError}
+          {search.error}
         </Alert>
       )}
 
@@ -141,24 +143,22 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
       <Paper p={{ base: 'md', sm: 'lg' }} withBorder radius="md">
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registration</Text>
-          {(
-            <Select
-              placeholder="Search by FAN number or team…"
-              data={search.options}
-              value={selectedRegId}
-              onChange={handleSelect}
-              searchable
-              clearable
-              radius="md"
-              searchValue={search.query}
-              onSearchChange={search.setQuery}
-              // The club is not loaded up front any more, so the list cannot be
-              // narrowed locally — every keystroke is a query.
-              filter={({ options }) => options}
-              nothingFoundMessage={search.nothingFoundMessage}
-              rightSection={search.searching ? <Loader size="xs" /> : undefined}
-            />
-          )}
+          <Select
+            placeholder="Search by FAN number or team…"
+            data={search.options}
+            value={selectedRegId}
+            onChange={handleSelect}
+            searchable
+            clearable
+            radius="md"
+            searchValue={search.query}
+            onSearchChange={search.setQuery}
+            // The club is not loaded up front any more, so the list cannot be
+            // narrowed locally — every keystroke is a query.
+            filter={({ options }) => options}
+            nothingFoundMessage={search.nothingFoundMessage}
+            rightSection={search.searching ? <Loader size="xs" /> : undefined}
+          />
 
           {selectedReg && (
             <Paper p="sm" radius="sm" style={{ background: clubDesign.color.n1, border: `1px solid ${clubDesign.color.n3}` }}>

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Alert, Badge, Button, Checkbox, Group, Stack, Text, Title } from '@mantine/core';
+import { Alert, Badge, Button, Checkbox, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import { IconAlertCircle, IconFileSpreadsheet } from '@tabler/icons-react';
 import * as XLSX from 'xlsx';
 import { clubDesign } from '../../theme';
@@ -175,11 +175,21 @@ export function StatusReportPanel({
             </Alert>
           )}
 
-          <Group gap="xs" wrap="wrap">
-            <Badge color="teal" variant="light" size="lg">{summary.matched} matched</Badge>
-            <Badge color="orange" variant="light" size="lg">{summary.noSubsRecord} no subs record</Badge>
-            <Badge color="grape" variant="light" size="lg">{summary.subsOnly} subs only</Badge>
-          </Group>
+          {registrations === null && !loadError ? (
+            // Every count is zero until the rows land, and the walk over the
+            // filtered set is many requests on a large club. "0 matched" reads
+            // as a failed join, so say what is happening instead of showing it.
+            <Group gap="xs">
+              <Loader size="xs" />
+              <Text size="sm" c="dimmed">Loading this club&rsquo;s registrations…</Text>
+            </Group>
+          ) : (
+            <Group gap="xs" wrap="wrap">
+              <Badge color="teal" variant="light" size="lg">{summary.matched} matched</Badge>
+              <Badge color="orange" variant="light" size="lg">{summary.noSubsRecord} no subs record</Badge>
+              <Badge color="grape" variant="light" size="lg">{summary.subsOnly} subs only</Badge>
+            </Group>
+          )}
 
           <Checkbox
             checked={includeCancelled}

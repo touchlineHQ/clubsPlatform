@@ -38,7 +38,13 @@ export function ClubRegistrationsTab({
   clubSlug, levels, onOpenImport, onOpenReport, reloadToken,
 }: ClubRegistrationsTabProps) {
   const club = useClubRegistrations(clubSlug, true, reloadToken);
-  const { loadAll, progress: exportProgress, running: exporting } = useAllClubRegistrations(clubSlug);
+  // Two instances, not one: the export and the status report each walk the
+  // filtered set, and sharing a loader would let the report's walk put the
+  // Export to Excel button into "Exporting …" with no export in progress.
+  const {
+    loadAll: loadRowsForExport, progress: exportProgress, running: exporting,
+  } = useAllClubRegistrations(clubSlug);
+  const { loadAll: loadRowsForReport } = useAllClubRegistrations(clubSlug);
 
   const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
   const [levelError, setLevelError] = useState('');
@@ -273,20 +279,20 @@ export function ClubRegistrationsTab({
   };
 
   /**
-   * Every row matching the current filters.
+   * Every row matching the current filters, for the FA report.
    *
    * Both the export and the FA report need the whole filtered set, not the page
    * on screen, or each silently narrows to whatever happens to be visible.
    */
-  const loadFilteredRows = useCallback(
-    () => loadAll(club.filters, club.appliedSearch),
-    [loadAll, club.filters, club.appliedSearch],
+  const loadReportRows = useCallback(
+    () => loadRowsForReport(club.filters, club.appliedSearch),
+    [loadRowsForReport, club.filters, club.appliedSearch],
   );
 
   const handleExport = async () => {
     setExportError('');
     try {
-      const rows = await loadFilteredRows();
+      const rows = await loadRowsForExport(club.filters, club.appliedSearch);
       exportRegistrationsToXlsx(rows, clubSlug, club.filters);
       captureEvent('registrations exported', {
         club_slug: clubSlug,
@@ -354,7 +360,7 @@ export function ClubRegistrationsTab({
   };
 
   const openReport = () => onOpenReport(
-    loadFilteredRows,
+    loadReportRows,
     {
       team: club.filters.team !== ALL ? club.filters.team : null,
       registrationStatus: club.filters.status !== ALL ? club.filters.status : null,
