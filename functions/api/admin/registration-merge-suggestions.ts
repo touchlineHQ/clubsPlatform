@@ -433,8 +433,18 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
   const playerId = (url.searchParams.get("playerId") ?? "").trim();
   const ageKey = normaliseAgeGroup(url.searchParams.get("ageGroup") ?? "");
+  // The size the admin had on screen, for the same reason POST requires it: the
+  // handler's own read is not what they were looking at. Without it, a dismissal
+  // re-made at a larger size before this request arrives would be deleted on the
+  // strength of a row the admin never saw — the fresh read would simply agree
+  // with itself.
+  const rawSeen = url.searchParams.get("setSize");
+  const seenSize = rawSeen === null ? NaN : Number(rawSeen);
   if (!playerId) return json({ error: "playerId is required" }, { status: 400 });
   if (!ageKey) return json({ error: "ageGroup is required" }, { status: 400 });
+  if (!Number.isInteger(seenSize) || seenSize < 2) {
+    return json({ error: "setSize is required" }, { status: 400 });
+  }
 
   // Read before deleting: the audit entry wants the size that was dismissed,
   // and the SQLite test double does not report meta.changes, so a
@@ -448,18 +458,26 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     .first<{ setSize: number }>();
   if (!existing) return json({ error: "dismissal not found" }, { status: 404 });
 
+  if (existing.setSize !== seenSize) {
+    return json(
+      { error: "this dismissal has changed since it was loaded", setSize: existing.setSize },
+      { status: 409 },
+    );
+  }
+
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
 
-  // Conditional on the size that was read, because the read above is its own
-  // round trip: another admin can re-dismiss a grown set in between, and an
-  // unconditional delete by key would destroy that newer decision while the
-  // audit entry recorded the older size it thought it was removing.
+  // Conditional on the size the admin saw — which the check above has just
+  // established is also the size on the row — because the read is its own round
+  // trip too. Another admin can re-dismiss a grown set between that read and
+  // this write, and an unconditional delete by key would destroy the newer
+  // decision while the audit recorded the older size it meant to remove.
   const write = context.env.DB
     .prepare(
       `DELETE FROM "registration_merge_suggestion_dismissal"
         WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ? AND "setSize" = ?`,
     )
-    .bind(clubSlug, playerId, ageKey, existing.setSize);
+    .bind(clubSlug, playerId, ageKey, seenSize);
 
   // The same condition as a guard on the audit, which is what turns a lost race
   // into a refusal rather than a silent no-op: a false guard aborts the whole
@@ -470,7 +488,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const stillTheRowWeRead = {
     sql: `EXISTS (SELECT 1 FROM "registration_merge_suggestion_dismissal"
                    WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ? AND "setSize" = ?)`,
-    bindings: [clubSlug, playerId, ageKey, existing.setSize],
+    bindings: [clubSlug, playerId, ageKey, seenSize],
   };
 
   const audit = prepareAuditLog(context.env.DB, {
@@ -479,7 +497,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     action: "merge_suggestion_restored",
     targetTable: "player",
     targetId: playerId,
-    oldStatus: `${ageKey}:${existing.setSize}`,
+    oldStatus: `${ageKey}:${seenSize}`,
     note: `Merge suggestion restored for ${ageKey}`,
   }, stillTheRowWeRead);
 
@@ -506,7 +524,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
           distinctId: adminId,
           event: "merge suggestion dismissed",
           ...clubGroups(clubSlug),
-          properties: { club_slug: clubSlug, set_size: existing.setSize, restored: true },
+          properties: { club_slug: clubSlug, set_size: seenSize, restored: true },
         })
         .catch((err) => console.error("PostHog capture failed", err)),
     );

@@ -153,9 +153,15 @@ export function useMergeSuggestions(clubSlug: string, enabled: boolean, reloadTo
     setDismissedCount(n => n + 1);
   }, [clubSlug, load]);
 
-  /** Undo a dismissal. Reloads, because the set returns to a sorted list. */
-  const restore = useCallback(async (playerId: string, ageGroup: string) => {
-    const params = new URLSearchParams({ playerId, ageGroup });
+  /**
+   * Undo a dismissal. Reloads, because the set returns to a sorted list.
+   *
+   * Sends the size that was listed, so the server can refuse to remove a
+   * dismissal that has since been re-made at a different size — the same reason
+   * `dismiss` sends it.
+   */
+  const restore = useCallback(async (playerId: string, ageGroup: string, setSize: number) => {
+    const params = new URLSearchParams({ playerId, ageGroup, setSize: String(setSize) });
     const res = await fetch(`${ENDPOINT}?${params}`, { method: 'DELETE', headers });
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };

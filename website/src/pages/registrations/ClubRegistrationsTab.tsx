@@ -285,8 +285,8 @@ export function ClubRegistrationsTab({
   };
 
   /** Undo a dismissal, so the set is suggested again. */
-  const handleRestoreSuggestion = async (playerId: string, ageGroup: string) => {
-    await mergeSuggestions.restore(playerId, ageGroup);
+  const handleRestoreSuggestion = async (playerId: string, ageGroup: string, setSize: number) => {
+    await mergeSuggestions.restore(playerId, ageGroup, setSize);
     if (club.suggestedOnly) club.refresh();
   };
 

@@ -40,7 +40,7 @@ interface MergeSuggestionsBannerProps {
   onToggleReview: () => void;
   onLoadDismissed: () => void;
   onDismiss: (playerId: string, ageGroup: string, setSize: number) => Promise<void>;
-  onRestore: (playerId: string, ageGroup: string) => Promise<void>;
+  onRestore: (playerId: string, ageGroup: string, setSize: number) => Promise<void>;
 }
 
 export function MergeSuggestionsBanner({
@@ -186,7 +186,7 @@ export function MergeSuggestionsBanner({
                     size="compact-xs"
                     variant="subtle"
                     loading={busyKey === key}
-                    onClick={() => act(key, () => onRestore(d.playerId, d.ageGroup))}
+                    onClick={() => act(key, () => onRestore(d.playerId, d.ageGroup, d.setSize))}
                   >
                     Restore
                   </Button>

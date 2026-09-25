@@ -121,6 +121,10 @@ describe('merge suggestions', () => {
   const restore = (query: string) =>
     restoreSuggestion(ctx(deleteReq(`${PATH}${query}`, { 'X-Club-Slug': CLUB })));
 
+  /** Restore a dismissal the admin saw at `setSize`, which the server must agree with. */
+  const restoreSeen = (playerId: string, ageGroup: string, setSize: number) =>
+    restore(`?playerId=${playerId}&ageGroup=${ageGroup}&setSize=${setSize}`);
+
   async function suggestions(query = ''): Promise<Suggestion[]> {
     const res = await list(query);
     expect(res.status).toBe(200);
@@ -421,7 +425,7 @@ describe('merge suggestions', () => {
     await dismissSeen('p1', 'U15', 2);
     expect(await suggestions()).toEqual([]);
 
-    const res = await restore('?playerId=p1&ageGroup=U15');
+    const res = await restoreSeen('p1', 'U15', 2);
     expect(res.status).toBe(200);
 
     expect(await suggestions()).toHaveLength(1);
@@ -505,6 +509,35 @@ describe('merge suggestions', () => {
       .toEqual([{ setSize: 3 }]);
   });
 
+  it('refuses a restore of a dismissal that was re-made before the request arrived', async () => {
+    // The window the handler's own read cannot see: the admin opened the
+    // dismissed list showing a set of 2, another admin re-dismissed it at 3 after
+    // a third registration landed, and only then did Restore get clicked.
+    // Validating against the fresh read would compare 3 with 3 and delete a row
+    // the admin never saw.
+    seedPlayer(sqlite, 'p1', 'FAN001');
+    seedDismissal(sqlite, { player: 'p1', ageKey: 'u15', setSize: 3 });
+
+    const res = await restoreSeen('p1', 'U15', 2);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'this dismissal has changed since it was loaded',
+      setSize: 3,
+    });
+    expect(sqlite.prepare(`SELECT "setSize" FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([{ setSize: 3 }]);
+    expect(auditRows()).toEqual([]);
+  });
+
+  it('refuses a restore that names no size', async () => {
+    seedPlayer(sqlite, 'p1', 'FAN001');
+    seedDismissal(sqlite, { player: 'p1', ageKey: 'u15', setSize: 2 });
+
+    expect((await restore('?playerId=p1&ageGroup=U15')).status).toBe(400);
+    expect((await restoreSeen('p1', 'U15', 1)).status).toBe(400);
+  });
+
   it('refuses a restore whose dismissal was re-dismissed under it', async () => {
     // Two admins on the same set: one opens the dismissed list, the other
     // re-dismisses after a third registration arrives. An unconditional delete
@@ -519,7 +552,7 @@ describe('merge suggestions', () => {
     });
 
     const res = await restoreSuggestion(makeContext(
-      deleteReq(`${PATH}?playerId=p1&ageGroup=U15`, { 'X-Club-Slug': CLUB }),
+      deleteReq(`${PATH}?playerId=p1&ageGroup=U15&setSize=2`, { 'X-Club-Slug': CLUB }),
       { env: { DB: raced as never } },
     ) as never);
 
@@ -534,7 +567,7 @@ describe('merge suggestions', () => {
   });
 
   it('reports a restore of something that was never dismissed', async () => {
-    expect((await restore('?playerId=p1&ageGroup=U15')).status).toBe(404);
+    expect((await restoreSeen('p1', 'U15', 2)).status).toBe(404);
   });
 
   it('counts the club\'s dismissals on every page', async () => {
