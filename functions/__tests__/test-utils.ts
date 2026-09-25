@@ -109,7 +109,11 @@ export const platformAdminSession = makeSession('admin', null);
 // ─── Context builder ──────────────────────────────────────────────────────────
 export function makeContext(
   request: Request,
-  overrides: Partial<{ env: Partial<Env>; params: Record<string, string> }> = {},
+  overrides: Partial<{
+    env: Partial<Env>;
+    params: Record<string, string>;
+    waitUntil: (p: Promise<unknown>) => void;
+  }> = {},
 ) {
   return {
     request,
@@ -117,6 +121,11 @@ export function makeContext(
     params: overrides.params ?? {},
     data: {},
     next: async () => new Response(),
+    // Real on a Pages context, so handlers may call it — read-cost telemetry
+    // does, for a read slow enough to sample. Without it here a slow test
+    // machine would fail on `waitUntil is not a function` rather than on
+    // anything the test is about.
+    waitUntil: overrides.waitUntil ?? (() => {}),
   };
 }
 

@@ -7,6 +7,12 @@ vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
 
+const reportReadCost = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/read-cost', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/read-cost')>()),
+  reportReadCost,
+}));
+
 import { onRequestGet } from '../../api/admin/player-registrations';
 
 /**
@@ -116,6 +122,31 @@ describe('GET /api/admin/player-registrations', () => {
     // matches every row in the club — the thing being removed.
     expect(await rows(`?q=${encodeURIComponent('%%')}`)).toEqual([]);
     expect(await rows(`?q=${encodeURIComponent('__')}`)).toEqual([]);
+  });
+
+  it('reports what a search cost, and whether it found anything', async () => {
+    // Bounded by LIMIT on a hit; a miss walks the club, because the prefix is
+    // an OR across two tables that no single index can serve. The hit flag is
+    // what separates the two in the data.
+    reportReadCost.mockClear();
+    await rows('?q=FAN001');
+    await rows('?q=Nobody');
+
+    const samples = reportReadCost.mock.calls.map(
+      (c) => c[3] as { endpoint: string; extra: { hit: boolean } },
+    );
+    expect(samples.map((s) => s.endpoint)).toEqual([
+      'player_registrations_search',
+      'player_registrations_search',
+    ]);
+    expect(samples.map((s) => s.extra.hit)).toEqual([true, false]);
+  });
+
+  it('does not report a query too short to reach the database', async () => {
+    // It returns before building any SQL, so there is no read to cost.
+    reportReadCost.mockClear();
+    await rows('?q=F');
+    expect(reportReadCost).not.toHaveBeenCalled();
   });
 
   it('never searches outside the club', async () => {

@@ -1,5 +1,5 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
-import { getPostHog, clubGroups } from "../lib/posthog";
+import { reportReadCost } from "../lib/read-cost";
 import {
   billingIdFromJoinSql,
   billingMergeJoinSql,
@@ -153,61 +153,35 @@ async function timedRead<T>(
   }
 }
 
-/** Wall-clock total past which a load is worth recording. */
-const SLOW_READ_MS = 250;
-/** Club size worth recording before it gets slow. */
-const LARGE_CLUB_ROWS = 1000;
-
 /**
- * Records how long the reads took and how much they returned — but only for a
- * load that was slow or a club that is big.
+ * Records what this endpoint's reads cost, through the shared sampler.
  *
- * Deliberately not on every request. This endpoint is the one suspected of
- * being killed by a resource limit, and the Workers Free plan allows 10ms of
- * CPU per request (see lib/auth.ts and api/admin/import-players.ts, both of
- * which are already shaped around it). Serialising a capture payload is CPU,
- * and the HTTP call is a subrequest, so making every healthy load pay for them
- * would push the very requests we are diagnosing closer to the edge. Sampling
- * the slow ones costs the healthy path nothing and is what we actually want to
- * read back.
+ * Local until #114 moved the club-wide scan to the admin endpoints, which left
+ * this copy measuring the one path that is no longer expensive — and left its
+ * large-club arm permanently dead, since both callers now pass no club rows at
+ * all. The thresholds and the sampling rationale live in lib/read-cost.ts now,
+ * so a new endpoint inherits them instead of going unwatched.
  *
- * Sent through waitUntil so it is off the response path entirely. Counts and
- * durations only — no FAN numbers, no emails.
- *
- * A load that is *killed* reports nothing here, by definition. That case is
- * covered from the browser instead, by the status and body the page now reads.
+ * A load that is *killed* still reports nothing here, by definition. That case
+ * is covered from the browser, by the status and body the page reads.
  */
-function reportReadCost(
+function reportPersonalReadCost(
   context: EventContext<Env, string, unknown>,
   userId: string,
   clubSlug: string,
   scope: "admin" | "user",
   timings: ReadTiming[],
-  counts: { personal: number; club: number },
+  personalRows: number,
 ): void {
-  const totalMs = timings.reduce((n, t) => n + t.ms, 0);
-  if (totalMs < SLOW_READ_MS && counts.club < LARGE_CLUB_ROWS) return;
-
-  const posthog = getPostHog(context.env);
-  if (!posthog) return;
-
-  context.waitUntil(
-    posthog
-      .captureImmediate({
-        distinctId: userId,
-        event: "registrations read",
-        ...clubGroups(clubSlug),
-        properties: {
-          club_slug: clubSlug,
-          scope,
-          total_ms: totalMs,
-          personal_rows: counts.personal,
-          club_rows: counts.club,
-          ...Object.fromEntries(timings.map((t) => [`${t.read}_ms`, t.ms])),
-        },
-      })
-      .catch((err) => console.error("PostHog capture failed", err)),
-  );
+  reportReadCost(context, userId, clubSlug, {
+    endpoint: "my_registrations",
+    ms: timings.reduce((n, t) => n + t.ms, 0),
+    rowsReturned: personalRows,
+    extra: {
+      scope,
+      ...Object.fromEntries(timings.map((t) => [`${t.read}_ms`, t.ms])),
+    },
+  });
 }
 
 /**
@@ -274,10 +248,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .all<RegistrationRow>());
 
   if (!isAdmin) {
-    reportReadCost(context, userId, clubSlug, "user", timings, {
-      personal: personalRows.results.length,
-      club: 0,
-    });
+    reportPersonalReadCost(context, userId, clubSlug, "user", timings, personalRows.results.length);
     return json({
       personal: omitMergeFieldsWhenUnmerged(personalRows.results),
       scope: "user",
@@ -290,10 +261,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .first<{ importedAt: number | null }>());
 
-  reportReadCost(context, userId, clubSlug, "admin", timings, {
-    personal: personalRows.results.length,
-    club: 0,
-  });
+  reportPersonalReadCost(context, userId, clubSlug, "admin", timings, personalRows.results.length);
 
   return json({
     personal: omitMergeFieldsWhenUnmerged(personalRows.results),

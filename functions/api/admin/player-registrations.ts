@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { readMeta, reportReadCost } from "../../lib/read-cost";
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 import {
   SUBSCRIPTION_LEVEL_ID_SQL,
@@ -125,7 +126,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // including the arm that matches a query typed as the label reads, `FAN 12345`.
   const search = buildSearchPredicate(q);
 
-  const { results } = await context.env.DB
+  const started = Date.now();
+  const read = await context.env.DB
     .prepare(selectSql(
       `pr."clubSlug" = ?
         AND ${search.sql}`,
@@ -134,6 +136,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     ))
     .bind(clubSlug, ...search.bindings, limit)
     .all<PlayerRegistrationRow>();
+  const { results } = read;
+
+  // Bounded by LIMIT on a hit, but a miss walks the club: the prefix is an OR
+  // across two tables, which no single index can serve. That is the case worth
+  // seeing before someone reports the picker as slow.
+  reportReadCost(context, (auth.session.user as Record<string, unknown>).id as string, clubSlug, {
+    endpoint: "player_registrations_search",
+    ms: Date.now() - started,
+    rowsRead: readMeta(read).rows_read,
+    rowsReturned: results.length,
+    extra: { query_length: q.length, hit: results.length > 0 },
+  });
 
   return json({ registrations: results, limit });
 };

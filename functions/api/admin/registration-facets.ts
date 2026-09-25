@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { readMeta, reportReadCost } from "../../lib/read-cost";
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 
 /**
@@ -22,6 +23,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "Missing X-Club-Slug header" }, { status: 400 });
 
+  const started = Date.now();
   const [teamsRes, statusesRes] = await context.env.DB.batch<{ value: string }>([
     context.env.DB.prepare(
       `SELECT DISTINCT pr."teamName" AS "value"
@@ -39,6 +41,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
         ORDER BY pr."registrationStatus" COLLATE NOCASE ASC`,
     ).bind(clubSlug),
   ]);
+
+  // Club-scoped rather than filter-scoped, deliberately — so this one also
+  // grows with the club, and both DISTINCTs are counted as the single read the
+  // page actually waits on.
+  reportReadCost(context, (auth.session.user as Record<string, unknown>).id as string, clubSlug, {
+    endpoint: "registrations_facets",
+    ms: Date.now() - started,
+    rowsRead: (readMeta(teamsRes).rows_read ?? 0) + (readMeta(statusesRes).rows_read ?? 0) || undefined,
+    rowsReturned: teamsRes.results.length + statusesRes.results.length,
+  });
 
   return json({
     teams: teamsRes.results.map((r) => r.value),

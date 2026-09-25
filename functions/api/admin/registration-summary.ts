@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { readMeta, reportReadCost } from "../../lib/read-cost";
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 import {
   billingIdFromJoinSql,
@@ -88,10 +89,21 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     COALESCE(SUM(CASE WHEN "hasLevel" = 0 THEN 1 ELSE 0 END), 0)                    AS "noLevel"
   FROM "classified"`;
 
-  const row = await context.env.DB
-    .prepare(sql)
-    .bind(...filters.bindings)
-    .first<SummaryRow>();
+  const started = Date.now();
+  const statement = context.env.DB.prepare(sql).bind(...filters.bindings);
+  const read = await statement.all<SummaryRow>();
+  const row = read.results[0];
+
+  // The one read here that is unbounded by design: it aggregates the whole
+  // filtered set, so it grows with the club even though the table beside it
+  // does not. If anything reintroduces #107 it is most likely this.
+  reportReadCost(context, (auth.session.user as Record<string, unknown>).id as string, clubSlug, {
+    endpoint: "registrations_summary",
+    ms: Date.now() - started,
+    rowsRead: readMeta(read).rows_read,
+    rowsReturned: read.results.length,
+    extra: { filtered: filters.bindings.length > 1 },
+  });
 
   return json({
     registrations: row?.registrations ?? 0,
