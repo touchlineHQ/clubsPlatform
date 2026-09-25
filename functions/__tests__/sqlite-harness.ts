@@ -57,3 +57,48 @@ export function preparedSql(db: { prepare: unknown }): string[] {
   return (db.prepare as { mock: { calls: unknown[][] } }).mock.calls
     .map((call) => String(call[0]));
 }
+
+/**
+ * A D1-shaped facade over a real SQLite database.
+ *
+ * Lets a handler run end to end against actual SQL instead of canned rows, so
+ * a test can assert what a query *returns* rather than how it is spelled. Use
+ * it for anything whose correctness lives in the SQL: paging boundaries,
+ * filters, aggregation.
+ *
+ * It implements the slice of D1 these handlers use — prepare/bind/all/first/run
+ * and batch — not D1 itself. Its limits are SQLite's, not D1's: the
+ * 100-parameter bind cap and the subrequest budget are invisible here, so keep
+ * asserting those against the generated SQL.
+ */
+export function d1Over(db: SqliteDb): {
+  prepare(sql: string): unknown;
+  batch(statements: unknown[]): Promise<{ results: unknown[] }[]>;
+} {
+  const run = (sql: string, params: unknown[]) => {
+    const statement = db.prepare(sql);
+    return {
+      all: async () => ({ results: statement.all(...params), success: true, meta: {} }),
+      first: async () => (statement.all(...params)[0] as unknown) ?? null,
+      run: async () => ({ results: [], success: true, meta: { changes: 0 } }),
+      // Carried so batch() can execute a statement someone already bound.
+      __sql: sql,
+      __params: params,
+    };
+  };
+
+  return {
+    prepare(sql: string) {
+      return {
+        ...run(sql, []),
+        bind: (...params: unknown[]) => run(sql, params),
+      };
+    },
+    async batch(statements: unknown[]) {
+      return statements.map((s) => {
+        const bound = s as { __sql: string; __params: unknown[] };
+        return { results: db.prepare(bound.__sql).all(...bound.__params), success: true, meta: {} };
+      });
+    },
+  };
+}

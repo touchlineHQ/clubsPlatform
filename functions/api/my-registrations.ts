@@ -89,134 +89,7 @@ function paymentStatusSubquery(distinguishManual: boolean): string {
 ) AS paymentStatus`;
 }
 
-/**
- * The club tab's "Linked accounts" cell, as a scalar subquery on pr.playerId.
- *
- * This was a `GROUP_CONCAT` over a `LEFT JOIN user_player`/`user` pair with a
- * `GROUP BY pr.id`. Two reasons it is not any more:
- *
- * - `GROUP_CONCAT` over a join has no defined argument order, so the same
- *   registration could list its guardians differently on consecutive requests.
- *   The nested `ORDER BY` fixes that. (`GROUP_CONCAT(x, sep ORDER BY y)` would
- *   be tidier but needs SQLite 3.44+, and D1's version is pinned nowhere here.)
- * - The `GROUP BY` forced a temp B-tree — rows arrive in `teamName` order, not
- *   `id` order — which costs the index-ordered walk that
- *   idx_player_registration_club_team exists to provide. That matters to the
- *   paginated endpoint this is groundwork for, where an ordered early exit is
- *   the difference between reading 50 rows and reading the club.
- *
- * The `','` separator is load-bearing: RegistrationsPage splits on it. An email
- * containing a comma would corrupt the split — pre-existing, not fixed here.
- */
-const LINKED_ACCOUNTS_SQL = `(SELECT GROUP_CONCAT(la."v", ',') FROM (
-      SELECT u2."email" || '|' || up2."relationship" AS "v"
-        FROM "user_player" up2
-        JOIN "user" u2 ON u2."id" = up2."userId"
-       WHERE up2."playerId" = pr."playerId"
-       ORDER BY u2."email"
-    ) la)`;
-
 const PERSONAL_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(false);
-const CLUB_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(true);
-
-interface ManualAttributionRow {
-  /** The registration the manual row hangs off — a group's primary. */
-  registrationId: string;
-  manualPaidBy: string | null;
-  manualPaidAt: number;
-  manualNote: string | null;
-}
-
-/**
- * How many billing ids one audit lookup may name.
- *
- * D1 caps a query at 100 bound parameters. `clubSlug` takes one, so 80 leaves
- * generous headroom while keeping a full page to a single statement. This is
- * the same cap that forces MAX_MERGE_GROUP = 11 in
- * api/admin/registration-merges.ts — see the comment there.
- */
-const MANUAL_ID_CHUNK = 80;
-
-/**
- * Reads back who marked each manual payment as paid, from the audit log written
- * by api/admin/manual-payment.ts.
- *
- * Kept out of the main query — one extra lookup beats three correlated
- * subqueries, and it is skipped entirely when no row on the page is manual.
- *
- * Asks by **billing** id, because the manual row hangs off the group's primary:
- * a secondary would otherwise show "Paid in full" with nobody's name against it.
- * The row carries its own `billingRegistrationId` now that the merge is resolved
- * in SQL, so this no longer needs a secondary → primary map handed to it.
- *
- * Bounded by the id list rather than by club. The unbounded form — every
- * `manual_paid` row the club has ever written, filtered only on clubSlug,
- * targetTable and action — degraded with *admin activity* rather than data
- * volume, so it got worse for the most engaged clubs first.
- */
-async function attachManualAttribution(
-  db: D1Database,
-  clubSlug: string,
-  rows: RegistrationRow[],
-): Promise<RegistrationRow[]> {
-  const billingIdOf = (r: RegistrationRow) => r.billingRegistrationId ?? r.registrationId;
-
-  const billingIds = [...new Set(
-    rows.filter((r) => r.paymentStatus === "manual").map(billingIdOf),
-  )];
-  // Every club with no override on these rows stops here, having read nothing.
-  if (billingIds.length === 0) return rows;
-
-  const statements = [];
-  for (let i = 0; i < billingIds.length; i += MANUAL_ID_CHUNK) {
-    const ids = billingIds.slice(i, i + MANUAL_ID_CHUNK);
-    statements.push(
-      db
-        .prepare(
-          `SELECT pp.registrationId,
-                  u.email      AS manualPaidBy,
-                  al.createdAt AS manualPaidAt,
-                  al.note      AS manualNote
-             FROM "admin_audit_log" al
-             JOIN "player_payment" pp ON pp.id = al.targetId
-             LEFT JOIN "user" u ON u.id = al.adminId
-            WHERE al.clubSlug = ?
-              AND al.targetTable = 'player_payment'
-              AND al.action = 'manual_paid'
-              AND pp.status = 'manual'
-              AND pp.registrationId IN (${ids.map(() => "?").join(",")})
-            ORDER BY al.createdAt DESC`
-        )
-        .bind(clubSlug, ...ids),
-    );
-  }
-
-  const batches = await db.batch<ManualAttributionRow>(statements);
-
-  // Ordered newest-first, so the first hit per registration is the override
-  // currently in force — a registration re-marked after an undo has several.
-  // Chunks cover disjoint id sets, so no id can be resolved from two of them.
-  const latest = new Map<string, ManualAttributionRow>();
-  for (const batch of batches) {
-    for (const row of batch.results) {
-      if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
-    }
-  }
-
-  return rows.map((r) => {
-    const attribution = r.paymentStatus === "manual"
-      ? latest.get(billingIdOf(r))
-      : undefined;
-    return attribution
-      ? {
-          ...r,
-          manualPaidBy: attribution.manualPaidBy,
-          manualPaidAt: attribution.manualPaidAt,
-          manualNote: attribution.manualNote,
-        }
-      : r;
-  });
-}
 
 /** The three merge columns every registration query selects, resolved in SQL. */
 const MERGE_COLUMNS_SQL = `rm0."primaryRegistrationId" AS billingRegistrationId,
@@ -241,7 +114,7 @@ function omitMergeFieldsWhenUnmerged(rows: RegistrationRow[]): RegistrationRow[]
 }
 
 /** Which read a failure came from. The client reports this back on #107. */
-type ReadLabel = "personal_scan" | "club_scan" | "audit_read" | "import_stamp";
+type ReadLabel = "personal_scan" | "import_stamp";
 
 /** Carries the label of the read that failed up to the handler's catch. */
 class ReadFailure extends Error {
@@ -338,12 +211,16 @@ function reportReadCost(
 }
 
 /**
- * GET handler — fetches registrations for the authenticated user.
+ * GET handler — the registrations linked to the authenticated user.
  *
- * Returns personal registrations (linked to the user) and, for admins, all club
- * registrations with manual payment attribution when applicable. Manual payment
- * status is collapsed to 'completed' for personal queries and kept distinct for
- * admins.
+ * No longer returns the club's rows. That was every registration in the club in
+ * one response, and it now comes from /api/admin/registrations one bounded page
+ * at a time. What stays here is bounded by construction: a user's own
+ * registrations, and the club's last import timestamp.
+ *
+ * Manual payment status is collapsed to 'completed' here, so a manually-paid
+ * player is indistinguishable from one who paid GoCardless in full. The admin
+ * endpoint keeps the two apart.
  */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);
@@ -403,49 +280,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     });
     return json({
       personal: omitMergeFieldsWhenUnmerged(personalRows.results),
-      club: null,
       scope: "user",
       lastImportedAt: null,
     });
   }
 
-  const clubRows = await timedRead("club_scan", timings, () => context.env.DB
-    .prepare(
-      `SELECT
-         pr.id            AS registrationId,
-         p.fanId,
-         pr.teamName,
-         pr.ageGroup,
-         pr.registrationExpiry,
-         pr.registrationStatus,
-         NULL             AS relationship,
-         ${LINKED_ACCOUNTS_SQL} AS linkedAccounts,
-         sl.id            AS subscriptionLevelId,
-         rsl.subscriptionLevelId AS overrideLevelId,
-         sl.name          AS subscriptionLevelName,
-         ${CLUB_PAYMENT_STATUS_SUBQUERY},
-         ${MERGE_COLUMNS_SQL}
-       FROM player_registration pr
-       JOIN player p ON p.id = pr.playerId
-       ${billingMergeJoinSql('pr')}
-       ${subscriptionLevelJoinSql('pr')}
-       WHERE pr.clubSlug = ?
-       ORDER BY pr.teamName ASC, p.fanId ASC`
-    )
-    .bind(clubSlug)
-    .all<RegistrationRow>());
-
-  // Both queries resolved their own billing groups in SQL, so there is no
-  // whole-club registration_merge read here any more — and no JS pass that can
-  // only reach a primary it happens to have loaded.
-  const club = await timedRead("audit_read", timings, () => attachManualAttribution(
-    context.env.DB,
-    clubSlug,
-    clubRows.results,
-  ));
-
-  // Lets the page say how old the numbers on screen are. Dry-run previews write
-  // no log row, so this only ever moves on a committed import.
   const lastImport = await timedRead("import_stamp", timings, () => context.env.DB
     .prepare(`SELECT MAX(importedAt) AS importedAt FROM "club_import_log" WHERE clubSlug = ?`)
     .bind(clubSlug)
@@ -453,12 +292,11 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   reportReadCost(context, userId, clubSlug, "admin", timings, {
     personal: personalRows.results.length,
-    club: club.length,
+    club: 0,
   });
 
   return json({
     personal: omitMergeFieldsWhenUnmerged(personalRows.results),
-    club: omitMergeFieldsWhenUnmerged(club),
     scope: "admin",
     lastImportedAt: lastImport?.importedAt ?? null,
   });

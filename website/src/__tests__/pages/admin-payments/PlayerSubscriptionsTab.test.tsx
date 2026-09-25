@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { renderWithMantine, mockAdmin, mockSingleClub } from '../../test-utils';
 
 vi.mock('@mantine/core', async (importOriginal) => {
@@ -64,14 +64,35 @@ const samplePayment = {
   updatedAt: 1700000000000,
 };
 
+/**
+ * Type into the picker and choose an option.
+ *
+ * The player list is searched server-side now, so options only exist after two
+ * characters and a debounce — the assertion inside waitFor is what makes the
+ * wait real rather than vacuous.
+ */
+async function pickPlayer(search: string, option: RegExp) {
+  fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+    target: { value: search },
+  });
+  await waitFor(() => expect(screen.getByText(option)).toBeTruthy());
+  fireEvent.click(screen.getByText(option));
+}
+
 describe('PlayerSubscriptionsTab', () => {
-  it('shows loader initially when fetch never resolves', () => {
+  it('renders the picker without first loading the whole club', async () => {
+    // The club-wide load this replaces was the same unbounded read #114
+    // removed from the registrations table; the picker searches instead.
     mockFetch.mockImplementation(() => new Promise(() => {}));
     renderWithMantine(
       <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
       { authValue: mockAdmin, clubValue: mockSingleClub },
     );
-    expect(document.querySelector('.mantine-Loader-root')).toBeTruthy();
+
+    expect(screen.getByPlaceholderText(/Search by FAN number or team/i)).toBeTruthy();
+    expect(mockFetch.mock.calls.some(
+      c => String(c[0]).startsWith('/api/admin/player-registrations'),
+    )).toBe(false);
   });
 
   it('renders component headings after loading', async () => {
@@ -85,14 +106,105 @@ describe('PlayerSubscriptionsTab', () => {
     expect(screen.getByText('2. Configure subscription')).toBeTruthy();
   });
 
-  it('shows empty state when no registrations exist', async () => {
+  it('asks for two characters before searching', async () => {
     renderWithMantine(
       <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
       { authValue: mockAdmin, clubValue: mockSingleClub },
     );
-    await waitFor(() => {
-      expect(screen.getByText(/No registered players found/i)).toBeTruthy();
+
+    const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
+    fireEvent.click(input);
+    await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
+
+    // One character is below the threshold, so it must not reach the server.
+    fireEvent.change(input, { target: { value: 'U' } });
+    await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
+    expect(mockFetch.mock.calls.some(
+      c => String(c[0]).startsWith('/api/admin/player-registrations?q='),
+    )).toBe(false);
+  });
+
+  it('discards a search the admin has already shortened', async () => {
+    // Type "Un", then delete a character before the response lands. Without a
+    // sequence bump on the short-query path the in-flight response is still
+    // current, and its options render under "Type 2 or more characters".
+    let release: (() => void) | null = null;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).startsWith('/api/admin/player-registrations?q=')) {
+        await new Promise<void>(resolve => { release = resolve; });
+        return { ok: true, json: async () => ({ registrations: [sampleRegistration] }) };
+      }
+      if (String(url).includes('/api/admin/player-payments')) {
+        return { ok: true, json: async () => ({ payments: [] }) };
+      }
+      return { ok: true, json: async () => ({}) };
     });
+
+    renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: 'Un' } });
+    await waitFor(() => expect(release).toBeTruthy());
+
+    fireEvent.change(input, { target: { value: 'U' } });
+    // Released inside act so the response's continuation has run by the time the
+    // assertions do. A bare waitFor on the prompt would settle on its first tick
+    // — the prompt is already on screen — and could assert before the hook saw
+    // the response at all.
+    await act(async () => { release!(); });
+
+    expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy();
+    expect(screen.queryByText(/FAN 12345/)).toBeNull();
+  });
+
+  it('ignores a payments response from the club the admin has left', async () => {
+    // The deps became [clubSlug] so this refetches per club, which is what makes
+    // interleaving possible. The records only reach the screen through the
+    // existing-payment warning, so a registration has to be selected for the
+    // assertion to mean anything.
+    let releaseFirst: (() => void) | null = null;
+    let paymentsCall = 0;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/admin/player-payments')) {
+        paymentsCall += 1;
+        if (paymentsCall === 1) {
+          await new Promise<void>(resolve => { releaseFirst = resolve; });
+          // first-club has a SUBS payment for reg-1; second-club has none.
+          return { ok: true, json: async () => ({ payments: [samplePayment] }) };
+        }
+        return { ok: true, json: async () => ({ payments: [] }) };
+      }
+      if (String(url).includes('/api/admin/player-registrations')) {
+        return { ok: true, json: async () => ({ registrations: [sampleRegistration] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    const { rerender } = renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="first-club" clubHeaders={{ 'x-club-slug': 'first-club' }} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+    await waitFor(() => expect(releaseFirst).toBeTruthy());
+
+    rerender(
+      <PlayerSubscriptionsTab clubSlug="second-club" clubHeaders={{ 'x-club-slug': 'second-club' }} />,
+    );
+    await waitFor(() => expect(paymentsCall).toBe(2));
+
+    const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
+    fireEvent.change(input, { target: { value: '12345' } });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
+
+    await act(async () => { releaseFirst!(); });
+
+    // second-club has no payment for this registration, so the warning must not
+    // appear. Ungated, first-club's response lands last and it does.
+    expect(screen.queryByText(/existing payment record/i)).toBeNull();
   });
 
   it('shows player option in select when registrations are provided', async () => {
@@ -126,13 +238,13 @@ describe('PlayerSubscriptionsTab', () => {
       { authValue: mockAdmin, clubValue: mockSingleClub },
     );
 
-    // After loading the player select should be present (not the empty state)
-    await waitFor(() => {
-      // The empty state text should not be present
-      expect(screen.queryByText(/No registered players found/i)).toBeNull();
-    });
-    // The select placeholder should appear
+    await pickPlayer('12345', /FAN 12345/i);
+
     expect(screen.getByPlaceholderText(/Search by FAN number or team/i)).toBeTruthy();
+    // The search reached the server rather than filtering a preloaded club.
+    expect(mockFetch.mock.calls.some(
+      c => String(c[0]).includes('/api/admin/player-registrations?q=12345'),
+    )).toBe(true);
   });
 
   it('shows auto-fill alert with level name when a registration with a subscription level is selected', async () => {
@@ -159,10 +271,8 @@ describe('PlayerSubscriptionsTab', () => {
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
     fireEvent.change(selectInput, { target: { value: '12345' } });
 
-    await waitFor(() => {
-      const option = screen.queryByText(/FAN 12345/i);
-      if (option) fireEvent.click(option);
-    });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
 
     await waitFor(() => {
       // The auto-fill alert contains unique text — check that rather than the level name
@@ -194,10 +304,8 @@ describe('PlayerSubscriptionsTab', () => {
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
     fireEvent.change(selectInput, { target: { value: '12345' } });
 
-    await waitFor(() => {
-      const option = screen.queryByText(/FAN 12345/i);
-      if (option) fireEvent.click(option);
-    });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
 
     await waitFor(() => {
       expect(screen.queryByText(/existing payment record/i)).toBeTruthy();
@@ -234,17 +342,15 @@ describe('PlayerSubscriptionsTab', () => {
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
     fireEvent.change(selectInput, { target: { value: '12345' } });
 
-    await waitFor(() => {
-      const option = screen.queryByText(/FAN 12345/i);
-      if (option) fireEvent.click(option);
-    });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
 
-    // Wait for the amount field to be auto-filled (registration has yearlyPriceInPence)
-    await waitFor(() => {
-      const generateBtn = screen.getByRole('button', { name: /Generate Payment Link/i });
-      expect(generateBtn).toBeTruthy();
-      fireEvent.click(generateBtn);
-    });
+    // Selecting is async now — the row is fetched by id before the pricing
+    // fields autofill — so wait for the button to actually be usable rather
+    // than for it to merely exist.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Generate Payment Link/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /Generate Payment Link/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/3\. Share with player/i)).toBeTruthy();
@@ -280,19 +386,39 @@ describe('PlayerSubscriptionsTab', () => {
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
     fireEvent.change(selectInput, { target: { value: '12345' } });
 
-    await waitFor(() => {
-      const option = screen.queryByText(/FAN 12345/i);
-      if (option) fireEvent.click(option);
-    });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
 
-    await waitFor(() => {
-      const generateBtn = screen.getByRole('button', { name: /Generate Payment Link/i });
-      expect(generateBtn).toBeTruthy();
-      fireEvent.click(generateBtn);
-    });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Generate Payment Link/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: /Generate Payment Link/i }));
 
     await waitFor(() => {
       expect(screen.queryByText(/GC token not configured/i)).toBeTruthy();
+    });
+  });
+
+  it('shows an error alert when a player search fails', async () => {
+    // The tab used to own its own load error; the picker owns it now, and a
+    // failed query that says nothing reads as "no such player".
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/api/admin/player-registrations')) {
+        return { ok: false, status: 500, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => ({ payments: [] }) };
+    });
+
+    renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+      target: { value: 'Under' },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to search player registrations/i)).toBeTruthy();
     });
   });
 });

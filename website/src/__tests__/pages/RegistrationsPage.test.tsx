@@ -23,6 +23,8 @@ vi.mock('../../lib/posthog', () => ({
 }));
 
 import { captureError } from '../../lib/posthog';
+import { summariseRegistrations } from '../../utils/registrationSummary';
+import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
 
 const mockFetch = vi.fn();
 beforeEach(() => {
@@ -45,13 +47,88 @@ const sampleRow = {
   paymentStatus: 'active',
 };
 
+/**
+ * Routes fetch by URL.
+ *
+ * The club tab is four endpoints now — a page of rows, the facets, the summary
+ * and the levels — so one blanket resolution no longer describes it. Facets and
+ * summary are derived from the same rows the page endpoint serves, which keeps
+ * a fixture a single source of truth.
+ */
+function routeClubApi(rows: Record<string, unknown>[], over: {
+  personal?: unknown[];
+  nextCursor?: string | null;
+} = {}) {
+  mockFetch.mockImplementation((url: string) => {
+    const u = String(url);
+    const json = (body: unknown) => Promise.resolve({
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+
+    if (u.startsWith('/api/admin/registration-facets')) {
+      return json({
+        teams: [...new Set(rows.map(r => r.teamName as string))].filter(Boolean).sort(),
+        statuses: [...new Set(rows.map(r => r.registrationStatus as string))].filter(Boolean).sort(),
+      });
+    }
+    if (u.startsWith('/api/admin/registration-summary')) {
+      return json(summariseRegistrations(applyQuery(rows, u) as never));
+    }
+    if (u.startsWith('/api/admin/registrations')) {
+      return json({ rows: applyQuery(rows, u), nextCursor: over.nextCursor ?? null, limit: 50 });
+    }
+    if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
+    if (u.startsWith('/api/my-registrations')) {
+      return json({ personal: over.personal ?? [], scope: 'admin' });
+    }
+    return json({ ok: true });
+  });
+}
+
+/**
+ * Applies the query string the way the endpoint does.
+ *
+ * Filtering moved to SQL, so a mock that ignored these would let a page that
+ * forgot to send them pass.
+ */
+function applyQuery(rows: Record<string, unknown>[], url: string) {
+  const params = new URLSearchParams(url.split('?')[1] ?? '');
+  const team = params.get('team');
+  const status = params.get('status');
+  const subscription = params.get('subscription');
+  const q = params.get('q')?.toLowerCase();
+
+  return rows.filter(r => {
+    if (team && r.teamName !== team) return false;
+    if (status && (r.registrationStatus ?? '') !== status) return false;
+    if (subscription && getSubscriptionStatus(r as never).status !== subscription) return false;
+    if (q) {
+      const fan = String(r.fanId ?? '').toLowerCase();
+      const name = String(r.teamName ?? '').toLowerCase();
+      if (!fan.startsWith(q) && !name.startsWith(q)) return false;
+    }
+    return true;
+  });
+}
+
+/** How many calls have been made to an endpoint, by URL prefix. */
+function callsTo(prefix: string): number {
+  return mockFetch.mock.calls.filter(c => String(c[0]).startsWith(prefix)).length;
+}
+
+/** The query string of the last call to the paginated list endpoint. */
+function lastListQuery(): URLSearchParams {
+  const call = [...mockFetch.mock.calls].reverse()
+    .find(c => String(c[0]).startsWith('/api/admin/registrations?'));
+  return new URLSearchParams(String(call?.[0]).split('?')[1] ?? '');
+}
+
 describe('RegistrationsPage', () => {
   /** Renders as an admin and switches to the Club Registrations tab. */
-  async function renderClubTab(club: unknown[]) {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club, scope: 'admin' }),
-    });
+  async function renderClubTab(club: Record<string, unknown>[]) {
+    routeClubApi(club);
 
     renderWithMantine(<RegistrationsPage />, {
       authValue: mockAdmin,
@@ -208,21 +285,7 @@ describe('RegistrationsPage', () => {
 
   it('shows Export to Excel button next to Import Players in Club Registrations tab', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
-    });
-
-    renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
-      clubValue: mockSingleClub,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
@@ -246,21 +309,7 @@ describe('RegistrationsPage', () => {
 
   it('shows Import Players button in Club Registrations tab for admins', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
-    });
-
-    renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
-      clubValue: mockSingleClub,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
@@ -269,21 +318,7 @@ describe('RegistrationsPage', () => {
 
   it('opens the delete modal when the remove button is clicked on a club registration', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
-    });
-
-    renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
-      clubValue: mockSingleClub,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       const removeBtn = document.querySelector('[aria-label="Remove registration"]');
@@ -466,6 +501,99 @@ describe('RegistrationsPage', () => {
 
   // ─── Summary strip ──────────────────────────────────────────────────────────
 
+  describe('paging', () => {
+    const pageRows = [
+      { ...sampleRow, registrationId: 'reg_1', fanId: 'FAN-1', teamName: 'Alpha' },
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'FAN-2', teamName: 'Beta' },
+    ];
+
+    it('asks for a bounded page rather than the whole club', async () => {
+      await renderClubTab(pageRows);
+
+      expect(lastListQuery().get('limit')).toBe('50');
+      expect(lastListQuery().get('sort')).toBe('teamName');
+      expect(lastListQuery().get('dir')).toBe('asc');
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('follows the cursor the server returned, and offers a way back', async () => {
+      routeClubApi(pageRows, { nextCursor: 'CURSOR_ONE' });
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      expect(screen.queryByRole('button', { name: 'Previous' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => expect(lastListQuery().get('cursor')).toBe('CURSOR_ONE'));
+      await waitFor(() => expect(screen.getByText('Page 2')).toBeTruthy());
+
+      // Back is the only way to a page a keyset cursor has already walked past.
+      fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+      await waitFor(() => expect(screen.getByText('Page 1')).toBeTruthy());
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('drops the cursor when the sort changes', async () => {
+      // A cursor is a position in one ordering. Carried into another it would
+      // skip an arbitrary slice, so the server rejects it and the page must not
+      // send it.
+      routeClubApi(pageRows, { nextCursor: 'CURSOR_ONE' });
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(lastListQuery().get('cursor')).toBe('CURSOR_ONE'));
+
+      fireEvent.click(screen.getByRole('button', { name: /FAN ID/i }));
+
+      await waitFor(() => expect(lastListQuery().get('sort')).toBe('fanId'));
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('sorts in SQL rather than reordering the page it holds', async () => {
+      await renderClubTab(pageRows);
+
+      fireEvent.click(screen.getByRole('button', { name: /Team/i }));
+
+      await waitFor(() => expect(lastListQuery().get('dir')).toBe('desc'));
+    });
+
+    it('searches server-side so one FAN is reachable without paging', async () => {
+      await renderClubTab(pageRows);
+
+      fireEvent.change(screen.getByLabelText('Search registrations'), { target: { value: 'FAN-2' } });
+
+      await waitFor(() => expect(lastListQuery().get('q')).toBe('FAN-2'));
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('hides the pager when everything fits on one page', async () => {
+      await renderClubTab(pageRows);
+      expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+    });
+
+    it('debounces the search box rather than scanning the club per keystroke', async () => {
+      // The summary aggregates the whole filtered set, so an undebounced box
+      // sends one club-wide scan per character typed.
+      await renderClubTab(pageRows);
+      const listBefore = callsTo('/api/admin/registrations?');
+      const summaryBefore = callsTo('/api/admin/registration-summary');
+
+      const box = screen.getByLabelText('Search registrations');
+      for (const value of ['F', 'FA', 'FAN', 'FAN-', 'FAN-2']) {
+        fireEvent.change(box, { target: { value } });
+      }
+
+      await waitFor(() => expect(lastListQuery().get('q')).toBe('FAN-2'));
+      expect(callsTo('/api/admin/registrations?') - listBefore).toBe(1);
+      expect(callsTo('/api/admin/registration-summary') - summaryBefore).toBe(1);
+    });
+  });
+
   describe('summary strip', () => {
     // FAN-1 plays for two teams, so registrations (4) and players (3) differ.
     const summaryClub = [
@@ -543,14 +671,20 @@ describe('RegistrationsPage', () => {
       expect(screen.getByText(/No registrations match the current filters/i)).toBeTruthy();
     });
 
-    it('makes no further network calls when the filters change', async () => {
+    it('re-requests the page and the summary when the filters change', async () => {
+      // The inverse of what this asserted before the move to SQL: filtering
+      // client-side made no request, and doing it server-side must.
       await renderClubTab(summaryClub);
-      const callsAfterLoad = mockFetch.mock.calls.length;
+      const before = mockFetch.mock.calls.length;
 
-      await chooseFilter(/filter by team/i, 'Reserves');
-      await waitFor(() => expect(statValue('Registrations')).toBe('2'));
+      await chooseFilter('Filter by team', 'First XI');
 
-      expect(mockFetch.mock.calls.length).toBe(callsAfterLoad);
+      await waitFor(() => expect(lastListQuery().get('team')).toBe('First XI'));
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(before);
+      expect(mockFetch.mock.calls.some(
+        c => String(c[0]).startsWith('/api/admin/registration-summary?')
+          && String(c[0]).includes('team=First+XI'),
+      )).toBe(true);
     });
 
     it('leaves the empty state alone when the club has no registrations', async () => {
@@ -558,6 +692,87 @@ describe('RegistrationsPage', () => {
 
       expect(screen.queryByRole('group', { name: /registrations summary/i })).toBeNull();
       expect(screen.getByText(/No registrations yet for this club/i)).toBeTruthy();
+    });
+  });
+
+  // ── Deleting a registration ────────────────────────────────────────────────
+
+  describe('deleting a registration', () => {
+    const rowA = { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Alpha' };
+    const rowB = { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Beta' };
+
+    /** Opens the confirm modal for one row and confirms it. */
+    async function removeRow(teamName: string) {
+      const row = screen.getByLabelText(`Select ${teamName} for merging`).closest('tr')!;
+      fireEvent.click(within(row).getByRole('button', { name: /Remove registration/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Remove$/ }));
+    }
+
+    it('re-reads the counts, which the local row drop cannot do', async () => {
+      // The row leaves the page without a refetch, but the summary is its own
+      // request — left alone it keeps over-reporting by the deleted row.
+      await renderClubTab([rowA, rowB]);
+      const before = callsTo('/api/admin/registration-summary');
+
+      await removeRow('Alpha');
+
+      // By the row's checkbox, not its team name — that also names a facet
+      // option in the team filter's dropdown.
+      await waitFor(() => expect(screen.queryByLabelText('Select Alpha for merging')).toBeNull());
+      expect(callsTo('/api/admin/registration-summary')).toBeGreaterThan(before);
+    });
+
+    it('drops the deleted row from the merge selection', async () => {
+      // It is held by value, captured at toggle time, so nothing else would.
+      await renderClubTab([rowA, rowB]);
+
+      fireEvent.click(screen.getByLabelText('Select Alpha for merging'));
+      fireEvent.click(screen.getByLabelText('Select Beta for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+
+      await removeRow('Alpha');
+
+      await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+    });
+
+    it('steps back a page when the delete empties page 2', async () => {
+      // Otherwise the club's empty state renders with a pager reading Page 2
+      // underneath it.
+      mockFetch.mockImplementation((url: string) => {
+        const u = String(url);
+        const json = (body: unknown) => Promise.resolve({
+          ok: true,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        });
+
+        if (u.startsWith('/api/admin/registration-facets')) return json({ teams: [], statuses: [] });
+        if (u.startsWith('/api/admin/registration-summary')) {
+          return json(summariseRegistrations([rowA, rowB] as never));
+        }
+        if (u.startsWith('/api/admin/registrations')) {
+          const cursor = new URLSearchParams(u.split('?')[1] ?? '').get('cursor');
+          return cursor
+            ? json({ rows: [rowB], nextCursor: null, limit: 50 })
+            : json({ rows: [rowA], nextCursor: 'CURSOR_ONE', limit: 50 });
+        }
+        if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
+        return json({ personal: [], scope: 'admin' });
+      });
+
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(screen.getByText('Page 2')).toBeTruthy());
+
+      await removeRow('Beta');
+
+      await waitFor(() => expect(screen.getByText('Page 1')).toBeTruthy());
+      expect(screen.queryByText(/No registrations yet for this club/i)).toBeNull();
     });
   });
 
@@ -587,76 +802,15 @@ describe('RegistrationsPage', () => {
       return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
     }
 
-    it('suggests same-age-group registrations without merging anything itself', async () => {
+    it('does not offer merge suggestions while they would only cover one page', async () => {
+      // suggestMerges grouped by player and age group across the whole club.
+      // Page-scoped it would quietly under-count, and a hint that misses most
+      // of its cases is worse than no hint. It returns in #115, computed
+      // server-side. Asserted so the removal stays deliberate.
       await renderClubTab([tuesday, thursday]);
 
-      expect(screen.getByText(/1 player has registrations in the same age group/i)).toBeTruthy();
-      // A hint, not a decision: nothing is billed together yet.
-      expect(statValue('Billable units')).toBe('2');
-    });
-
-    it('counts distinct players when one player has suggestions in two age groups', async () => {
-      await renderClubTab([
-        tuesday,
-        thursday,
-        {
-          ...tuesday,
-          registrationId: 'reg_sat',
-          billingRegistrationId: 'reg_sat',
-          ageGroup: 'Open',
-          teamName: 'Saturday',
-        },
-        {
-          ...thursday,
-          registrationId: 'reg_sun',
-          billingRegistrationId: 'reg_sun',
-          ageGroup: 'Open',
-          teamName: 'Sunday',
-        },
-      ]);
-
-      expect(screen.getByText(/1 player has registrations in the same age group/i)).toBeTruthy();
-      expect(screen.queryByText(/2 players have registrations in the same age group/i)).toBeNull();
-    });
-
-    it('shows all registrations after the final visible suggestion is resolved', async () => {
-      const unrelated = {
-        ...tuesday,
-        registrationId: 'reg_other',
-        billingRegistrationId: 'reg_other',
-        fanId: 'FAN-OTHER',
-        teamName: 'Open Age',
-        ageGroup: 'Open',
-      };
-      await renderClubTab([tuesday, thursday, unrelated]);
-
-      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
-      const openAgeTableCell = () => screen.queryAllByText('Open Age')
-        .find(element => element.closest('tr'));
-      await waitFor(() => expect(openAgeTableCell()).toBeUndefined());
-      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
-      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
-      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
-      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
-
-      mockFetch
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
-        .mockResolvedValue({
-          ok: true,
-          json: async () => ({
-            personal: [],
-            club: [
-              { ...tuesday, mergedTeamNames: 'U15 Thursday' },
-              { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
-              unrelated,
-            ],
-            scope: 'admin',
-          }),
-        });
-      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/ }));
-
-      await waitFor(() => expect(openAgeTableCell()).toBeTruthy());
-      expect(screen.queryByRole('button', { name: 'Show all' })).toBeNull();
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Review them' })).toBeNull();
     });
 
     it('says nothing when the age groups differ', async () => {
