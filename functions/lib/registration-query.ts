@@ -110,6 +110,46 @@ export function escapeLike(value: string): string {
 }
 
 /**
+ * Drops a leading `FAN` that belongs to the label rather than the value.
+ *
+ * Both admin search boxes put the words FAN ID next to the number — the picker
+ * labels its options `FAN 12345 — Under 10s`, the club table's column header is
+ * `FAN ID` — while `player.fanId` holds `12345`. So an admin typing what is on
+ * screen matches nothing under a prefix search.
+ *
+ * Used to add a second LIKE arm, never to rewrite the query: a `fanId` that
+ * genuinely starts with `FAN` (this repo's own fixtures do, and the column is
+ * whatever the FA export's FAN ID cell contained) and a team named "Fan Zone"
+ * both still match through the untouched original pattern. That is what lets
+ * the separator be optional here without risking a false strip.
+ */
+export function stripFanPrefix(value: string): string {
+  return value.replace(/^fan[\s:#-]*/i, "");
+}
+
+/**
+ * The `q` predicate and its bindings: a prefix over `fanId` and `teamName`,
+ * plus a `fanId` arm for the same query with a `FAN` label prefix removed.
+ *
+ * The extra arm is added only when stripping changed something and left
+ * something — `q` of exactly "FAN" would otherwise bind `%` and match the whole
+ * club, which is the read these endpoints exist to remove.
+ */
+export function buildSearchPredicate(q: string): { sql: string; bindings: string[] } {
+  const pattern = `${escapeLike(q)}%`;
+  const arms = [`p."fanId" LIKE ? ESCAPE '\\'`, `pr."teamName" LIKE ? ESCAPE '\\'`];
+  const bindings = [pattern, pattern];
+
+  const stripped = stripFanPrefix(q);
+  if (stripped && stripped !== q) {
+    arms.push(`p."fanId" LIKE ? ESCAPE '\\'`);
+    bindings.push(`${escapeLike(stripped)}%`);
+  }
+
+  return { sql: `(${arms.join(" OR ")})`, bindings };
+}
+
+/**
  * The filter predicates and their bindings, shared by the list and the summary
  * so the two can never disagree about what a filter means.
  *
@@ -120,7 +160,9 @@ export function escapeLike(value: string): string {
  *
  * `q` matches `fanId` and `teamName` only, never `linkedAccounts`. That is a
  * GROUP_CONCAT, so a predicate on it could only live in HAVING, which would
- * destroy every index-driven plan and break the keyset scheme outright.
+ * destroy every index-driven plan and break the keyset scheme outright. It goes
+ * through {@link buildSearchPredicate}, so the club list and the summary agree
+ * about the FAN-label arm as well as about everything else.
  */
 export function buildRegistrationFilters(
   clubSlug: string,
@@ -149,9 +191,9 @@ export function buildRegistrationFilters(
   }
 
   if (filters.q) {
-    const pattern = `${escapeLike(filters.q)}%`;
-    parts.push(`(p."fanId" LIKE ? ESCAPE '\\' OR pr."teamName" LIKE ? ESCAPE '\\')`);
-    bindings.push(pattern, pattern);
+    const search = buildSearchPredicate(filters.q);
+    parts.push(search.sql);
+    bindings.push(...search.bindings);
   }
 
   return { sql: parts.join("\n  AND "), bindings };

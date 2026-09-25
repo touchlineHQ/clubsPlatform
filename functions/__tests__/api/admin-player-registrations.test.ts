@@ -38,12 +38,16 @@ describe('GET /api/admin/player-registrations', () => {
     sqlite = createSchemaDb();
     db = d1Over(sqlite);
 
+    // p4's FAN is numeric, which is the shape every production row has; p1-p3
+    // keep the 'FAN…' form, which the strip must not break.
     sqlite.exec(`INSERT INTO "player" VALUES
-      ('p1','FAN001',${NOW},${NOW}), ('p2','FAN002',${NOW},${NOW}), ('p3','FAN999',${NOW},${NOW})`);
+      ('p1','FAN001',${NOW},${NOW}), ('p2','FAN002',${NOW},${NOW}), ('p3','FAN999',${NOW},${NOW}),
+      ('p4','1234567',${NOW},${NOW})`);
     sqlite.exec(`INSERT INTO "player_registration" VALUES
       ('reg_1','${CLUB}','p1','U15 Tuesday','U15','2026-07-31','Registered',${NOW},${NOW}),
       ('reg_2','${CLUB}','p2','Robins First','Open','2026-07-31','Registered',${NOW},${NOW}),
-      ('reg_3','other-club','p3','Elsewhere','U15','2026-07-31','Registered',${NOW},${NOW})`);
+      ('reg_3','other-club','p3','Elsewhere','U15','2026-07-31','Registered',${NOW},${NOW}),
+      ('reg_4','${CLUB}','p4','Wrens Reserves','Open','2026-07-31','Registered',${NOW},${NOW})`);
     sqlite.exec(`INSERT INTO "subscription_level" VALUES
       ('lvl','${CLUB}','Standard',12000,12,'monthly','2026-09-01',${NOW},${NOW})`);
     sqlite.exec(`INSERT INTO "registration_subscription_level" VALUES ('${CLUB}','reg_1','lvl',${NOW})`);
@@ -77,6 +81,33 @@ describe('GET /api/admin/player-registrations', () => {
 
   it('matches a team name prefix', async () => {
     expect((await rows('?q=Robins')).map(r => r.registrationId)).toEqual(['reg_2']);
+  });
+
+  it('finds a numeric FAN typed the way the picker labels it', async () => {
+    // Options read `FAN 1234567 — Wrens Reserves`, so that is what gets typed
+    // (or pasted) — while the column holds `1234567` and this is a prefix match.
+    expect((await rows('?q=FAN%201234567')).map(r => r.registrationId)).toEqual(['reg_4']);
+    expect((await rows('?q=FAN1234567')).map(r => r.registrationId)).toEqual(['reg_4']);
+    expect((await rows('?q=fan%201234')).map(r => r.registrationId)).toEqual(['reg_4']);
+  });
+
+  it('still matches a FAN ID that itself begins with FAN', async () => {
+    // The strip adds an arm, it does not rewrite the query. Rewriting would turn
+    // 'FAN00' into '00' and lose both of these.
+    expect((await rows('?q=FAN00')).map(r => r.registrationId)).toEqual(['reg_2', 'reg_1']);
+    expect((await rows('?q=FAN001')).map(r => r.registrationId)).toEqual(['reg_1']);
+  });
+
+  it('does not answer a bare FAN with the whole club', async () => {
+    // Stripped to nothing the extra arm would bind '%', which is the unbounded
+    // read this endpoint exists to remove. `FAN` still matches the two fixtures
+    // whose FAN ID really does start with it — through the raw arm — so the
+    // assertion is the absence of the numeric one, not an empty result.
+    // Trailing space and all: the handler trims, so both are the query `FAN`.
+    expect((await rows('?q=FAN')).map(r => r.registrationId)).toEqual(['reg_2', 'reg_1']);
+    expect((await rows('?q=FAN%20')).map(r => r.registrationId)).toEqual(['reg_2', 'reg_1']);
+    // `FAN#` strips to nothing as well, and matches nothing literally either.
+    expect(await rows('?q=FAN%23')).toEqual([]);
   });
 
   it('treats a wildcard as literal text', async () => {

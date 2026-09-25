@@ -4,7 +4,7 @@ import {
   SUBSCRIPTION_LEVEL_ID_SQL,
   subscriptionLevelJoinSql,
 } from "../../lib/registration-merge";
-import { escapeLike } from "../../lib/registration-query";
+import { buildSearchPredicate } from "../../lib/registration-query";
 
 /**
  * Typeahead over the club's registrations, for the payment pages' player picker.
@@ -121,16 +121,18 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     ? Math.min(MAX_LIMIT, Math.max(1, Math.trunc(parsedLimit)))
     : DEFAULT_LIMIT;
 
-  const pattern = `${escapeLike(q)}%`;
+  // Shared with the club table's `q`, so both search boxes mean the same thing —
+  // including the arm that matches a query typed as the label reads, `FAN 12345`.
+  const search = buildSearchPredicate(q);
 
   const { results } = await context.env.DB
     .prepare(selectSql(
       `pr."clubSlug" = ?
-        AND (p."fanId" LIKE ? ESCAPE '\\' OR pr."teamName" LIKE ? ESCAPE '\\')`,
+        AND ${search.sql}`,
       `ORDER BY pr."teamName" COLLATE NOCASE ASC, p."fanId" COLLATE NOCASE ASC`,
       true,
     ))
-    .bind(clubSlug, pattern, pattern, limit)
+    .bind(clubSlug, ...search.bindings, limit)
     .all<PlayerRegistrationRow>();
 
   return json({ registrations: results, limit });

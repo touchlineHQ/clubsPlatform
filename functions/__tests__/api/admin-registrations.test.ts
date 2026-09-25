@@ -210,6 +210,25 @@ describe('GET /api/admin/registrations', () => {
     expect(await ids('?q=%')).toEqual([]);
   });
 
+  it('finds a numeric FAN typed the way the column is labelled', async () => {
+    // The header says FAN ID and the placeholder says "Search FAN ID or team",
+    // so `FAN 1234567` gets typed for a column holding `1234567`. Same shared
+    // predicate as the player picker, so both boxes behave alike.
+    seedPlayer(sqlite, '1234567', 'p1');
+    seedPlayer(sqlite, 'FAN002', 'p2');
+    seedRegistration(sqlite, { id: 'reg_a', player: 'p1', team: 'U15 Tuesday' });
+    seedRegistration(sqlite, { id: 'reg_b', player: 'p2', team: 'Robins First' });
+
+    const ids = async (q: string) =>
+      ((await (await call(listRegistrations, db, q)).json()) as { rows: { registrationId: string }[] })
+        .rows.map((r) => r.registrationId);
+
+    expect(await ids('?q=FAN%201234567')).toEqual(['reg_a']);
+    expect(await ids('?q=FAN1234')).toEqual(['reg_a']);
+    // And the arm is additive: a FAN ID that starts with FAN still matches.
+    expect(await ids('?q=FAN00')).toEqual(['reg_b']);
+  });
+
   it('filters by the group-resolved subscription status', async () => {
     seedPlayer(sqlite, 'FAN001', 'p1');
     seedRegistration(sqlite, { id: 'reg_paid', player: 'p1', team: 'A' });
