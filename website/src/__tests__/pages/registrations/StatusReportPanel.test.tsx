@@ -243,6 +243,32 @@ describe('StatusReportPanel', () => {
     expect(JSON.stringify(payload)).not.toMatch(/Lovelace|Turing|FAN00/);
   });
 
+  it('withdraws the previous report when a second file is chosen and its load fails', async () => {
+    // The panel used to clear only faRows, so the second file re-enabled the
+    // download against the first file's registrations — and left it enabled when
+    // the new load failed, offering a report the admin had just been told could
+    // not be built.
+    let attempt = 0;
+    const { select, choose } = renderPanel({
+      loadRegistrations: async () => {
+        attempt += 1;
+        if (attempt === 1) return registrations;
+        throw new Error('Could not reach the club');
+      },
+    });
+
+    await select();
+    expect(screen.getByRole('button', { name: /Download status report/ })).toBeEnabled();
+
+    // The dropzone is only rendered while there is no parsed file, so this is
+    // the route an admin actually takes to a second one.
+    fireEvent.click(screen.getByRole('button', { name: /Change file/ }));
+    await act(async () => { choose('second-report.xlsx'); });
+
+    await waitFor(() => expect(screen.getByText(/Could not reach the club/)).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /Download status report/ })).toBeDisabled();
+  });
+
   it('says so when a subscription filter is hiding players with no subs record', async () => {
     const { select } = renderPanel({ faFilter: { dropFaOnly: true }, filtersActive: true });
     await select();

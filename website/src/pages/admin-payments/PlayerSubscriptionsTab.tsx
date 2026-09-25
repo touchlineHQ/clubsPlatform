@@ -39,11 +39,16 @@ export function PlayerSubscriptionsTab({ clubSlug, clubHeaders }: Props) {
 
   // Players are searched rather than listed, so only the payments load here.
   // clubSlug is in the deps now: these never refetched when the club changed.
+  // Which is also why the cleanup guard is needed — refetching per club means a
+  // slow response for the previous one can land last and replace this club's
+  // records, and these drive the existing-payment warning.
   useEffect(() => {
+    let cancelled = false;
     fetch('/api/admin/player-payments', { headers: clubHeaders })
       .then(r => r.ok ? r.json() as Promise<{ payments: PlayerPaymentRow[] }> : Promise.reject())
-      .then(d => setPayments(d.payments))
+      .then(d => { if (!cancelled) setPayments(d.payments); })
       .catch(() => { /* non-fatal */ });
+    return () => { cancelled = true; };
   }, [clubSlug]);
 
   const selectedReg = search.selected;

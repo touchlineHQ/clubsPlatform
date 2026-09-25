@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { renderWithMantine, mockAdmin, mockSingleClub } from '../../test-utils';
 
 vi.mock('@mantine/core', async (importOriginal) => {
@@ -151,10 +151,60 @@ describe('PlayerSubscriptionsTab', () => {
     await waitFor(() => expect(release).toBeTruthy());
 
     fireEvent.change(input, { target: { value: 'U' } });
-    release!();
+    // Released inside act so the response's continuation has run by the time the
+    // assertions do. A bare waitFor on the prompt would settle on its first tick
+    // — the prompt is already on screen — and could assert before the hook saw
+    // the response at all.
+    await act(async () => { release!(); });
 
-    await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
+    expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy();
     expect(screen.queryByText(/FAN 12345/)).toBeNull();
+  });
+
+  it('ignores a payments response from the club the admin has left', async () => {
+    // The deps became [clubSlug] so this refetches per club, which is what makes
+    // interleaving possible. The records only reach the screen through the
+    // existing-payment warning, so a registration has to be selected for the
+    // assertion to mean anything.
+    let releaseFirst: (() => void) | null = null;
+    let paymentsCall = 0;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes('/api/admin/player-payments')) {
+        paymentsCall += 1;
+        if (paymentsCall === 1) {
+          await new Promise<void>(resolve => { releaseFirst = resolve; });
+          // first-club has a SUBS payment for reg-1; second-club has none.
+          return { ok: true, json: async () => ({ payments: [samplePayment] }) };
+        }
+        return { ok: true, json: async () => ({ payments: [] }) };
+      }
+      if (String(url).includes('/api/admin/player-registrations')) {
+        return { ok: true, json: async () => ({ registrations: [sampleRegistration] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    const { rerender } = renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="first-club" clubHeaders={{ 'x-club-slug': 'first-club' }} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+    await waitFor(() => expect(releaseFirst).toBeTruthy());
+
+    rerender(
+      <PlayerSubscriptionsTab clubSlug="second-club" clubHeaders={{ 'x-club-slug': 'second-club' }} />,
+    );
+    await waitFor(() => expect(paymentsCall).toBe(2));
+
+    const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
+    fireEvent.change(input, { target: { value: '12345' } });
+    await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
+    fireEvent.click(screen.getByText(/FAN 12345/i));
+
+    await act(async () => { releaseFirst!(); });
+
+    // second-club has no payment for this registration, so the warning must not
+    // appear. Ungated, first-club's response lands last and it does.
+    expect(screen.queryByText(/existing payment record/i)).toBeNull();
   });
 
   it('shows player option in select when registrations are provided', async () => {

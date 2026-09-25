@@ -69,6 +69,11 @@ export function StatusReportPanel({
   function handleFile(file: File) {
     const readToken = ++readSequence.current;
     setFaRows(null);
+    // Cleared here, not only on success: a second file left the previous load in
+    // place, so the counts and the download read as ready against rows that had
+    // not been refreshed — and stayed ready if the new load then failed.
+    setRegistrations(null);
+    setLoadError('');
     setParseErrors([]);
     setWarnings([]);
     setFileName(file.name);
@@ -85,7 +90,6 @@ export function StatusReportPanel({
           setWarnings(found);
           // Only now: a file that does not parse needs no registrations, and
           // fetching them is a walk over every page of the filtered set.
-          setLoadError('');
           loadRegistrations()
             .then((rows) => { if (readToken === readSequence.current) setRegistrations(rows); })
             .catch((err) => {
@@ -163,7 +167,7 @@ export function StatusReportPanel({
               size="xs"
               radius="xl"
               variant="subtle"
-              onClick={() => { setFaRows(null); setWarnings([]); setFileName(''); }}
+              onClick={() => { setFaRows(null); setWarnings([]); setFileName(''); setLoadError(''); }}
             >
               Change file
             </Button>
