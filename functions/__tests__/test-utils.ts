@@ -38,6 +38,14 @@ export interface DbConfig {
   run?: { meta?: { changes?: number } } | { meta?: { changes?: number } }[];
   /** Results returned by .batch() */
   batch?: unknown[][];
+  /**
+   * Meta returned by .all().
+   *
+   * D1 puts `rows_read` here and the read-cost sampler fires on it, so without
+   * a way to set it nothing could assert that a handler passes D1's own count
+   * through rather than leaving the rows arm inert.
+   */
+  allMeta?: { rows_read?: number; duration?: number };
 }
 
 function dequeue<T>(store: T | T[]): () => T {
@@ -61,13 +69,13 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
     exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })) as unknown as D1Database['exec'],
     prepare: vi.fn(() => {
       const boundObj = {
-        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
+        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: config.allMeta ?? {} })),
         first: vi.fn(async () => nextFirst()),
         run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
       };
       return {
         // Direct (no-bind) calls — forwards to the same queue
-        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
+        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: config.allMeta ?? {} })),
         first: vi.fn(async () => nextFirst()),
         run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
         bind: vi.fn(() => boundObj),

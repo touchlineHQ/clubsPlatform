@@ -1,5 +1,5 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
-import { reportReadCost } from "../lib/read-cost";
+import { readMeta, reportReadCost } from "../lib/read-cost";
 import {
   billingIdFromJoinSql,
   billingMergeJoinSql,
@@ -172,10 +172,16 @@ function reportPersonalReadCost(
   scope: "admin" | "user",
   timings: ReadTiming[],
   personalRows: number,
+  rowsRead: number | undefined,
 ): void {
   reportReadCost(context, userId, clubSlug, {
     endpoint: "my_registrations",
     ms: timings.reduce((n, t) => n + t.ms, 0),
+    // The personal scan's own count, not the request's. The admin path also
+    // stamps the last import, but that is MAX(importedAt) on an index seek —
+    // idx_club_import_log_clubSlug_importedAt — so it reads about one row and
+    // counting it would add a rounding error, not information.
+    rowsRead,
     rowsReturned: personalRows,
     extra: {
       scope,
@@ -248,7 +254,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .all<RegistrationRow>());
 
   if (!isAdmin) {
-    reportPersonalReadCost(context, userId, clubSlug, "user", timings, personalRows.results.length);
+    reportPersonalReadCost(
+      context, userId, clubSlug, "user", timings,
+      personalRows.results.length, readMeta(personalRows).rows_read,
+    );
     return json({
       personal: omitMergeFieldsWhenUnmerged(personalRows.results),
       scope: "user",
@@ -261,7 +270,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .first<{ importedAt: number | null }>());
 
-  reportPersonalReadCost(context, userId, clubSlug, "admin", timings, personalRows.results.length);
+  reportPersonalReadCost(
+    context, userId, clubSlug, "admin", timings,
+    personalRows.results.length, readMeta(personalRows).rows_read,
+  );
 
   return json({
     personal: omitMergeFieldsWhenUnmerged(personalRows.results),
