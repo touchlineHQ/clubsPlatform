@@ -39,7 +39,7 @@ interface MergeSuggestionsBannerProps {
   reviewing: boolean;
   onToggleReview: () => void;
   onLoadDismissed: () => void;
-  onDismiss: (playerId: string, ageGroup: string) => Promise<void>;
+  onDismiss: (playerId: string, ageGroup: string, setSize: number) => Promise<void>;
   onRestore: (playerId: string, ageGroup: string) => Promise<void>;
 }
 
@@ -52,9 +52,17 @@ export function MergeSuggestionsBanner({
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
 
-  // Nothing suggested and nothing dismissed is nothing to say.
-  if (openCount === 0 && dismissedCount === 0) return null;
+  // Nothing suggested and nothing dismissed is nothing to say — unless review
+  // mode is on, in which case this banner holds the only way out of it.
+  // Dismissing the last open set is exactly when that happens.
+  if (openCount === 0 && dismissedCount === 0 && !reviewing) return null;
 
+  /**
+   * Runs one row's action, keeping its spinner and its error on that row.
+   *
+   * Keyed rather than a single flag, so dismissing one set does not put every
+   * other button in the list into a loading state.
+   */
   const act = async (key: string, run: () => Promise<void>) => {
     setBusyKey(key);
     setActionError('');
@@ -67,6 +75,7 @@ export function MergeSuggestionsBanner({
     }
   };
 
+  /** Opens the dismissed list, fetching it the first time it is asked for. */
   const toggleDismissed = () => {
     if (!showDismissed) onLoadDismissed();
     setShowDismissed(v => !v);
@@ -75,26 +84,34 @@ export function MergeSuggestionsBanner({
   return (
     <Alert color="indigo" variant="light" icon={<IconArrowsJoin size={18} />}>
       <Stack gap="xs">
-        {openCount > 0 && (
+        {(openCount > 0 || reviewing) && (
           <Group justify="space-between" wrap="wrap" gap="xs">
             <Text size="sm">
-              {openCount === 1
-                ? '1 player has registrations in the same age group that are billed separately.'
-                : `${openCount} players have registrations in the same age group that are billed separately.`}
-              {' '}
-              <Text span size="sm" c="dimmed">
-                They may be one set of subs — or genuinely separate. Only you can tell.
-              </Text>
+              {openCount === 0
+                ? 'Nothing left to review.'
+                : openCount === 1
+                  ? '1 player has registrations in the same age group that are billed separately.'
+                  : `${openCount} players have registrations in the same age group that are billed separately.`}
+              {openCount > 0 && (
+                <>
+                  {' '}
+                  <Text span size="sm" c="dimmed">
+                    They may be one set of subs — or genuinely separate. Only you can tell.
+                  </Text>
+                </>
+              )}
             </Text>
             <Group gap="xs">
-              <Button
-                size="xs"
-                variant="subtle"
-                radius="xl"
-                onClick={() => setExpanded(v => !v)}
-              >
-                {expanded ? 'Hide the list' : 'List them'}
-              </Button>
+              {openCount > 0 && (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  radius="xl"
+                  onClick={() => setExpanded(v => !v)}
+                >
+                  {expanded ? 'Hide the list' : 'List them'}
+                </Button>
+              )}
               <Button
                 size="xs"
                 radius="xl"
@@ -124,7 +141,7 @@ export function MergeSuggestionsBanner({
                     size="compact-xs"
                     variant="subtle"
                     loading={busyKey === key}
-                    onClick={() => act(key, () => onDismiss(s.playerId, s.ageGroup))}
+                    onClick={() => act(key, () => onDismiss(s.playerId, s.ageGroup, s.setSize))}
                   >
                     Not the same subs
                   </Button>

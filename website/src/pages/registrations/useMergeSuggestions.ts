@@ -125,12 +125,20 @@ export function useMergeSuggestions(clubSlug: string, enabled: boolean, reloadTo
    * looking at the list they just acted on, and re-fetching it would reorder
    * under them for one row. The count moves with it so the two cannot disagree.
    */
-  const dismiss = useCallback(async (playerId: string, ageGroup: string) => {
+  const dismiss = useCallback(async (playerId: string, ageGroup: string, setSize: number) => {
     const res = await fetch(ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ playerId, ageGroup }),
+      // The size that was on screen, so the server can refuse a dismissal for a
+      // set that has grown since. Without it the server would store its own
+      // count and quietly suppress registrations the admin never reviewed.
+      body: JSON.stringify({ playerId, ageGroup, setSize }),
     });
+    if (res.status === 409) {
+      // The set changed underneath them — reload so they are looking at it.
+      await load();
+      throw new Error('That set has changed since it was loaded. Have another look.');
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({})) as { error?: string };
       throw new Error(body.error ?? 'Failed to dismiss the suggestion');
@@ -143,7 +151,7 @@ export function useMergeSuggestions(clubSlug: string, enabled: boolean, reloadTo
     ));
     setOpenCount(n => Math.max(0, n - 1));
     setDismissedCount(n => n + 1);
-  }, [clubSlug]);
+  }, [clubSlug, load]);
 
   /** Undo a dismissal. Reloads, because the set returns to a sorted list. */
   const restore = useCallback(async (playerId: string, ageGroup: string) => {

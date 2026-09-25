@@ -1013,7 +1013,7 @@ describe('RegistrationsPage', () => {
           .find(c => String(c[0]) === '/api/admin/registration-merge-suggestions'
             && (c[1] as { method?: string })?.method === 'POST');
         expect(JSON.parse((call?.[1] as { body: string }).body))
-          .toEqual({ playerId: 'p_1', ageGroup: 'U15' });
+          .toEqual({ playerId: 'p_1', ageGroup: 'U15', setSize: 2 });
       });
 
       // Gone from the banner, and the count moved with it.
@@ -1125,6 +1125,74 @@ describe('RegistrationsPage', () => {
       expect(captureError).toHaveBeenCalledWith(
         expect.anything(), expect.objectContaining({ op: 'registrations.suggestions' }),
       );
+    });
+
+    it('keeps a way out of review mode after the last suggestion is dismissed', async () => {
+      // Dismissing the last open set takes openCount to 0, and the toggle used
+      // to live inside that condition — so the admin was left with an empty
+      // filtered table and no way back short of reloading the page.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [pairSuggestion],
+        dismissedCount: 0,
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      // The banner stays, says there is nothing left, and still offers the exit.
+      expect(await screen.findByText(/nothing left to review/i)).toBeTruthy();
+      const showAll = screen.getByRole('button', { name: 'Show all' });
+      fireEvent.click(showAll);
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBeNull());
+    });
+
+    it('reads an empty review slice as a filter, not as an empty club', async () => {
+      // filtersActive drives which empty state shows. Without suggestedOnly in
+      // it, a review slice with nothing in it claimed the club had no
+      // registrations at all.
+      await renderClubTab([tuesday, thursday], { suggestions: [] , openCount: 1 });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+      expect(await screen.findByText(/no registrations match/i)).toBeTruthy();
+    });
+
+    it('refuses a dismissal of a set that grew, and says to look again', async () => {
+      // The server answers 409 with its own count; the banner must not report
+      // this as a dismissal that landed.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: 'this suggestion has changed since it was loaded', setSize: 3 }),
+        text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      expect(await screen.findByText(/has changed since it was loaded/i)).toBeTruthy();
+    });
+
+    it('reloads the suggestions after a merge, so the banner cannot offer a merged pair', async () => {
+      // suggestionCandidateSql drops merged rows, so a banner that kept listing
+      // the pair would answer "Not the same subs" with a 400.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      const before = callsTo('/api/admin/registration-merge-suggestions');
+
+      fireEvent.click(screen.getByRole('checkbox', { name: /Select U15 Tuesday for merging/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /Select U15 Thursday for merging/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/i }));
+
+      await waitFor(() => {
+        expect(callsTo('/api/admin/registration-merge-suggestions')).toBeGreaterThan(before);
+      });
     });
 
     it('says nothing at all when the club has no suggestions and no dismissals', async () => {

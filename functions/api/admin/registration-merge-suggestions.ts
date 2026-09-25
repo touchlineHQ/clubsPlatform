@@ -297,6 +297,8 @@ SELECT COUNT(*) AS "n" FROM grouped g WHERE ${suggestionNotDismissedSql()}`,
 interface DismissBody {
   playerId?: string;
   ageGroup?: string;
+  /** The size of the set the admin was looking at. See {@link onRequestPost}. */
+  setSize?: number;
 }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -316,12 +318,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const playerId = (body.playerId ?? "").trim();
   const ageKey = normaliseAgeGroup(body.ageGroup ?? "");
+  const seenSize = body.setSize;
   if (!playerId) return json({ error: "playerId is required" }, { status: 400 });
   if (!ageKey) return json({ error: "ageGroup is required" }, { status: 400 });
+  if (!Number.isInteger(seenSize) || (seenSize as number) < 2) {
+    return json({ error: "setSize is required" }, { status: 400 });
+  }
 
-  // The stored setSize is the server's own count, not the client's. It is what
-  // re-raises the suggestion later, so a stale page must not be able to write a
-  // size that suppresses a set larger than the one the admin actually saw.
   const set = await context.env.DB
     .prepare(SET_LOOKUP_SQL)
     .bind(clubSlug, playerId, ageKey)
@@ -329,6 +332,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (!set || set.setSize < 2) {
     return json({ error: "no merge suggestion for this player and age group" }, { status: 400 });
+  }
+
+  // The dismissal must record the set the admin actually ruled on, so the size
+  // they saw has to match the one that is here now. Storing the server's own
+  // count instead would invert the whole point of `setSize`: an import that adds
+  // a third registration between the banner loading and the click would have its
+  // new set silently suppressed at size 3, which is exactly the "a genuinely new
+  // third registration cannot hide behind an old no" that migration 0028 exists
+  // to prevent. A 409 hands the admin the current figure and lets them look again.
+  if (seenSize !== set.setSize) {
+    return json(
+      { error: "this suggestion has changed since it was loaded", setSize: set.setSize },
+      { status: 409 },
+    );
   }
 
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
@@ -358,14 +375,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   await context.env.DB.batch([write, audit]);
 
+  // Off the response path, like reportReadCost. The write is already committed
+  // by here, so awaiting the capture would let a PostHog timeout answer a
+  // successful dismissal with a 500 — and the banner would tell the admin their
+  // decision did not land when it did.
   const posthog = getPostHog(context.env);
   if (posthog) {
-    await posthog.captureImmediate({
-      distinctId: adminId,
-      event: "merge suggestion dismissed",
-      ...clubGroups(clubSlug),
-      properties: { club_slug: clubSlug, set_size: set.setSize },
-    });
+    context.waitUntil(
+      posthog
+        .captureImmediate({
+          distinctId: adminId,
+          event: "merge suggestion dismissed",
+          ...clubGroups(clubSlug),
+          properties: { club_slug: clubSlug, set_size: set.setSize },
+        })
+        .catch((err) => console.error("PostHog capture failed", err)),
+    );
   }
 
   return json({ ok: true, setSize: set.setSize });
@@ -418,14 +443,22 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
   await context.env.DB.batch([write, audit]);
 
+  // Off the response path, like reportReadCost. The write is already committed
+  // by here, so awaiting the capture would let a PostHog timeout answer a
+  // successful dismissal with a 500 — and the banner would tell the admin their
+  // decision did not land when it did.
   const posthog = getPostHog(context.env);
   if (posthog) {
-    await posthog.captureImmediate({
-      distinctId: adminId,
-      event: "merge suggestion dismissed",
-      ...clubGroups(clubSlug),
-      properties: { club_slug: clubSlug, set_size: existing.setSize, restored: true },
-    });
+    context.waitUntil(
+      posthog
+        .captureImmediate({
+          distinctId: adminId,
+          event: "merge suggestion dismissed",
+          ...clubGroups(clubSlug),
+          properties: { club_slug: clubSlug, set_size: existing.setSize, restored: true },
+        })
+        .catch((err) => console.error("PostHog capture failed", err)),
+    );
   }
 
   return json({ ok: true });

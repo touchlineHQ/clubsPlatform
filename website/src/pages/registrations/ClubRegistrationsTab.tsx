@@ -80,11 +80,14 @@ export function ClubRegistrationsTab({
   // The applied term, not the typed one: these three decide what the export and
   // the FA report cover, and they must match the rows on screen rather than a
   // keystroke the table has not requested yet.
+  // Review mode counts as a filter: an empty review slice must read as "nothing
+  // matches what you asked for", not as "this club has no registrations".
   const filtersActive =
     club.filters.team !== ALL
     || club.filters.status !== ALL
     || club.filters.subscription !== ALL
-    || club.appliedSearch.trim() !== '';
+    || club.appliedSearch.trim() !== ''
+    || club.suggestedOnly;
 
   const handleLevelChange = useCallback(async (row: RegistrationRow, levelId: string | null) => {
     setUpdatingLevelId(row.registrationId);
@@ -253,8 +256,11 @@ export function ClubRegistrationsTab({
       setMergeModalOpen(false);
       setSelectedForMerge(new Map());
       // Refresh, not patch: the server owns the grouping and the whole group's
-      // payment status moves with it.
+      // payment status moves with it. The suggestions go too — this pair is no
+      // longer a candidate, and a banner still offering it would answer "Not the
+      // same subs" with a 400.
       club.refresh();
+      mergeSuggestions.refresh();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : 'Failed to merge registrations');
     } finally {
@@ -273,11 +279,12 @@ export function ClubRegistrationsTab({
    * authoritatively. Errors are raised for the banner to show next to the set
    * they belong to.
    */
-  const handleDismissSuggestion = async (playerId: string, ageGroup: string) => {
-    await mergeSuggestions.dismiss(playerId, ageGroup);
+  const handleDismissSuggestion = async (playerId: string, ageGroup: string, setSize: number) => {
+    await mergeSuggestions.dismiss(playerId, ageGroup, setSize);
     if (club.suggestedOnly) club.refresh();
   };
 
+  /** Undo a dismissal, so the set is suggested again. */
   const handleRestoreSuggestion = async (playerId: string, ageGroup: string) => {
     await mergeSuggestions.restore(playerId, ageGroup);
     if (club.suggestedOnly) club.refresh();
@@ -297,6 +304,8 @@ export function ClubRegistrationsTab({
       }
       captureEvent('registrations unmerged', { club_slug: clubSlug });
       club.refresh();
+      // Unmerging can make a set a candidate again, so the banner owes it.
+      mergeSuggestions.refresh();
     } catch (e) {
       setMergeError(e instanceof Error ? e.message : 'Failed to unmerge registrations');
     } finally {

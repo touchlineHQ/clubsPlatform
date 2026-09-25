@@ -16,6 +16,15 @@ vi.mock('../../lib/read-cost', async (importOriginal) => ({
   reportReadCost,
 }));
 
+// Null by default, so the writes under test take the same path they do on a
+// deployment with no PostHog configured. One test hands back a client that
+// rejects, to prove analytics cannot fail a write that already committed.
+const getPostHog = vi.hoisted(() => vi.fn<[], unknown>(() => null));
+vi.mock('../../lib/posthog', () => ({
+  getPostHog,
+  clubGroups: (slug?: string | null) => (slug ? { groups: { club: slug } } : {}),
+}));
+
 import {
   onRequestGet as listSuggestions,
   onRequestPost as dismissSuggestion,
@@ -88,19 +97,26 @@ describe('merge suggestions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    // clearAllMocks leaves implementations in place, so reset this one by hand
+    // or a rejecting client would leak into every later test.
+    getPostHog.mockReturnValue(null);
     sqlite = createSchemaDb();
     db = d1Over(sqlite);
   });
   afterEach(() => sqlite.close());
 
-  const ctx = (request: Request) =>
-    makeContext(request, { env: { DB: db as never } }) as never;
+  const ctx = (request: Request, waitUntil?: (p: Promise<unknown>) => void) =>
+    makeContext(request, { env: { DB: db as never }, ...(waitUntil ? { waitUntil } : {}) }) as never;
 
   const list = (query = '') =>
     listSuggestions(ctx(getReq(`${PATH}${query}`, { 'X-Club-Slug': CLUB })));
 
   const dismiss = (body: unknown, headers: Record<string, string> = { 'X-Club-Slug': CLUB }) =>
     dismissSuggestion(ctx(postReq(PATH, body, headers)));
+
+  /** Dismiss a set the admin saw at `setSize`, which the server must agree with. */
+  const dismissSeen = (playerId: string, ageGroup: string, setSize: number) =>
+    dismiss({ playerId, ageGroup, setSize });
 
   const restore = (query: string) =>
     restoreSuggestion(ctx(deleteReq(`${PATH}${query}`, { 'X-Club-Slug': CLUB })));
@@ -273,7 +289,7 @@ describe('merge suggestions', () => {
   it('dismisses a set, audits it, and stores the size the server counted', async () => {
     seedPair(sqlite, 'p1', 'FAN001');
 
-    const res = await dismiss({ playerId: 'p1', ageGroup: 'U15' });
+    const res = await dismissSeen('p1', 'U15', 2);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, setSize: 2 });
 
@@ -298,15 +314,15 @@ describe('merge suggestions', () => {
   it('normalises the age group it is given, so the client need not', async () => {
     seedPair(sqlite, 'p1', 'FAN001');
 
-    expect((await dismiss({ playerId: 'p1', ageGroup: ' u15 ' })).status).toBe(200);
+    expect((await dismissSeen('p1', ' u15 ', 2)).status).toBe(200);
     expect(await suggestions()).toEqual([]);
   });
 
   it('is idempotent, and re-dismissing a grown set records the larger size', async () => {
     seedPair(sqlite, 'p1', 'FAN001');
 
-    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15' })).status).toBe(200);
-    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15' })).status).toBe(200);
+    expect((await dismissSeen('p1', 'U15', 2)).status).toBe(200);
+    expect((await dismissSeen('p1', 'U15', 2)).status).toBe(200);
 
     const rows = () => sqlite
       .prepare(`SELECT "setSize" FROM "registration_merge_suggestion_dismissal"`)
@@ -314,10 +330,41 @@ describe('merge suggestions', () => {
     expect(rows()).toEqual([{ setSize: 2 }]);
 
     seedRegistration(sqlite, { id: 'reg_p1_sun', player: 'p1', team: 'U15 Sunday' });
-    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15' })).status).toBe(200);
+    expect((await dismissSeen('p1', 'U15', 3)).status).toBe(200);
 
     expect(rows()).toEqual([{ setSize: 3 }]);
     expect(await suggestions()).toEqual([]);
+  });
+
+  it('refuses a dismissal for a set that has grown since the admin saw it', async () => {
+    // The case setSize exists for, and the one storing the server's own count
+    // got backwards: an import lands between the banner loading and the click,
+    // and the third registration must not be suppressed by a "no" that was
+    // given about two. 409 hands back the current size so the client can reload.
+    seedPair(sqlite, 'p1', 'FAN001');
+    seedRegistration(sqlite, { id: 'reg_p1_sun', player: 'p1', team: 'U15 Sunday' });
+
+    const res = await dismissSeen('p1', 'U15', 2);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: 'this suggestion has changed since it was loaded',
+      setSize: 3,
+    });
+
+    // Nothing written, so the grown set is still suggested.
+    expect(sqlite.prepare(`SELECT * FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([]);
+    expect((await suggestions())[0].setSize).toBe(3);
+  });
+
+  it('refuses a dismissal that names no size, or an impossible one', async () => {
+    // A set of one is not a suggestion, and a body without a size could only
+    // come from a caller that never saw the set.
+    seedPair(sqlite, 'p1', 'FAN001');
+
+    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15' })).status).toBe(400);
+    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15', setSize: 1 })).status).toBe(400);
+    expect((await dismiss({ playerId: 'p1', ageGroup: 'U15', setSize: 2.5 })).status).toBe(400);
   });
 
   it('refuses a dismissal for a set that is not a suggestion', async () => {
@@ -327,7 +374,7 @@ describe('merge suggestions', () => {
     seedPlayer(sqlite, 'p1', 'FAN001');
     seedRegistration(sqlite, { id: 'reg_a', player: 'p1', team: 'U15 Tuesday' });
 
-    const res = await dismiss({ playerId: 'p1', ageGroup: 'U15' });
+    const res = await dismissSeen('p1', 'U15', 2);
     expect(res.status).toBe(400);
     expect((await res.json() as { error: string }).error).toMatch(/no merge suggestion/);
     expect(sqlite.prepare(`SELECT * FROM "registration_merge_suggestion_dismissal"`).all())
@@ -335,14 +382,14 @@ describe('merge suggestions', () => {
   });
 
   it('refuses a dismissal with no player or no age group', async () => {
-    expect((await dismiss({ ageGroup: 'U15' })).status).toBe(400);
-    expect((await dismiss({ playerId: 'p1' })).status).toBe(400);
-    expect((await dismiss({ playerId: 'p1', ageGroup: '   ' })).status).toBe(400);
+    expect((await dismiss({ ageGroup: 'U15', setSize: 2 })).status).toBe(400);
+    expect((await dismiss({ playerId: 'p1', setSize: 2 })).status).toBe(400);
+    expect((await dismiss({ playerId: 'p1', ageGroup: '   ', setSize: 2 })).status).toBe(400);
   });
 
   it('lists dismissals with the age group as it is written on the registration', async () => {
     seedPair(sqlite, 'p1', 'FAN001', ' U15 ');
-    await dismiss({ playerId: 'p1', ageGroup: 'U15' });
+    await dismissSeen('p1', 'U15', 2);
 
     const res = await list('?state=dismissed');
     expect(res.status).toBe(200);
@@ -371,7 +418,7 @@ describe('merge suggestions', () => {
 
   it('restores a dismissal, audits it, and the suggestion comes back', async () => {
     seedPair(sqlite, 'p1', 'FAN001');
-    await dismiss({ playerId: 'p1', ageGroup: 'U15' });
+    await dismissSeen('p1', 'U15', 2);
     expect(await suggestions()).toEqual([]);
 
     const res = await restore('?playerId=p1&ageGroup=U15');
@@ -397,6 +444,34 @@ describe('merge suggestions', () => {
 
     const body = await (await list()).json() as { dismissedCount: number };
     expect(body.dismissedCount).toBe(1);
+  });
+
+  it('answers a dismissal that committed even when the analytics send fails', async () => {
+    // The write is already committed by the time the capture runs, so awaiting
+    // it would let a PostHog timeout answer 500 — and the banner would tell the
+    // admin their decision did not land when it did. Off the response path via
+    // waitUntil, with the rejection caught, exactly like reportReadCost.
+    seedPair(sqlite, 'p1', 'FAN001');
+    const sent: Promise<unknown>[] = [];
+    getPostHog.mockReturnValue({
+      captureImmediate: () => Promise.reject(new Error('posthog down')),
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await dismissSuggestion(ctx(
+      postReq(PATH, { playerId: 'p1', ageGroup: 'U15', setSize: 2 }, { 'X-Club-Slug': CLUB }),
+      (p) => { sent.push(p); },
+    ));
+
+    expect(res.status).toBe(200);
+    expect(sqlite.prepare(`SELECT "setSize" FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([{ setSize: 2 }]);
+
+    // Handed to waitUntil, and already carrying its own catch — so it resolves
+    // rather than surfacing as an unhandled rejection.
+    expect(sent).toHaveLength(1);
+    await expect(sent[0]).resolves.toBeUndefined();
+    consoleError.mockRestore();
   });
 
   // ─── Paging over the GROUP BY ───────────────────────────────────────────────
