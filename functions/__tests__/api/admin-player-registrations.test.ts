@@ -80,8 +80,11 @@ describe('GET /api/admin/player-registrations', () => {
   });
 
   it('treats a wildcard as literal text', async () => {
-    // Unescaped, this would match the whole club — the thing being removed.
-    expect(await rows('?q=%')).toEqual([]);
+    // Two characters, or the minimum-length gate answers before the LIKE runs
+    // and the assertion holds with escapeLike deleted. Unescaped, each of these
+    // matches every row in the club — the thing being removed.
+    expect(await rows(`?q=${encodeURIComponent('%%')}`)).toEqual([]);
+    expect(await rows(`?q=${encodeURIComponent('__')}`)).toEqual([]);
   });
 
   it('never searches outside the club', async () => {

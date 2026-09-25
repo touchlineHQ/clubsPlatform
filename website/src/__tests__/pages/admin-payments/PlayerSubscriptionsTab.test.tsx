@@ -124,6 +124,39 @@ describe('PlayerSubscriptionsTab', () => {
     )).toBe(false);
   });
 
+  it('discards a search the admin has already shortened', async () => {
+    // Type "Un", then delete a character before the response lands. Without a
+    // sequence bump on the short-query path the in-flight response is still
+    // current, and its options render under "Type 2 or more characters".
+    let release: (() => void) | null = null;
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).startsWith('/api/admin/player-registrations?q=')) {
+        await new Promise<void>(resolve => { release = resolve; });
+        return { ok: true, json: async () => ({ registrations: [sampleRegistration] }) };
+      }
+      if (String(url).includes('/api/admin/player-payments')) {
+        return { ok: true, json: async () => ({ payments: [] }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    renderWithMantine(
+      <PlayerSubscriptionsTab clubSlug="test-club" clubHeaders={clubHeaders} />,
+      { authValue: mockAdmin, clubValue: mockSingleClub },
+    );
+
+    const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: 'Un' } });
+    await waitFor(() => expect(release).toBeTruthy());
+
+    fireEvent.change(input, { target: { value: 'U' } });
+    release!();
+
+    await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
+    expect(screen.queryByText(/FAN 12345/)).toBeNull();
+  });
+
   it('shows player option in select when registrations are provided', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/api/admin/player-registrations')) {

@@ -34,13 +34,17 @@ export function usePlayerRegistrationSearch(clubHeaders: HeadersInit) {
 
   useEffect(() => {
     const q = query.trim();
+    // Bumped before the length check, not after: shortening the query back
+    // below the threshold has to invalidate a search already in flight, or its
+    // response restores results the box no longer asks for — options on screen
+    // beneath a message asking for two characters.
+    const version = ++sequence.current;
     if (q.length < MIN_QUERY_CHARS) {
       setResults([]);
       setSearching(false);
       return;
     }
 
-    const version = ++sequence.current;
     setSearching(true);
     const timer = setTimeout(() => {
       fetch(`/api/admin/player-registrations?q=${encodeURIComponent(q)}`, { headers: clubHeaders })
