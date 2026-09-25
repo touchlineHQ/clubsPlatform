@@ -87,6 +87,17 @@ export const SUBSCRIPTION_TOKENS = Object.keys(SUBSCRIPTION_TOKEN_TO_LABEL);
  * index can satisfy the ordering. The other three are nullable and go through
  * `totalTextKey` — without it the keyset predicate compares against NULL and
  * returns an *empty* page rather than a mis-ordered one.
+ *
+ * `COLLATE NOCASE` orders lexicographically, so team names read "Under 10s"
+ * before "Under 9s". That is deliberate and is the price of an ordering an
+ * index can serve: `idx_player_registration_club_team` is declared NOCASE, and
+ * no index can satisfy the numeric-aware comparison the client used
+ * (`compareValues` with `{ numeric: true }`, website/src/pages/registrations/
+ * types.ts) — reproducing it in SQL would mean a stored normalised sort key
+ * written at import, not a different collation here. The personal tab, which
+ * holds all of its rows and sorts them in the browser, still orders numerically,
+ * so the two tabs differ by design. Dropping the collation does not fix that; it
+ * costs the index walk and leaves the order lexicographic anyway.
  */
 export const REGISTRATION_SORTS: SortWhitelist = {
   teamName: { expr: `pr."teamName"`, collate: "NOCASE", bare: true },

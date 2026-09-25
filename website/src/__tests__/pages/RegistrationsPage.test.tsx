@@ -22,7 +22,19 @@ vi.mock('../../lib/posthog', () => ({
   captureError: vi.fn(),
 }));
 
-import { captureError } from '../../lib/posthog';
+// The export writes a real file otherwise, and these tests are about which rows
+// reach it rather than how SheetJS serialises them.
+const writeFile = vi.fn();
+vi.mock('xlsx', () => ({
+  utils: {
+    json_to_sheet: vi.fn(() => ({}) as Record<string, unknown>),
+    book_new: vi.fn(() => ({})),
+    book_append_sheet: vi.fn(),
+  },
+  writeFile: (...args: unknown[]) => writeFile(...args),
+}));
+
+import { captureError, captureEvent } from '../../lib/posthog';
 import { summariseRegistrations } from '../../utils/registrationSummary';
 import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
 
@@ -291,6 +303,63 @@ describe('RegistrationsPage', () => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
       expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy();
       expect(screen.getByRole('button', { name: /Generate status report/i })).toBeTruthy();
+    });
+  });
+
+  describe('exporting', () => {
+    /**
+     * The export walks the paginated endpoint. These cover the two ends of
+     * that loop where a bug is invisible in the file it produces.
+     */
+    beforeEach(() => {
+      writeFile.mockClear();
+      vi.mocked(captureEvent).mockClear();
+    });
+
+    it('writes one workbook from every page, not just the one on screen', async () => {
+      const rows = [
+        { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Reserves' },
+        { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Reserves' },
+      ];
+      await renderClubTab(rows);
+
+      fireEvent.click(screen.getByRole('button', { name: /Export to Excel/i }));
+
+      await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1));
+      expect(captureEvent).toHaveBeenCalledWith('registrations exported', expect.objectContaining({
+        row_count: rows.length,
+        capped: false,
+      }));
+      expect(screen.queryByText(/Narrow your filters/i)).toBeNull();
+    });
+
+    it('says to narrow the filters rather than writing a short file', async () => {
+      // Every page hands back a cursor, so the loop runs out of pages with more
+      // still to come — the one case where a written file would be a lie.
+      routeClubApi([{ ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a' }], {
+        nextCursor: 'more',
+      });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockAdmin,
+        clubValue: mockSingleClub,
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: /Export to Excel/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Narrow your filters/i)).toBeTruthy();
+      });
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(captureEvent).toHaveBeenCalledWith('registrations exported', expect.objectContaining({
+        row_count: 0,
+        capped: true,
+      }));
     });
   });
 
