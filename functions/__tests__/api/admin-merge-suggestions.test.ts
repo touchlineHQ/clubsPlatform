@@ -465,6 +465,46 @@ describe('merge suggestions', () => {
     };
   }
 
+  it('refuses a dismissal that would replace a larger one written under it', async () => {
+    // Two admins overlapping on the same set: one dismisses it at 2 while the
+    // other, after a third registration lands, dismisses it at 3. The slower
+    // size-2 write must not replace the size-3 decision — that would lose it and
+    // put the set back in the review list.
+    seedPair(sqlite, 'p1', 'FAN001');
+
+    const raced = racingDb(db, () => {
+      // The other admin's dismissal of the grown set, landing mid-request.
+      sqlite.exec(`INSERT INTO "registration_merge_suggestion_dismissal"
+                   VALUES ('${CLUB}','p1','u15',3,'user_2',${NOW})`);
+    });
+
+    const res = await dismissSuggestion(makeContext(
+      postReq(PATH, { playerId: 'p1', ageGroup: 'U15', setSize: 2 }, { 'X-Club-Slug': CLUB }),
+      { env: { DB: raced as never } },
+    ) as never);
+
+    expect(res.status).toBe(409);
+
+    // The larger decision stands, with its own author.
+    expect(sqlite.prepare(`SELECT "setSize","dismissedBy"
+                             FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([{ setSize: 3, dismissedBy: 'user_2' }]);
+    // And nothing was logged as having taken effect.
+    expect(auditRows()).toEqual([]);
+  });
+
+  it('still records a dismissal of a set that has since grown', async () => {
+    // The monotonic guard must not block the legitimate direction: re-dismissing
+    // the same set at a larger size replaces the smaller record.
+    seedPair(sqlite, 'p1', 'FAN001');
+    await dismissSeen('p1', 'U15', 2);
+    seedRegistration(sqlite, { id: 'reg_p1_sun', player: 'p1', team: 'U15 Sunday' });
+
+    expect((await dismissSeen('p1', 'U15', 3)).status).toBe(200);
+    expect(sqlite.prepare(`SELECT "setSize" FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([{ setSize: 3 }]);
+  });
+
   it('refuses a restore whose dismissal was re-dismissed under it', async () => {
     // Two admins on the same set: one opens the dismissed list, the other
     // re-dismisses after a third registration arrives. An unconditional delete

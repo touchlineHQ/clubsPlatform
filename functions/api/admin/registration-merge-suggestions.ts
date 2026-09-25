@@ -351,6 +351,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
   const now = nowMs();
 
+  // Never lower a stored size. The lookup above is its own round trip, so two
+  // admins can overlap: one dismissing the set at 2 while the other, after a
+  // third registration lands, dismisses it at 3. An unconditional upsert would
+  // let the slower size-2 write replace the size-3 decision, losing it and
+  // putting the set back in the review list. Monotonic, so the larger — the more
+  // recently reviewed — decision wins whichever order they arrive in.
   const write = context.env.DB
     .prepare(
       `INSERT INTO "registration_merge_suggestion_dismissal"
@@ -359,9 +365,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
        ON CONFLICT ("clubSlug", "playerId", "ageKey") DO UPDATE SET
          "setSize"     = excluded."setSize",
          "dismissedBy" = excluded."dismissedBy",
-         "dismissedAt" = excluded."dismissedAt"`,
+         "dismissedAt" = excluded."dismissedAt"
+        WHERE excluded."setSize" >= "registration_merge_suggestion_dismissal"."setSize"`,
     )
     .bind(clubSlug, playerId, ageKey, set.setSize, adminId, now);
+
+  // The same condition as a guard, for the same reason it guards the restore: a
+  // silently skipped upsert would otherwise be audited as a dismissal that took
+  // effect. A false guard aborts the batch, and the catch below turns that into
+  // the 409 this endpoint already uses for "this changed under you".
+  const notOverwritingALargerSet = {
+    sql: `NOT EXISTS (SELECT 1 FROM "registration_merge_suggestion_dismissal"
+                       WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ?
+                         AND "setSize" > ?)`,
+    bindings: [clubSlug, playerId, ageKey, set.setSize],
+  };
 
   const audit = prepareAuditLog(context.env.DB, {
     clubSlug,
@@ -371,9 +389,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     targetId: playerId,
     newStatus: `${ageKey}:${set.setSize}`,
     note: `Kept separate in ${set.ageGroup ?? ageKey}: ${set.teamNames ?? ""}`,
-  });
+  }, notOverwritingALargerSet);
 
-  await context.env.DB.batch([write, audit]);
+  try {
+    // Audit first, so the guard sees the row the upsert is about to replace.
+    await context.env.DB.batch([audit, write]);
+  } catch {
+    return json(
+      { error: "this suggestion has changed since it was loaded" },
+      { status: 409 },
+    );
+  }
 
   // Off the response path, like reportReadCost. The write is already committed
   // by here, so awaiting the capture would let a PostHog timeout answer a
