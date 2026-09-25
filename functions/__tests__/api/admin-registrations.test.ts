@@ -9,6 +9,15 @@ vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
 
+// Partial: the sampling thresholds stay real, only the capture is observed.
+// A test read is fast and reports no rows_read, so it never samples — which is
+// why the wiring has to be asserted at the call rather than at the capture.
+const reportReadCost = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/read-cost', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/read-cost')>()),
+  reportReadCost,
+}));
+
 import { onRequestGet as listRegistrations } from '../../api/admin/registrations';
 import { onRequestGet as readFacets } from '../../api/admin/registration-facets';
 import { onRequestGet as readSummary } from '../../api/admin/registration-summary';
@@ -227,6 +236,35 @@ describe('GET /api/admin/registrations', () => {
     expect(await ids('?q=FAN1234')).toEqual(['reg_a']);
     // And the arm is additive: a FAN ID that starts with FAN still matches.
     expect(await ids('?q=FAN00')).toEqual(['reg_b']);
+  });
+
+  it('reports what each read cost, so the expensive ones stay visible', async () => {
+    // #114 moved the club-wide scan here from /api/my-registrations and the
+    // instrumentation did not follow, which left these endpoints unwatched.
+    // Asserted per endpoint so adding a fifth cannot quietly skip it.
+    seedPlayer(sqlite, 'FAN001', 'p1');
+    seedRegistration(sqlite, { id: 'reg_a', player: 'p1', team: 'U15 Tuesday' });
+
+    reportReadCost.mockClear();
+    await call(listRegistrations, db, '?limit=50');
+    await call(readSummary, db);
+    await call(readFacets, db);
+
+    const reported = reportReadCost.mock.calls.map((c) => (c[3] as { endpoint: string }).endpoint);
+    expect(reported).toEqual([
+      'registrations_page',
+      'registrations_summary',
+      'registrations_facets',
+    ]);
+
+    // The page read carries what it returned and how long it took, so a page
+    // that starts reading the club is visible as a ratio rather than a feeling.
+    const page = reportReadCost.mock.calls[0][3] as { rowsReturned: number; ms: number };
+    expect(page.rowsReturned).toBe(1);
+    expect(typeof page.ms).toBe('number');
+
+    // Club-scoped, so every call names the club it read.
+    for (const c of reportReadCost.mock.calls) expect(c[2]).toBe(CLUB);
   });
 
   it('filters by the group-resolved subscription status', async () => {

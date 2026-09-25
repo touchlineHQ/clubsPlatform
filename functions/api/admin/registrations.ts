@@ -1,4 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
+import { readMeta, reportReadCost } from "../../lib/read-cost";
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
 import {
   billingMergeJoinSql,
@@ -133,10 +134,22 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       ${buildOrderBy(page, REGISTRATION_SORTS, { idAlias: `pr."id"` })}
       LIMIT ?`;
 
-  const { results } = await context.env.DB
+  const started = Date.now();
+  const read = await context.env.DB
     .prepare(sql)
     .bind(...filters.bindings, ...keyset.bindings, fetchLimit(page))
     .all<RegistrationRow>();
+  const { results } = read;
+
+  // The read this whole change exists to bound. Sampled, so a healthy page
+  // costs nothing; if one ever starts reading the club again, it says so.
+  reportReadCost(context, (auth.session.user as Record<string, unknown>).id as string, clubSlug, {
+    endpoint: "registrations_page",
+    ms: Date.now() - started,
+    rowsRead: readMeta(read).rows_read,
+    rowsReturned: results.length,
+    extra: { sort: page.sort, dir: page.dir, limit: page.limit, paged: page.cursor !== null },
+  });
 
   const { items, nextCursor } = takePage(results, page, (row) => ({
     v: row.__cursor ?? "",

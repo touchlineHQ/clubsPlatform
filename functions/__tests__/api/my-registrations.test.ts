@@ -323,4 +323,36 @@ describe('naming which read failed (#107)', () => {
     expect(mockCaptureImmediate).not.toHaveBeenCalled();
   });
 
+  it('reports a read that touched a lot of rows even when it was fast', async () => {
+    // The whole argument for sampling on rows_read: the club scan this work
+    // removed read 7,495 rows in 23ms, so a duration-only threshold would never
+    // have recorded it. Passing no rowsRead leaves this endpoint duration-only,
+    // which is the blindness the change is meant to remove.
+    const captured: unknown[] = [];
+    const ctx: any = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({
+                 all: [[sampleRegistration], []],
+                 batch: [[[]]],
+                 first: null,
+                 allMeta: { rows_read: 7495 },
+               }) as any,
+               POSTHOG_API_KEY: 'k', POSTHOG_HOST: 'https://ph.example.com' } },
+    );
+    ctx.waitUntil = (p: unknown) => captured.push(p);
+
+    const res = await onRequestGet(ctx);
+
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(mockCaptureImmediate).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'registrations read',
+      properties: expect.objectContaining({
+        endpoint: 'my_registrations',
+        rows_read: 7495,
+        rows_returned: 1,
+      }),
+    }));
+  });
+
 });
