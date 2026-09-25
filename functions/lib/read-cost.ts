@@ -49,6 +49,14 @@ export interface ReadCostSample {
   rowsReturned?: number;
   /** Endpoint-specific numbers. Counts and durations only — never identifiers. */
   extra?: Record<string, number | string | boolean | null>;
+  /**
+   * This read's own rows-read trigger, where {@link ROWS_READ_SAMPLE} does not
+   * fit. Per-endpoint rather than a higher global figure: a read that groups the
+   * club by design sits above the page-shaped threshold from its first request,
+   * and a sampler that captures every call is not a sampler. The caller
+   * documents its number; the default stays the one the pages are held to.
+   */
+  rowsReadSample?: number;
 }
 
 /**
@@ -58,7 +66,10 @@ export interface ReadCostSample {
  * thresholds are asserted rather than described.
  */
 export function shouldSample(sample: ReadCostSample): boolean {
-  return sample.ms >= SLOW_READ_MS || (sample.rowsRead ?? 0) >= ROWS_READ_SAMPLE;
+  return (
+    sample.ms >= SLOW_READ_MS ||
+    (sample.rowsRead ?? 0) >= (sample.rowsReadSample ?? ROWS_READ_SAMPLE)
+  );
 }
 
 /** Pulls D1's counters off a result, tolerating a driver that omits them. */

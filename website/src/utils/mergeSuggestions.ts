@@ -1,3 +1,19 @@
+/**
+ * The merge-suggestion rules, as the executable spec the server's SQL mirrors.
+ *
+ * These ran in the browser over every row the club had, until #114 paged that
+ * array away: page-scoped they would have under-counted, so #115 moved the
+ * grouping into SQL. The counterpart is `functions/lib/merge-suggestions.ts`,
+ * and `website/src` compiles from its own tsconfig and imports nothing from
+ * `functions/` (see the header of `functions/lib/payment-status.ts` for the
+ * house rule), so the normalisation is deliberately duplicated there and a third
+ * time in SQL as `LOWER(TRIM(...))`. All three must stay equivalent — a mismatch
+ * splits one candidate set into two silently.
+ *
+ * Kept, rather than deleted with its last caller, because the rules it states
+ * are the ones the endpoint's tests assert in SQL.
+ */
+
 /** Structural, so the page's own row type satisfies it. */
 export interface SuggestionRow {
   registrationId: string;
@@ -15,8 +31,13 @@ export interface MergeSuggestion {
   registrationIds: string[];
 }
 
-/** Case- and whitespace-insensitive, since age groups arrive from an FA export. */
-function normaliseAgeGroup(ageGroup: string): string {
+/**
+ * Case- and whitespace-insensitive, since age groups arrive from an FA export.
+ *
+ * Exported so the same cases are asserted here and against
+ * `normaliseAgeGroup` in `functions/lib/merge-suggestions.ts`.
+ */
+export function normaliseAgeGroup(ageGroup: string): string {
   return ageGroup.trim().toLowerCase();
 }
 

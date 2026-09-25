@@ -49,6 +49,29 @@ describe('shouldSample', () => {
     // turn every read into a capture.
     expect(shouldSample({ endpoint: 'x', ms: 5 })).toBe(false);
   });
+
+  it('holds a read with its own threshold to that threshold, not the global one', () => {
+    // The merge-suggestions read groups the club by design and sits above
+    // ROWS_READ_SAMPLE from its first request. Without a per-endpoint figure it
+    // would capture on every call, which is not sampling.
+    const sample = { endpoint: 'merge_suggestions', ms: 14, rowsReadSample: 5000 };
+
+    expect(shouldSample({ ...sample, rowsRead: ROWS_READ_SAMPLE })).toBe(false);
+    expect(shouldSample({ ...sample, rowsRead: 3238 })).toBe(false);
+    expect(shouldSample({ ...sample, rowsRead: 5000 })).toBe(true);
+  });
+
+  it('still samples a read with its own threshold when it is slow', () => {
+    // A raised rows figure must not buy silence on duration too.
+    expect(
+      shouldSample({ endpoint: 'merge_suggestions', ms: SLOW_READ_MS, rowsRead: 1, rowsReadSample: 5000 }),
+    ).toBe(true);
+  });
+
+  it('falls back to the global threshold when a read names none', () => {
+    expect(shouldSample({ endpoint: 'x', ms: 5, rowsRead: ROWS_READ_SAMPLE - 1 })).toBe(false);
+    expect(shouldSample({ endpoint: 'x', ms: 5, rowsRead: ROWS_READ_SAMPLE })).toBe(true);
+  });
 });
 
 describe('readMeta', () => {
