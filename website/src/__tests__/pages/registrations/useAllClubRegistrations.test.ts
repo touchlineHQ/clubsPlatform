@@ -26,6 +26,7 @@ beforeEach(() => {
 
 const NO_FILTERS: ClubFilters = { team: ALL, status: ALL, subscription: ALL };
 
+/** A minimal club row; only the id is read back, so the rest is filler. */
 function row(n: number): RegistrationRow {
   return {
     registrationId: `reg_${n}`,

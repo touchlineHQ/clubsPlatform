@@ -25,9 +25,11 @@ vi.mock('../../lib/posthog', () => ({
 // The export writes a real file otherwise, and these tests are about which rows
 // reach it rather than how SheetJS serialises them.
 const writeFile = vi.fn();
+const jsonToSheet = vi.fn(() => ({}) as Record<string, unknown>);
 vi.mock('xlsx', () => ({
   utils: {
-    json_to_sheet: vi.fn(() => ({}) as Record<string, unknown>),
+    // Named so a test can read back which rows reached the workbook.
+    json_to_sheet: (...args: unknown[]) => jsonToSheet(...args),
     book_new: vi.fn(() => ({})),
     book_append_sheet: vi.fn(),
   },
@@ -70,7 +72,10 @@ const sampleRow = {
 function routeClubApi(rows: Record<string, unknown>[], over: {
   personal?: unknown[];
   nextCursor?: string | null;
+  /** Rows the cursor from page one leads to. Facets and the summary see both. */
+  secondPage?: Record<string, unknown>[];
 } = {}) {
+  const all = over.secondPage ? [...rows, ...over.secondPage] : rows;
   mockFetch.mockImplementation((url: string) => {
     const u = String(url);
     const json = (body: unknown) => Promise.resolve({
@@ -81,14 +86,22 @@ function routeClubApi(rows: Record<string, unknown>[], over: {
 
     if (u.startsWith('/api/admin/registration-facets')) {
       return json({
-        teams: [...new Set(rows.map(r => r.teamName as string))].filter(Boolean).sort(),
-        statuses: [...new Set(rows.map(r => r.registrationStatus as string))].filter(Boolean).sort(),
+        teams: [...new Set(all.map(r => r.teamName as string))].filter(Boolean).sort(),
+        statuses: [...new Set(all.map(r => r.registrationStatus as string))].filter(Boolean).sort(),
       });
     }
     if (u.startsWith('/api/admin/registration-summary')) {
-      return json(summariseRegistrations(applyQuery(rows, u) as never));
+      return json(summariseRegistrations(applyQuery(all, u) as never));
     }
     if (u.startsWith('/api/admin/registrations')) {
+      if (over.secondPage) {
+        const onPageTwo = new URLSearchParams(u.split('?')[1] ?? '').get('cursor') === 'page2';
+        return json({
+          rows: applyQuery(onPageTwo ? over.secondPage : rows, u),
+          nextCursor: onPageTwo ? null : 'page2',
+          limit: 50,
+        });
+      }
       return json({ rows: applyQuery(rows, u), nextCursor: over.nextCursor ?? null, limit: 50 });
     }
     if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
@@ -313,21 +326,36 @@ describe('RegistrationsPage', () => {
      */
     beforeEach(() => {
       writeFile.mockClear();
+      jsonToSheet.mockClear();
       vi.mocked(captureEvent).mockClear();
     });
 
     it('writes one workbook from every page, not just the one on screen', async () => {
-      const rows = [
-        { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Reserves' },
-        { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Reserves' },
-      ];
-      await renderClubTab(rows);
+      // Two cursor-linked pages, because a single page would let an export that
+      // stopped at the table's own rows pass — the failure this asserts against.
+      const onScreen = { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Reserves' };
+      const offScreen = { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Colts' };
+      routeClubApi([onScreen], { secondPage: [offScreen] });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockAdmin,
+        clubValue: mockSingleClub,
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
 
       fireEvent.click(screen.getByRole('button', { name: /Export to Excel/i }));
 
       await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1));
+
+      // The rows that reached the sheet, not just the count the event carries.
+      const sheeted = jsonToSheet.mock.calls.at(-1)?.[0] as { 'FAN ID': string }[];
+      expect(sheeted.map(r => r['FAN ID'])).toEqual(['fan_a', 'fan_b']);
       expect(captureEvent).toHaveBeenCalledWith('registrations exported', expect.objectContaining({
-        row_count: rows.length,
+        row_count: 2,
         capped: false,
       }));
       expect(screen.queryByText(/Narrow your filters/i)).toBeNull();
