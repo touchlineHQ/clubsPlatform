@@ -432,6 +432,67 @@ describe('merge suggestions', () => {
     expect(auditRows()[1].oldStatus).toBe('u15:2');
   });
 
+  /**
+   * A D1 facade that mutates the database between a read and the batch.
+   *
+   * The restore handler reads the dismissal's size in its own round trip and
+   * then writes, so the only way to exercise the window between them is to
+   * change the row while the handler is inside it. `onRead` fires once, after
+   * the first `.first()` resolves.
+   */
+  function racingDb(base: unknown, onRead: () => void) {
+    let fired = false;
+    const b = base as { prepare(sql: string): unknown; batch(s: unknown[]): unknown };
+    return {
+      prepare(sql: string) {
+        const stmt = b.prepare(sql) as Record<string, unknown>;
+        return {
+          ...stmt,
+          bind: (...params: unknown[]) => {
+            const bound = (stmt.bind as (...p: unknown[]) => Record<string, unknown>)(...params);
+            return {
+              ...bound,
+              first: async () => {
+                const row = await (bound.first as () => Promise<unknown>)();
+                if (!fired) { fired = true; onRead(); }
+                return row;
+              },
+            };
+          },
+        };
+      },
+      batch: (statements: unknown[]) => b.batch(statements),
+    };
+  }
+
+  it('refuses a restore whose dismissal was re-dismissed under it', async () => {
+    // Two admins on the same set: one opens the dismissed list, the other
+    // re-dismisses after a third registration arrives. An unconditional delete
+    // by key would throw the newer decision away and log the older size as the
+    // one it removed. The guard turns that into a refusal instead.
+    seedPair(sqlite, 'p1', 'FAN001');
+    await dismissSeen('p1', 'U15', 2);
+
+    const raced = racingDb(db, () => {
+      sqlite.exec(`UPDATE "registration_merge_suggestion_dismissal"
+                      SET "setSize" = 3 WHERE "playerId" = 'p1'`);
+    });
+
+    const res = await restoreSuggestion(makeContext(
+      deleteReq(`${PATH}?playerId=p1&ageGroup=U15`, { 'X-Club-Slug': CLUB }),
+      { env: { DB: raced as never } },
+    ) as never);
+
+    expect(res.status).toBe(409);
+    expect((await res.json() as { error: string }).error).toMatch(/changed since it was loaded/);
+
+    // The newer dismissal survives untouched, at its own size.
+    expect(sqlite.prepare(`SELECT "setSize" FROM "registration_merge_suggestion_dismissal"`).all())
+      .toEqual([{ setSize: 3 }]);
+    // And nothing claims to have restored it.
+    expect(auditRows().map((r) => r.action)).toEqual(['merge_suggestion_dismissed']);
+  });
+
   it('reports a restore of something that was never dismissed', async () => {
     expect((await restore('?playerId=p1&ageGroup=U15')).status).toBe(404);
   });

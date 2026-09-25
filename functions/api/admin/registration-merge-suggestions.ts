@@ -424,12 +424,28 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
 
+  // Conditional on the size that was read, because the read above is its own
+  // round trip: another admin can re-dismiss a grown set in between, and an
+  // unconditional delete by key would destroy that newer decision while the
+  // audit entry recorded the older size it thought it was removing.
   const write = context.env.DB
     .prepare(
       `DELETE FROM "registration_merge_suggestion_dismissal"
-        WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ?`,
+        WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ? AND "setSize" = ?`,
     )
-    .bind(clubSlug, playerId, ageKey);
+    .bind(clubSlug, playerId, ageKey, existing.setSize);
+
+  // The same condition as a guard on the audit, which is what turns a lost race
+  // into a refusal rather than a silent no-op: a false guard aborts the whole
+  // batch (see lib/audit-log.ts), so the delete cannot half-happen and the log
+  // cannot claim a removal that did not occur. Audit first, deliberately — the
+  // batch is one transaction, and the guard has to see the row the delete is
+  // about to remove.
+  const stillTheRowWeRead = {
+    sql: `EXISTS (SELECT 1 FROM "registration_merge_suggestion_dismissal"
+                   WHERE "clubSlug" = ? AND "playerId" = ? AND "ageKey" = ? AND "setSize" = ?)`,
+    bindings: [clubSlug, playerId, ageKey, existing.setSize],
+  };
 
   const audit = prepareAuditLog(context.env.DB, {
     clubSlug,
@@ -439,9 +455,18 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     targetId: playerId,
     oldStatus: `${ageKey}:${existing.setSize}`,
     note: `Merge suggestion restored for ${ageKey}`,
-  });
+  }, stillTheRowWeRead);
 
-  await context.env.DB.batch([write, audit]);
+  try {
+    await context.env.DB.batch([audit, write]);
+  } catch {
+    // Same answer the POST gives a stale dismissal: the admin is looking at
+    // something that has since changed, so say so and let them reload.
+    return json(
+      { error: "this dismissal has changed since it was loaded" },
+      { status: 409 },
+    );
+  }
 
   // Off the response path, like reportReadCost. The write is already committed
   // by here, so awaiting the capture would let a PostHog timeout answer a
