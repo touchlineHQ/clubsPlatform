@@ -47,6 +47,9 @@ export const TABLE_STATEMENTS = [
   // COLLATE NOCASE is load-bearing: a BINARY index cannot serve a NOCASE ORDER BY.
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_team" ON "player_registration" ("clubSlug", "teamName" COLLATE NOCASE, "id")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_status" ON "player_registration" ("clubSlug", "registrationStatus" COLLATE NOCASE)`,
+  // Orders the merge-suggestion candidate walk, so grouping on (playerId,
+  // ageKey) does not need a temp B-tree over the club's registrations.
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_player_age" ON "player_registration" ("clubSlug", "playerId", "ageGroup")`,
   `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
@@ -69,6 +72,11 @@ export const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "registration_merge" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "primaryRegistrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE RESTRICT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, CHECK ("registrationId" <> "primaryRegistrationId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_merge_primary" ON "registration_merge" ("primaryRegistrationId")`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_merge_clubSlug" ON "registration_merge" ("clubSlug")`,
+  // An admin's "no" to a merge suggestion. ageKey is LOWER(TRIM(ageGroup)) and
+  // must stay equivalent to normaliseAgeGroup in lib/merge-suggestions.ts.
+  // setSize re-raises the suggestion once the candidate set grows past what was
+  // dismissed. See migrations/0028 for the full reasoning.
+  `CREATE TABLE IF NOT EXISTS "registration_merge_suggestion_dismissal" ("clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "ageKey" TEXT NOT NULL, "setSize" INTEGER NOT NULL, "dismissedBy" TEXT NOT NULL, "dismissedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "playerId", "ageKey"))`,
   `CREATE TABLE IF NOT EXISTS "registration_payment_state" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "generation" INTEGER NOT NULL DEFAULT 0, "claimId" TEXT NOT NULL DEFAULT '', "confirmationId" TEXT, "confirmationExpiresAt" INTEGER, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_payment_state_clubSlug" ON "registration_payment_state" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "gc_webhook_event" ("id" TEXT PRIMARY KEY NOT NULL, "resourceType" TEXT NOT NULL, "action" TEXT NOT NULL, "mandateId" TEXT, "subscriptionId" TEXT, "paymentId" TEXT, "rawBody" TEXT NOT NULL, "receivedAt" INTEGER NOT NULL)`,

@@ -322,6 +322,55 @@ describe('GET /api/admin/registrations', () => {
     expect(body.rows[0]).not.toHaveProperty('__cursor');
   });
 
+  // ─── Review mode ────────────────────────────────────────────────────────────
+
+  it('narrows to the merge suggestions when asked, over the whole club', async () => {
+    // "Review them" on the suggestions banner. The pair being reviewed is what
+    // the banner counted club-wide, so this must agree with the suggestions
+    // endpoint rather than filter whichever page happens to be loaded.
+    seedPlayer(sqlite, 'FAN001', 'p1');
+    seedPlayer(sqlite, 'FAN002', 'p2');
+    seedRegistration(sqlite, { id: 'reg_pair_a', player: 'p1', team: 'U15 Tuesday' });
+    seedRegistration(sqlite, { id: 'reg_pair_b', player: 'p1', team: 'U15 Thursday' });
+    // Alone in its age group, so never a candidate.
+    seedRegistration(sqlite, { id: 'reg_lone', player: 'p2', team: 'U15 Sunday' });
+
+    const body = await (await call(listRegistrations, db, '?suggestedOnly=1')).json() as
+      { rows: { registrationId: string }[] };
+    expect(body.rows.map((r) => r.registrationId).sort()).toEqual(['reg_pair_a', 'reg_pair_b']);
+  });
+
+  it('honours a dismissal in review mode, so the table matches the banner', async () => {
+    seedPlayer(sqlite, 'FAN001', 'p1');
+    seedRegistration(sqlite, { id: 'reg_pair_a', player: 'p1', team: 'U15 Tuesday' });
+    seedRegistration(sqlite, { id: 'reg_pair_b', player: 'p1', team: 'U15 Thursday' });
+    sqlite.exec(`INSERT INTO "registration_merge_suggestion_dismissal"
+      VALUES ('${CLUB}','p1','u15',2,'user_1',${NOW})`);
+
+    const body = await (await call(listRegistrations, db, '?suggestedOnly=1')).json() as
+      { rows: unknown[] };
+    expect(body.rows).toEqual([]);
+  });
+
+  it('combines review mode with the ordinary filters', async () => {
+    seedPlayer(sqlite, 'FAN001', 'p1');
+    seedRegistration(sqlite, { id: 'reg_pair_a', player: 'p1', team: 'U15 Tuesday' });
+    seedRegistration(sqlite, { id: 'reg_pair_b', player: 'p1', team: 'U15 Thursday' });
+
+    const body = await (await call(
+      listRegistrations, db, `?suggestedOnly=1&team=${encodeURIComponent('U15 Tuesday')}`,
+    )).json() as { rows: { registrationId: string }[] };
+    expect(body.rows.map((r) => r.registrationId)).toEqual(['reg_pair_a']);
+  });
+
+  it('leaves the club unnarrowed when review mode is off', async () => {
+    seedPlayer(sqlite, 'FAN001', 'p1');
+    seedRegistration(sqlite, { id: 'reg_lone', player: 'p1', team: 'U15 Sunday' });
+
+    const body = await (await call(listRegistrations, db)).json() as { rows: unknown[] };
+    expect(body.rows).toHaveLength(1);
+  });
+
   // ─── Binding ────────────────────────────────────────────────────────────────
 
   it('binds every filter rather than interpolating it', async () => {

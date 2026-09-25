@@ -15,6 +15,7 @@ import {
   takePage,
 } from "../../lib/pagination";
 import { attachManualAttribution } from "../../lib/registration-attribution";
+import { suggestedRegistrationIdsSql } from "../../lib/merge-suggestions";
 import {
   REGISTRATION_SORTS,
   buildRegistrationFilters,
@@ -106,10 +107,25 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   const keyset = buildKeysetPredicate(page, REGISTRATION_SORTS, `pr."id"`);
 
+  // "Review them" on the merge-suggestions banner. Deliberately NOT in
+  // buildRegistrationFilters: that builder is shared with registration-summary
+  // so the table and the tiles cannot disagree about a filter, and this is not
+  // one — it is a review mode over the same club. Putting it there would
+  // silently re-scope the summary tiles to suggested rows and would run the
+  // candidate grouping again on every summary request.
+  const suggestedOnly = url.searchParams.get("suggestedOnly") === "1";
+  const suggestedCte = suggestedOnly ? `${suggestedRegistrationIdsSql()}\n` : "";
+  const suggestedPredicate = suggestedOnly
+    ? `AND pr."id" IN (SELECT "registrationId" FROM suggested)`
+    : "";
+  // The CTE binds clubSlug twice — once for the candidate scan, once for the
+  // dismissals — and leads the statement, so its bindings lead too.
+  const suggestedBindings = suggestedOnly ? [clubSlug, clubSlug] : [];
+
   // No GROUP BY: linkedAccounts is a scalar subquery, so rows arrive in the
   // index's own order and idx_player_registration_club_team can satisfy the
   // default sort as a walk with an early exit rather than a temp B-tree.
-  const sql = `SELECT
+  const sql = `${suggestedCte}SELECT
          pr."id"                 AS registrationId,
          p."fanId"               AS fanId,
          pr."teamName"           AS teamName,
@@ -130,6 +146,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
        ${billingMergeJoinSql("pr")}
        ${subscriptionLevelJoinSql("pr")}
       WHERE ${filters.sql}
+        ${suggestedPredicate}
         ${keyset.sql}
       ${buildOrderBy(page, REGISTRATION_SORTS, { idAlias: `pr."id"` })}
       LIMIT ?`;
@@ -137,7 +154,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const started = Date.now();
   const read = await context.env.DB
     .prepare(sql)
-    .bind(...filters.bindings, ...keyset.bindings, fetchLimit(page))
+    .bind(...suggestedBindings, ...filters.bindings, ...keyset.bindings, fetchLimit(page))
     .all<RegistrationRow>();
   const { results } = read;
 
@@ -148,7 +165,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     ms: Date.now() - started,
     rowsRead: readMeta(read).rows_read,
     rowsReturned: results.length,
-    extra: { sort: page.sort, dir: page.dir, limit: page.limit, paged: page.cursor !== null },
+    extra: {
+      sort: page.sort,
+      dir: page.dir,
+      limit: page.limit,
+      paged: page.cursor !== null,
+      suggested_only: suggestedOnly,
+    },
   });
 
   const { items, nextCursor } = takePage(results, page, (row) => ({

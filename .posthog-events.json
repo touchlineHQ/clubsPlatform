@@ -106,6 +106,13 @@
     ]
   },
   {
+    "event": "merge suggestion dismissed",
+    "description": "An admin rules that two of one player's registrations sharing an age group are genuinely separate subs, so the merge suggestion stops being raised \u2014 or restores one they dismissed before, which carries `restored: true`. Counts only \u2014 no FAN numbers and no team names.",
+    "files": [
+      "functions/api/admin/registration-merge-suggestions.ts"
+    ]
+  },
+  {
     "event": "payment completed",
     "description": "A player's GoCardless payment is confirmed and a subscription created.",
     "files": [
