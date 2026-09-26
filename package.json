@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "cd website && npm run dev",
     "build": "cd website && npm run build",
-    "preview": "npx wrangler pages dev website/dist",
+    "preview": "npx wrangler pages dev website/dist --persist-to .wrangler/state --d1 DB=65a7e9d9-3772-4471-af13-fd2e39ab8f90",
     "db:migrate:local": "npx wrangler d1 migrations apply clubsplatform-auth --local --env production",
     "db:migrate:preview": "npx wrangler d1 migrations apply clubsplatform-preview --remote --env preview",
     "db:migrate:prod": "npx wrangler d1 migrations apply clubsplatform-auth --remote --env production",
