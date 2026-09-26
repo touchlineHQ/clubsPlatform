@@ -1,4 +1,4 @@
-.PHONY: help worker worker-migrated ui ui-remote dev dev-full preview install install-ui db-migrate-local db-migrate-prod
+.PHONY: help worker worker-migrated ui ui-remote dev dev-full preview install install-ui db-migrate-local db-migrate-prod assert-d1-database-id
 
 help:
 	@echo "Targets:"
@@ -32,14 +32,24 @@ help:
 # reach the real database: `wrangler pages dev` has no remote mode for D1.
 # (The e2e scripts in package.json use the preview id for the same reason, so a
 # test run cannot wipe a local dev database. See the README.)
-# Defaults to the production id in wrangler.toml. If changed, keep it in sync
-# with the database used by db-migrate-local.
-D1_DATABASE_ID ?= 65a7e9d9-3772-4471-af13-fd2e39ab8f90
+# Must equal [env.production].d1_databases.database_id in wrangler.toml.
+# db-migrate-local resolves that id via --env production; Pages targets use
+# D1_DATABASE_ID. Both must share the same local store, so overrides are
+# rejected unless they match.
+D1_PRODUCTION_DATABASE_ID := 65a7e9d9-3772-4471-af13-fd2e39ab8f90
+D1_DATABASE_ID ?= $(D1_PRODUCTION_DATABASE_ID)
 UI_DIR ?= website
 UI_PORT ?= 5173
 WORKER_PORT ?= 8788
 PERSIST_DIR ?= .wrangler/state
 API_TARGET ?= https://clubs.touchlinehq.co.uk
+
+# Fail fast if D1_DATABASE_ID drifts from the production id migrations use.
+assert-d1-database-id:
+	@if [ "$(D1_DATABASE_ID)" != "$(D1_PRODUCTION_DATABASE_ID)" ]; then \
+		echo "error: D1_DATABASE_ID ($(D1_DATABASE_ID)) must equal [env.production].d1_databases.database_id ($(D1_PRODUCTION_DATABASE_ID)) in wrangler.toml so migrations and Pages share the same local D1 store"; \
+		exit 1; \
+	fi
 
 install:
 	@npm install --ignore-scripts
@@ -48,7 +58,7 @@ install:
 install-ui:
 	@cd "$(UI_DIR)" && npm install
 
-worker:
+worker: assert-d1-database-id
 	@mkdir -p "$(PERSIST_DIR)"
 	@npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
@@ -66,7 +76,7 @@ ui-remote:
 
 # Full stack: Wrangler API in background, Vite proxies /api to it.
 # Access app at http://localhost:$(UI_PORT). Ctrl+C stops both.
-dev:
+dev: assert-d1-database-id
 	@$(MAKE) db-migrate-local
 	@mkdir -p "$(PERSIST_DIR)"; \
 	npx wrangler pages dev "$(UI_DIR)/public" \
@@ -80,7 +90,7 @@ dev:
 	echo "Wrangler ready — starting Vite (access app at http://localhost:$(UI_PORT))"; \
 	cd "$(UI_DIR)" && npm run dev -- --port "$(UI_PORT)"
 
-preview:
+preview: assert-d1-database-id
 	@npx wrangler pages dev "$(UI_DIR)/dist" \
 		--persist-to "$(PERSIST_DIR)" \
 		--d1 "DB=$(D1_DATABASE_ID)"
@@ -89,7 +99,7 @@ preview:
 # database in the top-level d1_databases (empty by design) and fails with
 # "Couldn't find a D1 DB with the name or binding 'clubsplatform-auth'". Because
 # make aborts on that, it also took `dev` and `worker-migrated` down with it.
-db-migrate-local:
+db-migrate-local: assert-d1-database-id
 	@npx wrangler d1 migrations apply clubsplatform-auth --local --env production \
 		--persist-to "$(PERSIST_DIR)"
 
