@@ -7,7 +7,9 @@ This site is designed to work for **any grassroots football club**. No coding re
 1. **Fork** this repository on GitHub
 2. **Set up Cloudflare Pages** — connect your fork, set build command to `cd website && npm ci && npm run build`, output to `website/dist`
 3. **Create a D1 database** — `npx wrangler d1 create clubsplatform-auth`, then add the ID to `wrangler.toml` under **both** `[env.production]` and `[env.preview]`; `vars` and bindings are non-inheritable for Pages, so a value set only at the top level reaches neither
-4. **Set secrets** with `npx wrangler pages secret put BETTER_AUTH_SECRET` (a random string)
+4. **Set secrets** for both environments, using a different random value for each:
+   - Production: `npx wrangler pages secret put BETTER_AUTH_SECRET --env production`
+   - Preview: `npx wrangler pages secret put BETTER_AUTH_SECRET --env preview`
 5. **Push to main** — your site deploys automatically
 
 ---
@@ -28,7 +30,7 @@ UPDATE user SET role = 'admin' WHERE email = 'your-email@example.com';
 
 ## Site Admin (Content Editor)
 
-Admin users can edit all site content at `/#/customise`. Changes are saved to the site's database and take effect immediately — nothing is committed to the repository and no redeploy happens.
+Admin users can edit database-backed content at `/#/customise`. Changes are saved to the site's database and take effect immediately — nothing is committed to the repository and no redeploy happens. In single-club mode, some content still comes from static JSON files; see [Manual JSON Editing](#manual-json-editing-advanced) below.
 
 | Tab | What you can edit |
 |-----|-------------------|
@@ -84,7 +86,11 @@ README's Deployment section if you are working on the upstream project.
 1. Connect your fork to **Cloudflare Pages** in the dashboard
 2. Set build command: `cd website && npm ci && npm run build`
 3. Set build output: `website/dist`
-4. Set secrets with `npx wrangler pages secret put BETTER_AUTH_SECRET`. The `DB` binding is **not** set in the dashboard — it comes from `wrangler.toml`, whose presence also makes the dashboard's Functions fields read-only
+4. Set `BETTER_AUTH_SECRET` for both environments, using a different random value for each:
+   - Production: `npx wrangler pages secret put BETTER_AUTH_SECRET --env production`
+   - Preview: `npx wrangler pages secret put BETTER_AUTH_SECRET --env preview`
+
+   The `DB` binding is **not** set in the dashboard — it comes from `wrangler.toml`, whose presence also makes the dashboard's Functions fields read-only
 5. Push to `main` — the site builds and deploys automatically
 
 ---
@@ -116,7 +122,14 @@ If your club isn't in the fulltimeFeeds system yet, the fixtures pages will grac
 
 ## Manual JSON Editing (Advanced)
 
-If you prefer to edit JSON directly instead of using the customise page:
+These JSON files provide initial database seed data, fallbacks, and static inputs depending on the site mode:
+
+- **Multi-club sites** read all club content from the database after seeding. Editing JSON does not update existing database content.
+- **Single-club mode** uses `teams.json`, `committee.json`, and `news.json` as fallbacks when API content is unavailable. `club.json`, `registration.json`, `gallery.json`, and `matchday.json` remain static inputs.
+
+To change database-backed content on an existing site, use **Site Admin** at `/#/customise`.
+
+The files contain:
 
 - `website/public/data/club.json` — Club identity, colours, socials, nav, about, history
 - `website/public/data/teams.json` — Team sections and individual teams
