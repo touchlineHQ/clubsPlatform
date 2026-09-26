@@ -1,0 +1,90 @@
+name: E2E
+
+# The local end-to-end tier, and the only one that runs on a pull request: the
+# built bundle served by `wrangler pages dev` against a throwaway local D1. No
+# credentials, so it works on forks, and a fresh database every run makes it
+# deterministic — which is what makes it worth requiring as a status check.
+#
+# The tier that exercises a real Cloudflare deployment lives in main.yml, as a
+# blocking gate between the test suite and the production deploy. It is not here
+# because a preview deployment is only meaningful once the code is merged: every
+# preview binds the one shared clubsplatform-preview database, and that database
+# can only be migrated safely for code that has already been reviewed.
+#
+# Kept separate from test.yml so the fast typecheck-and-vitest gate stays
+# uncluttered, and so the two show up as distinct checks.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A pull request that is pushed to repeatedly does not need every intermediate
+# commit tested to completion.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-local:
+    name: E2E against a local preview build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install website dependencies
+        run: npm ci
+        working-directory: website
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      # VITE_POSTHOG_DISABLED must be the exact string "true", and the key/host
+      # pair has to be present alongside it: init() in website/src/lib/posthog.ts
+      # checks for a missing key BEFORE it checks the disable flag and logs a
+      # console error on that path. Both values are repository *variables*, not
+      # secrets — the project key is write-only and ships in the client bundle
+      # anyway — so they resolve on forks as well.
+      #
+      # POSTHOG_CLI_API_KEY is deliberately absent: without it
+      # website/vite.config.mts leaves the source-map plugin out entirely, so
+      # nothing is generated and no PostHog release is created for a test build.
+      - name: Build
+        run: npm run build
+        working-directory: website
+        env:
+          VITE_POSTHOG_DISABLED: 'true'
+          VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+
+      # functions/lib/seed.ts reads the club's JSON through the ASSETS binding and
+      # treats an HTML response as absent — which is what the SPA fallback serves
+      # for a missing file. It also marks the club seeded BEFORE fetching, so one
+      # miss leaves it permanently empty. Fail here instead, with a clear reason.
+      - name: Verify seed assets are in the build output
+        run: test -s website/dist/data/clubs/demo/club.json
+
+      # Starts its own server via playwright.config.ts's webServer, which also
+      # applies the migrations. See the e2e:serve script.
+      - name: Run E2E tests
+        run: npm run e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-local
+          path: playwright-report/
+          retention-days: 7

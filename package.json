@@ -15,7 +15,11 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "typecheck": "tsc -p functions/tsconfig.json && cd website && npm run typecheck",
+    "e2e": "playwright test",
+    "e2e:smoke": "playwright test --grep @smoke",
+    "e2e:migrate": "wrangler d1 migrations apply clubsplatform-preview --local --env preview --persist-to .wrangler/e2e-state",
+    "e2e:serve": "npm run e2e:migrate && wrangler pages dev website/dist --ip 127.0.0.1 --port 8788 --persist-to .wrangler/e2e-state --d1 DB=895c505d-ccc6-49d9-87ba-375ef9492f19 --show-interactive-dev-session=false",
+    "typecheck": "tsc -p functions/tsconfig.json && tsc -p e2e/tsconfig.json && cd website && npm run typecheck",
     "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
@@ -28,6 +32,7 @@
     "@mantine/core": "^9.0.0",
     "@mantine/dates": "^9.0.0",
     "@mantine/hooks": "^9.0.0",
+    "@playwright/test": "1.56.0",
     "@tabler/icons-react": "^3.44.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

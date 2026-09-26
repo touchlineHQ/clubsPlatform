@@ -63,6 +63,104 @@ the root one. Covering tests means a third project to reconcile that split.
 
 There is no `npm run lint` yet — no linter is configured in this repo.
 
+### End-to-end tests
+
+Playwright drives the real thing — a browser against the built bundle, the Pages
+Functions and D1 — which is the one seam the vitest suite cannot see. Specs live
+in `e2e/` as `*.spec.ts`.
+
+```bash
+npm run e2e          # starts its own server, runs everything
+npm run e2e:smoke    # only the @smoke subset
+npx playwright show-report
+```
+
+`npm run e2e` needs no running server and no credentials: `e2e:serve` applies the
+migrations to a throwaway local D1 under `.wrangler/e2e-state`, then serves
+`website/dist` with `wrangler pages dev`. **Build first** — it serves `dist`, not
+source:
+
+```bash
+cd website && npm run build
+```
+
+To point the same specs at something already deployed — a Cloudflare preview, say
+— set `E2E_BASE_URL`, which also stops Playwright starting a server of its own:
+
+```bash
+E2E_BASE_URL=https://<deployment>.clubsplatform.pages.dev npm run e2e:smoke
+```
+
+Reset the throwaway database with `rm -rf .wrangler/e2e-state`.
+
+**The `--d1` UUID in `e2e:serve` must stay equal to
+`[env.preview].d1_databases.database_id` in `wrangler.toml`.** `wrangler pages dev`
+rejects `--env` and only ever reads the top-level config, which deliberately has
+no D1 binding, so the binding is supplied on the command line instead. Wrangler
+keys local D1 storage by that id, which is how `e2e:migrate` and `e2e:serve` end
+up talking to the same file. If they ever diverge, the schema is created in a
+different empty database and `/api/clubs` returns an empty list rather than an
+error — which is why the first spec asserts that the registry actually contains
+the demo club.
+
+#### Where each tier runs
+
+**Pull requests into main** run the local tier only, via
+`.github/workflows/e2e.yml` — no credentials, no Cloudflare deployments per PR,
+deterministic enough to be a required status check.
+
+**Commits on main** run the real thing, as the `preview-e2e` job in
+`.github/workflows/main.yml`. It sits between the test suite and the production
+deploy and blocks it: migrate the preview database, deploy this commit as a
+Cloudflare preview, run `@smoke` against it, and only then migrate and deploy
+production. That ordering is what makes the gate trustworthy — the preview
+database is migrated *first*, so the suite runs against the schema the code
+expects. On a pull request it could not be, because migrating a shared database
+from an unreviewed branch would break preview for every other open PR.
+
+The preview specs must stay **read-only**: every preview deployment binds the one
+`clubsplatform-preview` database.
+
+Note the preview deploy uses `--branch=ci-preview`. It must never be
+`--branch=main` — Pages treats a deploy whose branch matches the project's
+production branch as a *production* deployment, which would ship the commit before
+the tests it is meant to gate had run.
+
+#### Cloudflare Access
+
+Preview deployments are behind Cloudflare Access, so an unauthenticated request to
+one gets a `302` to `<team>.cloudflareaccess.com` instead of the app. CI
+authenticates with an Access **service token**:
+
+| Secret | |
+|---|---|
+| `CF_ACCESS_CLIENT_ID` | Service token client id (ends `.access`) |
+| `CF_ACCESS_CLIENT_SECRET` | Service token client secret, shown once at creation |
+
+To set them up: create a service token under Zero Trust → **Access → Service
+Auth**, then add a policy to the Access application covering
+`*.clubsplatform.pages.dev` whose action is **Service Auth** and which includes
+that token. The action matters — an Allow policy will not accept service-token
+headers, which presents as a `302` even though everything looks configured.
+
+`playwright.config.ts` turns those two variables into `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` on every request when both are present, and sends nothing
+when they are not, so local runs are unaffected.
+
+While the secrets are absent the gate **skips itself with a warning** and main
+keeps shipping; it switches on as soon as both exist. The preview *migration* step
+is deliberately outside that condition, so the canary that catches a broken
+migration before production still runs either way.
+
+If a club on the preview deployment ever renders with no content, its seed was
+claimed but not written (see `functions/lib/seed.ts`). Clear the flag so the next
+request re-seeds:
+
+```sh
+npx wrangler d1 execute clubsplatform-preview --remote --env preview \
+  --command "UPDATE club_config SET seeded=0 WHERE slug='demo'"
+```
+
 ## Environment Variables
 
 Set in `wrangler.toml` under `[vars]`:
