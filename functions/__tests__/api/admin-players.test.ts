@@ -961,6 +961,7 @@ describe('import-players POST — chunked writes', () => {
     const db = makeDb({
       all: [[heldRow()], [{
         id: 'pc_1', playerId: 'player_1', email: 'parent@example.com', sourcedAt: 500,
+        state: 'pending', relationship: 'guardian',
       }]],
       first: [{ createdAt: 1000 }, null],
       run: { meta: { changes: 1 } },
@@ -1053,6 +1054,70 @@ describe('import-players POST — player_contact on real SQLite', () => {
 
     expect(body.contacts).toEqual({ created: 0, skipped: 1 });
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n).toBe(1);
+  });
+
+  it('refreshes relationship on a pending contact when the CSV flips it', async () => {
+    sqlite.exec(`INSERT INTO "player" VALUES ('player_1','FAN001',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player_registration" VALUES
+      ('preg_1','test-club','player_1','U11 Boys','U11','2025-07-31','Active',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player_contact"
+      (id, clubSlug, playerId, email, relationship, state,
+       operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+      VALUES ('pc_1','test-club','player_1','same@example.com','guardian','pending',0,0,NULL,500)`);
+
+    // Same address now arrives as the player email → relationship should become self.
+    const { body } = await runImport(
+      d1Over(sqlite),
+      [row({ playerEmail: 'same@example.com', parentEmails: [] })],
+      false,
+    );
+
+    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
+    const contact = sqlite.prepare(
+      `SELECT relationship, state FROM "player_contact" WHERE id = 'pc_1'`,
+    ).get() as { relationship: string; state: string };
+    expect(contact).toEqual({ relationship: 'self', state: 'pending' });
+  });
+
+  it('leaves relationship alone once the contact is no longer pending', async () => {
+    sqlite.exec(`INSERT INTO "player" VALUES ('player_1','FAN001',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player" VALUES ('player_2','FAN002',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player" VALUES ('player_3','FAN003',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player_registration" VALUES
+      ('preg_1','test-club','player_1','U11 Boys','U11','2025-07-31','Active',1700000000000,1700000000000),
+      ('preg_2','test-club','player_2','U11 Boys','U11','2025-07-31','Active',1700000000000,1700000000000),
+      ('preg_3','test-club','player_3','U11 Boys','U11','2025-07-31','Active',1700000000000,1700000000000)`);
+    for (const [id, playerId, email, state] of [
+      ['pc_c', 'player_1', 'confirmed@example.com', 'confirmed'],
+      ['pc_w', 'player_2', 'withdrawn@example.com', 'withdrawn'],
+      ['pc_b', 'player_3', 'bounced@example.com', 'bounced'],
+    ] as const) {
+      sqlite.exec(`INSERT INTO "player_contact"
+        (id, clubSlug, playerId, email, relationship, state,
+         operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+        VALUES ('${id}','test-club','${playerId}','${email}','guardian','${state}',0,0,NULL,500)`);
+    }
+
+    // CSV flips each address to self; non-pending rows must stay guardian.
+    const { body } = await runImport(
+      d1Over(sqlite),
+      [
+        row({ fanId: 'FAN001', playerEmail: 'confirmed@example.com', parentEmails: [] }),
+        row({ fanId: 'FAN002', playerEmail: 'withdrawn@example.com', parentEmails: [] }),
+        row({ fanId: 'FAN003', playerEmail: 'bounced@example.com', parentEmails: [] }),
+      ],
+      false,
+    );
+
+    expect(body.contacts).toEqual({ created: 0, skipped: 3 });
+    const rows = sqlite.prepare(
+      `SELECT id, relationship, state FROM "player_contact" ORDER BY id`,
+    ).all() as { id: string; relationship: string; state: string }[];
+    expect(rows).toEqual([
+      { id: 'pc_b', relationship: 'guardian', state: 'bounced' },
+      { id: 'pc_c', relationship: 'guardian', state: 'confirmed' },
+      { id: 'pc_w', relationship: 'guardian', state: 'withdrawn' },
+    ]);
   });
 });
 

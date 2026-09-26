@@ -110,14 +110,23 @@ describe('player_contact schema', () => {
 
     db.exec(`INSERT INTO "player" VALUES ('p1','FAN001',${NOW},${NOW})`);
     db.exec(`INSERT INTO "player" VALUES ('p2','FAN002',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "player" VALUES ('p3','FAN003',${NOW},${NOW})`);
     // Import signature: empty name, role member, clubSlug set.
     db.exec(`INSERT INTO "user" VALUES
       ('u1','','parent@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
+    // Renamed after import — outside the empty-name signature (documented gap).
+    db.exec(`INSERT INTO "user" VALUES
+      ('u3','Later Name','renamed@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "account"
+      (id, accountId, providerId, userId, password, createdAt, updatedAt)
+      VALUES ('a3','renamed@example.com','credential','u3','hash',${NOW},${NOW})`);
+    // Real activated parent — must not be backfilled.
     db.exec(`INSERT INTO "user" VALUES
       ('u2','Real Parent','real@example.com',1,NULL,'member','${CLUB}',${NOW},${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up1','u1','p1','guardian',${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up2','u1','p2','guardian',${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up3','u2','p1','guardian',${NOW})`);
+    db.exec(`INSERT INTO "user_player" VALUES ('up4','u3','p3','guardian',${NOW})`);
 
     for (const stmt of migrationStatements(MIGRATION)) {
       db.exec(stmt);
@@ -131,7 +140,8 @@ describe('player_contact schema', () => {
         marketingOptIn: number; playerId: string;
       }[];
 
-    // Only the empty-name import user is backfilled; two siblings → two rows.
+    // Only empty-name import user is backfilled; two siblings → two rows.
+    // Renamed import-sourced (u3) and activated parent (u2) stay on user.email.
     expect(rows).toHaveLength(2);
     expect(rows.every((r) => r.email === 'parent@example.com')).toBe(true);
     expect(rows.every((r) => r.state === 'pending')).toBe(true);
@@ -153,29 +163,37 @@ describe('emailForSend / isContactSendable', () => {
   });
 
   function seed(over: {
-    id?: string; state?: string; operational?: number; marketing?: number;
+    id?: string; state?: string; operational?: number; marketing?: number; email?: string;
   } = {}) {
     const id = over.id ?? 'pc_1';
     const state = over.state ?? 'confirmed';
     const operational = over.operational ?? 1;
     const marketing = over.marketing ?? 0;
+    const email = over.email ?? 'parent@example.com';
     db.exec(`INSERT INTO "player_contact"
       (id, clubSlug, playerId, email, relationship, state,
        operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
-      VALUES ('${id}','${CLUB}','p1','parent@example.com','guardian','${state}',
+      VALUES ('${id}','${CLUB}','p1','${email}','guardian','${state}',
               ${operational},${marketing},NULL,${NOW})`);
     return id;
   }
 
-  it('rejects pending, withdrawn, bounced, and purpose mismatches', () => {
+  it('rejects pending, withdrawn, bounced, and purpose mismatches', async () => {
     expect(isContactSendable(
       { state: 'pending', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
     )).toBe(false);
+    // withdrawn / bounced must stay unsendable even with both opt-ins on
     expect(isContactSendable(
       { state: 'withdrawn', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
     )).toBe(false);
     expect(isContactSendable(
+      { state: 'withdrawn', operationalOptIn: 1, marketingOptIn: 1 }, 'marketing',
+    )).toBe(false);
+    expect(isContactSendable(
       { state: 'bounced', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
+    )).toBe(false);
+    expect(isContactSendable(
+      { state: 'bounced', operationalOptIn: 1, marketingOptIn: 1 }, 'marketing',
     )).toBe(false);
     expect(isContactSendable(
       { state: 'confirmed', operationalOptIn: 0, marketingOptIn: 0 }, 'operational',
@@ -186,6 +204,18 @@ describe('emailForSend / isContactSendable', () => {
     expect(isContactSendable(
       { state: 'confirmed', operationalOptIn: 1, marketingOptIn: 0 }, 'operational',
     )).toBe(true);
+
+    const withdrawn = seed({
+      id: 'pc_w', state: 'withdrawn', operational: 1, marketing: 1, email: 'withdrawn@example.com',
+    });
+    const bounced = seed({
+      id: 'pc_b', state: 'bounced', operational: 1, marketing: 1, email: 'bounced@example.com',
+    });
+    const d1 = d1Over(db);
+    expect(await emailForSend(d1 as any, CLUB, withdrawn, 'operational')).toBeNull();
+    expect(await emailForSend(d1 as any, CLUB, withdrawn, 'marketing')).toBeNull();
+    expect(await emailForSend(d1 as any, CLUB, bounced, 'operational')).toBeNull();
+    expect(await emailForSend(d1 as any, CLUB, bounced, 'marketing')).toBeNull();
   });
 
   it('returns the address only through the helper when eligible', async () => {

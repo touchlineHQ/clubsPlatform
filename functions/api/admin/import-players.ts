@@ -117,6 +117,10 @@ interface ContactPlan {
   existingContactId: string | null;
   /** sourcedAt of an existing row, used to tell "earlier part of this run" from "pre-existing". */
   existingSourcedAt: number | null;
+  /** state of an existing row; pending contacts may have relationship refreshed. */
+  existingState: string | null;
+  /** relationship currently stored; compared so we only UPDATE when it would change. */
+  existingRelationship: "self" | "guardian" | null;
   newContactId: string;
 }
 
@@ -457,28 +461,38 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // hundreds of addresses, and that was hundreds of sequential round trips.
   // Lookups are club-scoped; matching on (playerId, email) happens in memory
   // once fanIds have been resolved to playerIds above.
-  const existingContacts: { id: string; playerId: string; email: string; sourcedAt: number }[] = [];
+  const existingContacts: {
+    id: string; playerId: string; email: string; sourcedAt: number;
+    state: string; relationship: "self" | "guardian";
+  }[] = [];
   const emails = [...new Set([...contactRelMap.values()].map((c) => c.email))];
   for (const slice of inSlices(emails)) {
     try {
       const { results } = await db
         .prepare(
-          `SELECT id, playerId, email, sourcedAt FROM "player_contact"
+          `SELECT id, playerId, email, sourcedAt, state, relationship FROM "player_contact"
             WHERE clubSlug = ? AND email IN (${slice.map(() => '?').join(',')})`,
         )
         .bind(clubSlug, ...slice)
-        .all<{ id: string; playerId: string; email: string; sourcedAt: number }>();
+        .all<{
+          id: string; playerId: string; email: string; sourcedAt: number;
+          state: string; relationship: "self" | "guardian";
+        }>();
       existingContacts.push(...results);
     } catch (err) {
       for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
     }
   }
 
-  const existingByPlayerEmail = new Map<string, { id: string; sourcedAt: number }>();
+  const existingByPlayerEmail = new Map<string, {
+    id: string; sourcedAt: number; state: string; relationship: "self" | "guardian";
+  }>();
   for (const row of existingContacts) {
     existingByPlayerEmail.set(`${row.playerId}\0${row.email}`, {
       id: row.id,
       sourcedAt: row.sourcedAt,
+      state: row.state,
+      relationship: row.relationship,
     });
   }
 
@@ -506,6 +520,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       relationship,
       existingContactId: existing?.id ?? null,
       existingSourcedAt: existing?.sourcedAt ?? null,
+      existingState: existing?.state ?? null,
+      existingRelationship: existing?.relationship ?? null,
       newContactId: randomId("pcontact"),
     });
   }
@@ -617,7 +633,29 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // parent activation flow (#132); import must not create user / account /
   // user_player rows from CSV addresses.
   for (const plan of contactPlans) {
-    if (plan.existingContactId) continue;
+    if (plan.existingContactId) {
+      // Refresh relationship from the CSV while the contact is still pending.
+      // Once confirmed / withdrawn / bounced, leave relationship alone — the
+      // parent (or bounce handling) owns that field after activation.
+      if (
+        plan.existingState === 'pending'
+        && plan.existingRelationship !== null
+        && plan.relationship !== plan.existingRelationship
+      ) {
+        try {
+          await db
+            .prepare(
+              `UPDATE "player_contact" SET relationship = ?
+                WHERE id = ? AND clubSlug = ? AND state = 'pending'`,
+            )
+            .bind(plan.relationship, plan.existingContactId, clubSlug)
+            .run();
+        } catch (err) {
+          importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+        }
+      }
+      continue;
+    }
     const playerId = fanIdToPlayerId.get(plan.fanId);
     if (!playerId) {
       // Player write failed (mapping dropped); take the contact count back.
