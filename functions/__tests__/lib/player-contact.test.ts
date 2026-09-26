@@ -113,7 +113,7 @@ describe('player_contact schema', () => {
     db.exec(`INSERT INTO "player" VALUES ('p3','FAN003',${NOW},${NOW})`);
     // Import signature: empty name, role member, clubSlug set.
     db.exec(`INSERT INTO "user" VALUES
-      ('u1','','parent@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
+      ('u1','',' Parent@Example.Com ',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
     // Renamed after import — documents the signature gap (not backfilled).
     db.exec(`INSERT INTO "user" VALUES
       ('u3','Later Name','renamed@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
@@ -131,6 +131,10 @@ describe('player_contact schema', () => {
     db.exec(`INSERT INTO "user_player" VALUES ('up3','u2','p1','guardian',${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up4','u3','p3','guardian',${NOW})`);
 
+    for (const stmt of migrationStatements(MIGRATION)) {
+      db.exec(stmt);
+    }
+    // Re-running the backfill must find the trimmed address already stored.
     for (const stmt of migrationStatements(MIGRATION)) {
       db.exec(stmt);
     }

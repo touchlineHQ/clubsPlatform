@@ -68,7 +68,7 @@ SELECT
   'pcontact_' || lower(hex(randomblob(16))),
   u."clubSlug",
   up."playerId",
-  lower(u."email"),
+  lower(trim(u."email")),
   up."relationship",
   'pending',
   0,
@@ -90,5 +90,5 @@ WHERE u."role" = 'member'
     SELECT 1 FROM "player_contact" pc
      WHERE pc."clubSlug" = u."clubSlug"
        AND pc."playerId" = up."playerId"
-       AND pc."email" = lower(u."email")
+       AND pc."email" = lower(trim(u."email"))
   );
