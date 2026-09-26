@@ -333,7 +333,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
           <Group gap="xs">
             <Badge color="blue" radius="xl" variant="light">{summary.uniqueFans} players</Badge>
-            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} email accounts</Badge>
+            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} contact emails</Badge>
             <Badge color="grape" radius="xl" variant="light">{summary.guardianOnlyEmails} guardians</Badge>
             <Badge color="orange" radius="xl" variant="light">{summary.uniqueTeams} teams</Badge>
           </Group>
