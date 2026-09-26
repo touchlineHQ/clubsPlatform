@@ -82,20 +82,30 @@ test.describe('anonymous browse of the demo club @smoke', () => {
    * Home. SiteSidebar additionally filters them by data.visibility, so a route
    * appearing here is also an assertion that the demo seed still has content for
    * it.
+   *
+   * `heading` takes the club name because About's is `About {club.name}` —
+   * AboutPage is the one page that embeds it. That name is `club_config.name`,
+   * which an admin can change on the shared preview database, so it is composed
+   * from whatever the registry reports rather than hardcoded. The seven that
+   * ignore the argument are fixed strings in the source. Passing it to all of
+   * them, rather than leaving About's heading empty and filling it in later,
+   * keeps a future entry from silently inheriting About's shape.
    */
   const pages = [
-    { link: 'About Us', hash: '#/about', heading: 'About Demo FC' },
-    { link: 'Teams', hash: '#/teams', heading: 'Teams & Squads' },
-    { link: 'Fixtures & Results', hash: '#/fixtures', heading: 'Fixtures & Results' },
-    { link: 'Register & Pay', hash: '#/register', heading: 'Registration & Subscriptions' },
-    { link: 'Committee & Staff', hash: '#/committee', heading: 'Committee & Staff' },
-    { link: 'Club News', hash: '#/news', heading: 'Club News' },
-    { link: 'Matchday Info', hash: '#/matchday', heading: 'Visitor & Matchday Information' },
-    { link: 'Contact', hash: '#/contact', heading: 'Contact Us' },
+    { link: 'About Us', hash: '#/about', heading: (club: string) => `About ${club}` },
+    { link: 'Teams', hash: '#/teams', heading: () => 'Teams & Squads' },
+    { link: 'Fixtures & Results', hash: '#/fixtures', heading: () => 'Fixtures & Results' },
+    { link: 'Register & Pay', hash: '#/register', heading: () => 'Registration & Subscriptions' },
+    { link: 'Committee & Staff', hash: '#/committee', heading: () => 'Committee & Staff' },
+    { link: 'Club News', hash: '#/news', heading: () => 'Club News' },
+    { link: 'Matchday Info', hash: '#/matchday', heading: () => 'Visitor & Matchday Information' },
+    { link: 'Contact', hash: '#/contact', heading: () => 'Contact Us' },
   ] as const;
 
   for (const { link, hash, heading } of pages) {
-    test(`the sidebar navigates to ${link}`, async ({ page }) => {
+    test(`the sidebar navigates to ${link}`, async ({ page, request }) => {
+      const { name } = await demoClub(request);
+
       await page.goto(`/${DEMO_SLUG}/`);
 
       // Scoped to AppShell.Navbar, which Mantine renders as <nav>. Without the
@@ -105,7 +115,7 @@ test.describe('anonymous browse of the demo club @smoke', () => {
       await nav.getByRole('link', { name: link, exact: true }).click();
 
       await expect(page).toHaveURL(new RegExp(`/${DEMO_SLUG}/${escapeForRegExp(hash)}$`));
-      await expect(page.getByRole('heading', { level: 2, name: heading, exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { level: 2, name: heading(name), exact: true })).toBeVisible();
     });
   }
 
