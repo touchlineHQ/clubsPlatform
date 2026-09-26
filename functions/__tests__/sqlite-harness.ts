@@ -23,6 +23,8 @@ const require_ = createRequire(import.meta.url);
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
+  /** Present on the real node:sqlite StatementSync; omitted from the thin type historically. */
+  run?(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
 }
 export interface SqliteDb {
   exec(sql: string): void;
@@ -80,11 +82,17 @@ export function d1Over(db: SqliteDb): {
     return {
       all: async () => ({ results: statement.all(...params), success: true, meta: {} }),
       first: async () => (statement.all(...params)[0] as unknown) ?? null,
-      // Execute for side effects. node:sqlite's .all() runs the statement; .run
-      // exists on the real object but is omitted from the thin SqliteStatement type.
+      // Execute for side effects. Prefer StatementSync.run() so meta.changes is
+      // honest (claim/finalize guards depend on it). Fall back to .all() +
+      // changes() when the thin type has no .run.
       run: async () => {
+        if (typeof statement.run === "function") {
+          const result = statement.run(...params);
+          return { results: [], success: true, meta: { changes: Number(result.changes) } };
+        }
         statement.all(...params);
-        return { results: [], success: true, meta: { changes: 1 } };
+        const row = db.prepare("SELECT changes() AS c").get() as { c?: number } | undefined;
+        return { results: [], success: true, meta: { changes: Number(row?.c ?? 0) } };
       },
       // Carried so batch() can execute a statement someone already bound.
       __sql: sql,

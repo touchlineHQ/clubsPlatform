@@ -186,14 +186,20 @@ describe('emailForSend / isContactSendable', () => {
     const id = seed({ state: 'confirmed', operational: 1, marketing: 0 });
     const d1 = d1Over(db);
 
-    expect(await emailForSend(d1 as any, id, 'operational')).toBe('parent@example.com');
-    expect(await emailForSend(d1 as any, id, 'marketing')).toBeNull();
-    expect(await emailForSend(d1 as any, 'missing', 'operational')).toBeNull();
+    expect(await emailForSend(d1 as any, CLUB, id, 'operational')).toBe('parent@example.com');
+    expect(await emailForSend(d1 as any, CLUB, id, 'marketing')).toBeNull();
+    expect(await emailForSend(d1 as any, CLUB, 'missing', 'operational')).toBeNull();
   });
 
   it('never returns a pending address', async () => {
     const id = seed({ state: 'pending', operational: 1, marketing: 1 });
-    expect(await emailForSend(d1Over(db) as any, id, 'operational')).toBeNull();
-    expect(await emailForSend(d1Over(db) as any, id, 'marketing')).toBeNull();
+    expect(await emailForSend(d1Over(db) as any, CLUB, id, 'operational')).toBeNull();
+    expect(await emailForSend(d1Over(db) as any, CLUB, id, 'marketing')).toBeNull();
+  });
+
+  it('does not resolve a contact from another club', async () => {
+    const id = seed({ state: 'confirmed', operational: 1, marketing: 0 });
+    expect(await emailForSend(d1Over(db) as any, 'other-club', id, 'operational')).toBeNull();
+    expect(await emailForSend(d1Over(db) as any, CLUB, id, 'operational')).toBe('parent@example.com');
   });
 });

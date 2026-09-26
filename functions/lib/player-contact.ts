@@ -36,20 +36,21 @@ export function isContactSendable(
 }
 
 /**
- * Resolve a contact address for sending. Returns null when the row is missing
- * or not eligible for `purpose`.
+ * Resolve a contact address for sending within `clubSlug`. Returns null when
+ * the row is missing, belongs to another club, or is not eligible for `purpose`.
  */
 export async function emailForSend(
   db: D1Database,
+  clubSlug: string,
   contactId: string,
   purpose: ContactPurpose,
 ): Promise<string | null> {
   const row = await db
     .prepare(
       `SELECT id, email, state, operationalOptIn, marketingOptIn
-         FROM "player_contact" WHERE id = ?`,
+         FROM "player_contact" WHERE id = ? AND clubSlug = ?`,
     )
-    .bind(contactId)
+    .bind(contactId, clubSlug)
     .first<PlayerContactForSend>();
 
   if (!row || !isContactSendable(row, purpose)) return null;
