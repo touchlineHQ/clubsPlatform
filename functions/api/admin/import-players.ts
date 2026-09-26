@@ -1,5 +1,4 @@
 import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
-import { hashSeededPwd } from "../../lib/auth";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import { normaliseTeamName } from "../../lib/team-name";
@@ -28,7 +27,7 @@ interface ImportResult {
   /** Player identity rows inserted. A returning player counts in neither field. */
   players: { created: number };
   registrations: { created: number; updated: number };
-  users: { created: number; skipped: number };
+  contacts: { created: number; skipped: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -49,16 +48,12 @@ export const IMPORT_LIMITS = {
    */
   maxCommitRows: 15,
   /**
-   * Distinct addresses one write request may carry, which is the real cost.
+   * Distinct addresses one write request may carry.
    *
-   * Rows are a poor proxy: a row carries one address typically and up to
-   * maxParentEmails + 1, and each address is an account to seed, two inserts and
-   * a link. Fifteen rows is 30 addresses on real data but 165 at the worst these
-   * limits allow — 17ms, past Free's 10ms budget however few the rows.
-   *
-   * 45 costs ~5ms with the seeded hash at 0.1ms (SEEDED_ROUNDS, lib/auth.ts), so
-   * a batch fits whatever its shape: typical data batches on rows, address-heavy
-   * data batches sooner.
+   * Each address becomes one or more player_contact rows (one per player it is
+   * attached to). Rows are a poor proxy: a row carries one address typically and
+   * up to maxParentEmails + 1. Cap distinct addresses so a request stays inside
+   * the Workers Free subrequest budget even on an address-heavy file.
    */
   maxCommitEmails: 45,
   maxStringLen: 200,
@@ -115,21 +110,27 @@ interface RowPlan {
   newRegId: string | null;
 }
 
-interface UserPlan {
+interface ContactPlan {
   email: string;
-  existingUserId: string | null;
-  newUserId: string;
-  passwordFan: string;
-  fanMap: Map<string, "self" | "guardian">;
+  fanId: string;
+  relationship: "self" | "guardian";
+  existingContactId: string | null;
+  /** sourcedAt of an existing row, used to tell "earlier part of this run" from "pre-existing". */
+  existingSourcedAt: number | null;
+  /** state of an existing row; pending contacts may have relationship refreshed. */
+  existingState: string | null;
+  /** relationship currently stored; compared so we only UPDATE when it would change. */
+  existingRelationship: "self" | "guardian" | null;
+  newContactId: string;
 }
 
 /**
  * One slice of a chunked import.
  *
  * A whole-club import in one request exhausts the Worker's per-request budget
- * and leaves the club half-imported, so the client sends slices. Seeding the
- * accounts was the bulk of it until lazy hashing (SEEDED_ROUNDS in lib/auth.ts);
- * what remains is the D1 round trips, which are subrequests.
+ * and leaves the club half-imported, so the client sends slices. Contact rows
+ * are cheap compared to the old seeded-password path, but D1 round trips are
+ * still subrequests and still need chunking.
  *
  * Absent means an unchunked import, which maxCommitRows keeps small.
  */
@@ -168,6 +169,7 @@ interface ImportRunTotals {
   playersCreated: number;
   registrationsCreated: number;
   registrationsUpdated: number;
+  /** Contact counts; column names retained from the pre-#131 schema. */
   usersCreated: number;
   usersSkipped: number;
   errorCount: number;
@@ -284,7 +286,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const db = context.env.DB;
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   let importRunId: string | null = null;
-  /** When this run began; accounts at least this old are an earlier part's. */
+  /** When this run began; contacts at least this old are an earlier part's. */
   let runStartedAt: number | null = null;
 
   // Claim the part before doing any import work. A later part can advance only
@@ -329,17 +331,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0 },
     registrations: { created: 0, updated: 0 },
-    users: { created: 0, skipped: 0 },
+    contacts: { created: 0, skipped: 0 },
     errors: [],
     stale: { count: 0, rows: [] },
   };
   if (importRunId) importResult.runId = importRunId;
 
-  // ── 1. Pre-process: build email→player maps ──────────────────────────────
-  // email → Map<fanId, relationship>
-  const emailRelMap = new Map<string, Map<string, "self" | "guardian">>();
-  // email that appears as player's own email → that player's fanId (for password)
-  const selfEmailToFan = new Map<string, string>();
+  // ── 1. Pre-process: (fanId, email) → relationship ────────────────────────
+  // One contact row per player×address at this club. The same parent of two
+  // siblings therefore yields two rows — that is intentional (UNIQUE is on
+  // clubSlug+playerId+email, not on email alone).
+  const contactKey = (fanId: string, email: string) => `${fanId}\0${email}`;
+  const contactRelMap = new Map<string, { fanId: string; email: string; relationship: "self" | "guardian" }>();
 
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
@@ -347,35 +350,23 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     const playerEmail = String(row.playerEmail ?? "").trim().toLowerCase();
     if (playerEmail) {
-      if (!emailRelMap.has(playerEmail)) emailRelMap.set(playerEmail, new Map());
-      emailRelMap.get(playerEmail)!.set(fanId, "self");
-      selfEmailToFan.set(playerEmail, fanId);
+      contactRelMap.set(contactKey(fanId, playerEmail), {
+        fanId, email: playerEmail, relationship: "self",
+      });
     }
 
     for (const raw of row.parentEmails ?? []) {
       const pe = raw.trim().toLowerCase();
       if (!pe) continue;
-      if (!emailRelMap.has(pe)) emailRelMap.set(pe, new Map());
-      // Only set guardian if not already marked self for this fanId
-      if (!emailRelMap.get(pe)!.has(fanId)) {
-        emailRelMap.get(pe)!.set(fanId, "guardian");
+      const key = contactKey(fanId, pe);
+      // Only set guardian if not already marked self for this fanId+email
+      if (!contactRelMap.has(key)) {
+        contactRelMap.set(key, { fanId, email: pe, relationship: "guardian" });
       }
     }
   }
 
-  // ── 2. Determine password FAN for each email ─────────────────────────────
-  const emailToPasswordFan = new Map<string, string>();
-  for (const [email, fanMap] of emailRelMap) {
-    if (selfEmailToFan.has(email)) {
-      emailToPasswordFan.set(email, selfEmailToFan.get(email)!);
-    } else {
-      // Guardian-only: use numerically smallest FAN
-      const sorted = [...fanMap.keys()].sort((a, b) => Number(a) - Number(b));
-      if (sorted.length > 0) emailToPasswordFan.set(email, sorted[0]);
-    }
-  }
-
-  // ── 3. Read what the club already holds ──────────────────────────────────
+  // ── 2. Read what the club already holds ──────────────────────────────────
   // One query serves two jobs: it is the index the upsert matches against, and
   // it is the set the stale list is subtracted from. Doing both from the same
   // rows is what keeps the two consistent — matching registrations on the raw
@@ -404,7 +395,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     fanIdToPlayerId.set(reg.fanId, reg.playerId);
   }
 
-  // ── 4. Plan players + registrations (reads only) ─────────────────────────
+  // ── 3. Plan players + registrations (reads only) ─────────────────────────
   const rowPlans: RowPlan[] = [];
   // Registrations an earlier row has already decided to insert. Consulting
   // these is what keeps a file that lists the same FAN and team twice from
@@ -465,51 +456,77 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 5. Plan users (reads only) ───────────────────────────────────────────
-  // One query per 90 emails rather than one per email: a 300-row file carries
+  // ── 4. Plan contacts (reads only) ────────────────────────────────────────
+  // One query per 90 emails rather than one per contact: a 300-row file carries
   // hundreds of addresses, and that was hundreds of sequential round trips.
-  const existingUserByEmail = new Map<string, { id: string; createdAt: number }>();
-  const emails = [...emailRelMap.keys()];
+  // Lookups are club-scoped; matching on (playerId, email) happens in memory
+  // once fanIds have been resolved to playerIds above.
+  const existingContacts: {
+    id: string; playerId: string; email: string; sourcedAt: number;
+    state: string; relationship: "self" | "guardian";
+  }[] = [];
+  const emails = [...new Set([...contactRelMap.values()].map((c) => c.email))];
   for (const slice of inSlices(emails)) {
     try {
       const { results } = await db
         .prepare(
-          `SELECT id, email, createdAt FROM "user" WHERE email IN (${slice.map(() => '?').join(',')})`,
+          `SELECT id, playerId, email, sourcedAt, state, relationship FROM "player_contact"
+            WHERE clubSlug = ? AND email IN (${slice.map(() => '?').join(',')})`,
         )
-        .bind(...slice)
-        .all<{ id: string; email: string; createdAt: number }>();
-      for (const row of results) {
-        existingUserByEmail.set(row.email, { id: row.id, createdAt: row.createdAt });
-      }
+        .bind(clubSlug, ...slice)
+        .all<{
+          id: string; playerId: string; email: string; sourcedAt: number;
+          state: string; relationship: "self" | "guardian";
+        }>();
+      existingContacts.push(...results);
     } catch (err) {
       for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
     }
   }
 
-  const userPlans: UserPlan[] = [];
-  for (const [email, fanMap] of emailRelMap) {
-    const existing = existingUserByEmail.get(email) ?? null;
-    const existingUserId = existing?.id ?? null;
-
-    // An account an earlier part of this run created counts as neither: the
-    // client sums the parts, so calling it "already existed" here would report
-    // one parent of two children as both created and pre-existing.
-    const madeByThisRun =
-      existing !== null && runStartedAt !== null && existing.createdAt >= runStartedAt;
-
-    if (!existing) importResult.users.created++;
-    else if (!madeByThisRun) importResult.users.skipped++;
-
-    userPlans.push({
-      email,
-      existingUserId,
-      newUserId: randomId("user"),
-      passwordFan: emailToPasswordFan.get(email) ?? "",
-      fanMap,
+  const existingByPlayerEmail = new Map<string, {
+    id: string; sourcedAt: number; state: string; relationship: "self" | "guardian";
+  }>();
+  for (const row of existingContacts) {
+    existingByPlayerEmail.set(`${row.playerId}\0${row.email}`, {
+      id: row.id,
+      sourcedAt: row.sourcedAt,
+      state: row.state,
+      relationship: row.relationship,
     });
   }
 
-  // ── 6. Work out what the file leaves behind ──────────────────────────────
+  const contactPlans: ContactPlan[] = [];
+  for (const { fanId, email, relationship } of contactRelMap.values()) {
+    const playerId = fanIdToPlayerId.get(fanId);
+    // A fanId that failed player planning has no playerId yet; skip the contact
+    // rather than insert against a missing FK. The player error is already listed.
+    if (!playerId) continue;
+
+    const existing = existingByPlayerEmail.get(`${playerId}\0${email}`) ?? null;
+
+    // A contact an earlier part of this run created counts as neither: the
+    // client sums the parts, so calling it "already existed" here would report
+    // one address as both created and pre-existing across a batch boundary.
+    const madeByThisRun =
+      existing !== null && runStartedAt !== null && existing.sourcedAt >= runStartedAt;
+
+    if (!existing) importResult.contacts.created++;
+    else if (!madeByThisRun) importResult.contacts.skipped++;
+
+    contactPlans.push({
+      email,
+      fanId,
+      relationship,
+      existingContactId: existing?.id ?? null,
+      existingSourcedAt: existing?.sourcedAt ?? null,
+      existingState: existing?.state ?? null,
+      existingRelationship: existing?.relationship ?? null,
+      newContactId: randomId("pcontact"),
+    });
+  }
+
+  // ── 5. Work out what the file leaves behind ──────────────────────────────
   // Only teams the file actually covers can go stale. Without that guard a
   // single-team export would report every other team in the club as missing —
   // which is exactly what a chunk is, so a chunked import skips this entirely
@@ -538,7 +555,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const posthog = getPostHog(context.env);
 
-  // ── 7. Preview stops here — nothing above this line writes ───────────────
+  // ── 6. Preview stops here — nothing above this line writes ───────────────
   if (dryRun) {
     if (posthog) {
       await posthog.captureImmediate({
@@ -557,7 +574,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json(importResult);
   }
 
-  // ── 8. Apply players + registrations ─────────────────────────────────────
+  // ── 7. Apply players + registrations ─────────────────────────────────────
   for (const plan of rowPlans) {
     // The counters are a forecast made while planning. A write that fails has to
     // take its own count back down, or the totals contradict the error list
@@ -583,8 +600,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       if (plan.createPlayer) {
         importResult.players.created--;
         // The player row was never written, so drop the mapping too: otherwise
-        // the user pass links an account to a player that does not exist and
-        // reports a second, spurious failure for the same row.
+        // the contact pass would insert against a missing player FK and report
+        // a second, spurious failure for the same row.
         fanIdToPlayerId.delete(plan.fanId);
       }
       // Its registration never gets attempted below.
@@ -611,45 +628,66 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
   }
 
-  // ── 9. Apply users + user_player links ───────────────────────────────────
-  for (const plan of userPlans) {
+  // ── 8. Apply player_contact rows ─────────────────────────────────────────
+  // Addresses land as pending and nothing else. Account creation moves to the
+  // parent activation flow (#132); import must not create user / account /
+  // user_player rows from CSV addresses.
+  for (const plan of contactPlans) {
+    if (plan.existingContactId) {
+      // Refresh relationship from the CSV while the contact is still pending.
+      // Once confirmed / withdrawn / bounced, leave relationship alone — the
+      // parent (or bounce handling) owns that field after activation.
+      if (
+        plan.existingState === 'pending'
+        && plan.existingRelationship !== null
+        && plan.relationship !== plan.existingRelationship
+      ) {
+        try {
+          await db
+            .prepare(
+              `UPDATE "player_contact" SET relationship = ?
+                WHERE id = ? AND clubSlug = ? AND state = 'pending'`,
+            )
+            .bind(plan.relationship, plan.existingContactId, clubSlug)
+            .run();
+        } catch (err) {
+          importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+        }
+      }
+      continue;
+    }
+    const playerId = fanIdToPlayerId.get(plan.fanId);
+    if (!playerId) {
+      // Player write failed (mapping dropped); take the contact count back.
+      importResult.contacts.created--;
+      continue;
+    }
     try {
-      let userId = plan.existingUserId;
-
-      if (!userId) {
-        userId = plan.newUserId;
-        // Seeded, not full strength: see SEEDED_ROUNDS in lib/auth.ts. The
-        // member's first sign-in re-hashes it properly.
-        const hashedPassword = plan.passwordFan
-          ? await hashSeededPwd(plan.passwordFan)
-          : await hashSeededPwd(crypto.randomUUID());
-
-        await db
-          .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
-          .bind(userId, plan.email, clubSlug, nowMs(), nowMs())
-          .run();
-
-        await db
-          .prepare(`INSERT INTO "account" (id, accountId, providerId, userId, password, createdAt, updatedAt) VALUES (?, ?, 'credential', ?, ?, ?, ?)`)
-          .bind(randomId("acc"), plan.email, userId, hashedPassword, nowMs(), nowMs())
-          .run();
-      }
-
-      // Upsert user_player links
-      for (const [fanId, relationship] of plan.fanMap) {
-        const playerId = fanIdToPlayerId.get(fanId);
-        if (!playerId) continue;
-        await db
-          .prepare(`INSERT OR IGNORE INTO "user_player" (id, userId, playerId, relationship, createdAt) VALUES (?, ?, ?, ?, ?)`)
-          .bind(randomId("up"), userId, playerId, relationship, nowMs())
-          .run();
-      }
+      await db
+        .prepare(
+          `INSERT INTO "player_contact"
+             (id, clubSlug, playerId, email, relationship, state,
+              operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
+              confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
+           VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, NULL, NULL, NULL, NULL, NULL)`,
+        )
+        .bind(
+          plan.newContactId,
+          clubSlug,
+          playerId,
+          plan.email,
+          plan.relationship,
+          adminId,
+          nowMs(),
+        )
+        .run();
     } catch (err) {
-      importResult.errors.push({ fanId: plan.email, reason: String(err) });
+      importResult.contacts.created--;
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
     }
   }
 
-  // ── 10. Stamp the import so the Registrations page can age the data ───────
+  // ── 9. Stamp the import so the Registrations page can age the data ───────
   let runTotals: ImportRunTotals | null = null;
   if (part && importRunId) {
     await db
@@ -666,8 +704,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         importResult.players.created,
         importResult.registrations.created,
         importResult.registrations.updated,
-        importResult.users.created,
-        importResult.users.skipped,
+        importResult.contacts.created,
+        importResult.contacts.skipped,
         importResult.errors.length,
         nowMs(),
       )
@@ -736,8 +774,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         players_created: runTotals?.playersCreated ?? importResult.players.created,
         registrations_created: runTotals?.registrationsCreated ?? importResult.registrations.created,
         registrations_updated: runTotals?.registrationsUpdated ?? importResult.registrations.updated,
-        users_created: runTotals?.usersCreated ?? importResult.users.created,
-        users_skipped: runTotals?.usersSkipped ?? importResult.users.skipped,
+        contacts_created: runTotals?.usersCreated ?? importResult.contacts.created,
+        contacts_skipped: runTotals?.usersSkipped ?? importResult.contacts.skipped,
         error_count: runTotals?.errorCount ?? importResult.errors.length,
         stale_count: importResult.stale.count,
       },

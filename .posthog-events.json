@@ -191,7 +191,7 @@
   },
   {
     "event": "players imported",
-    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts.",
+    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and pending player_contact rows.",
     "files": [
       "functions/api/admin/import-players.ts"
     ]
