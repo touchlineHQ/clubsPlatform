@@ -103,14 +103,54 @@ different empty database and `/api/clubs` returns an empty list rather than an
 error — which is why the first spec asserts that the registry actually contains
 the demo club.
 
-Both tiers run on every pull request via `.github/workflows/e2e.yml`. `e2e-local`
-is the deterministic one and should be the required check. `e2e-preview` deploys a
-real Pages preview and runs `@smoke` against it, but is `continue-on-error`: every
-preview shares one `clubsplatform-preview` database, and that workflow does not
-migrate it, because applying migrations from an unreviewed branch would break
-preview for every other open PR. `ensureTables` self-heals a missing table but not
-a column added to an existing one, so a PR carrying that kind of migration can
-fail there while being perfectly correct.
+#### Where each tier runs
+
+**Pull requests into main** run the local tier only, via
+`.github/workflows/e2e.yml` — no credentials, no Cloudflare deployments per PR,
+deterministic enough to be a required status check.
+
+**Commits on main** run the real thing, as the `preview-e2e` job in
+`.github/workflows/main.yml`. It sits between the test suite and the production
+deploy and blocks it: migrate the preview database, deploy this commit as a
+Cloudflare preview, run `@smoke` against it, and only then migrate and deploy
+production. That ordering is what makes the gate trustworthy — the preview
+database is migrated *first*, so the suite runs against the schema the code
+expects. On a pull request it could not be, because migrating a shared database
+from an unreviewed branch would break preview for every other open PR.
+
+The preview specs must stay **read-only**: every preview deployment binds the one
+`clubsplatform-preview` database.
+
+Note the preview deploy uses `--branch=ci-preview`. It must never be
+`--branch=main` — Pages treats a deploy whose branch matches the project's
+production branch as a *production* deployment, which would ship the commit before
+the tests it is meant to gate had run.
+
+#### Cloudflare Access
+
+Preview deployments are behind Cloudflare Access, so an unauthenticated request to
+one gets a `302` to `<team>.cloudflareaccess.com` instead of the app. CI
+authenticates with an Access **service token**:
+
+| Secret | |
+|---|---|
+| `CF_ACCESS_CLIENT_ID` | Service token client id (ends `.access`) |
+| `CF_ACCESS_CLIENT_SECRET` | Service token client secret, shown once at creation |
+
+To set them up: create a service token under Zero Trust → **Access → Service
+Auth**, then add a policy to the Access application covering
+`*.clubsplatform.pages.dev` whose action is **Service Auth** and which includes
+that token. The action matters — an Allow policy will not accept service-token
+headers, which presents as a `302` even though everything looks configured.
+
+`playwright.config.ts` turns those two variables into `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` on every request when both are present, and sends nothing
+when they are not, so local runs are unaffected.
+
+While the secrets are absent the gate **skips itself with a warning** and main
+keeps shipping; it switches on as soon as both exist. The preview *migration* step
+is deliberately outside that condition, so the canary that catches a broken
+migration before production still runs either way.
 
 If a club on the preview deployment ever renders with no content, its seed was
 claimed but not written (see `functions/lib/seed.ts`). Clear the flag so the next

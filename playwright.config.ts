@@ -22,6 +22,30 @@ import { defineConfig, devices } from '@playwright/test';
  */
 const baseURL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:8788';
 
+/**
+ * Cloudflare Access service-token headers.
+ *
+ * Preview deployments of this project sit behind Access, so an unauthenticated
+ * request to one is answered with a 302 to <team>.cloudflareaccess.com rather than
+ * the app — which looks exactly like a deployment that never came up. A service
+ * token is the supported way for CI to get through without making previews public.
+ *
+ * Undefined unless both halves are present, so a local run against `pages dev`
+ * sends nothing extra. Putting them in `use` covers the browser's own /api/*
+ * fetches and the `request` fixture alike; a request context built by hand does
+ * NOT inherit this and has to pass it explicitly.
+ */
+const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
+const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+
+const extraHTTPHeaders =
+  accessClientId && accessClientSecret
+    ? {
+        'CF-Access-Client-Id': accessClientId,
+        'CF-Access-Client-Secret': accessClientSecret,
+      }
+    : undefined;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.spec.ts',
@@ -39,6 +63,7 @@ export default defineConfig({
 
   use: {
     baseURL,
+    extraHTTPHeaders,
     trace: 'on-first-retry',
     // There is no 'on-first-retry' for screenshots; 'only-on-failure' is the
     // closest equivalent and costs nothing on a green run.

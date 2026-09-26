@@ -1,25 +1,32 @@
 name: E2E
 
-# Kept separate from test.yml on purpose. That workflow is the fast gate —
-# typecheck then the vitest suite — and stays uncluttered. Splitting these out
-# also makes the required-vs-advisory distinction visible in the checks list:
-# e2e-local is deterministic and should be a required check, while e2e-preview
-# can go red for reasons that have nothing to do with the pull request (see the
-# comment on that job).
+# The local end-to-end tier, and the only one that runs on a pull request: the
+# built bundle served by `wrangler pages dev` against a throwaway local D1. No
+# credentials, so it works on forks, and a fresh database every run makes it
+# deterministic — which is what makes it worth requiring as a status check.
 #
-# There is no cross-workflow `needs`, so both jobs run alongside test.yml rather
-# than after it. That spends some runner minutes on an already-red PR in exchange
-# for parallel feedback.
+# The tier that exercises a real Cloudflare deployment lives in main.yml, as a
+# blocking gate between the test suite and the production deploy. It is not here
+# because a preview deployment is only meaningful once the code is merged: every
+# preview binds the one shared clubsplatform-preview database, and that database
+# can only be migrated safely for code that has already been reviewed.
+#
+# Kept separate from test.yml so the fast typecheck-and-vitest gate stays
+# uncluttered, and so the two show up as distinct checks.
 on:
-  pull_request
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
+# A pull request that is pushed to repeatedly does not need every intermediate
+# commit tested to completion.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # Tier A: the built bundle served by `wrangler pages dev` against a throwaway
-  # local D1. No secrets, so this runs on forks too, and a fresh database every
-  # run means it is deterministic. This is the job to gate merges on.
   e2e-local:
     name: E2E against a local preview build
     runs-on: ubuntu-latest
@@ -79,116 +86,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-local
-          path: playwright-report/
-          retention-days: 7
-
-  # Tier B: a real Cloudflare Pages preview deployment.
-  #
-  # Advisory, not a gate. Every preview binds the one shared clubsplatform-preview
-  # database, and this job deliberately does not migrate it — applying migrations
-  # from unreviewed code would break preview for every other open PR. ensureTables
-  # self-heals a missing *table*, but not a column added to an existing one, so a
-  # PR carrying that kind of migration can fail here while being perfectly
-  # correct. Hence continue-on-error, and hence the @smoke subset only: the shared
-  # database means these specs must stay read-only.
-  e2e-preview:
-    name: E2E against the Cloudflare preview deployment
-    runs-on: ubuntu-latest
-    # Secrets are empty for pull requests from forks, which would fail the deploy
-    # with an auth error rather than skip it.
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    continue-on-error: true
-    # Per-PR, and NOT the "cloudflare-pages" group main.yml uses — sharing that
-    # would let a pull request cancel a production deploy.
-    concurrency:
-      group: e2e-preview-pr-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            website/package-lock.json
-
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install website dependencies
-        run: npm ci
-        working-directory: website
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
-
-      # Same reasoning as the e2e-local build step above.
-      - name: Build
-        run: npm run build
-        working-directory: website
-        env:
-          VITE_POSTHOG_DISABLED: 'true'
-          VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
-          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
-
-      - name: Deploy preview to Cloudflare Pages
-        id: deploy
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4"
-          command: pages deploy website/dist --project-name=clubsplatform --branch=${{ github.head_ref }}
-
-      # Use the immutable per-deployment URL, never a branch alias: Cloudflare
-      # sanitizes and truncates aliases, and this repo's branch names are long and
-      # contain slashes, so the alias host is not predictable.
-      - name: Resolve the deployment URL
-        id: url
-        env:
-          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-          COMMAND_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-          COMMAND_STDERR: ${{ steps.deploy.outputs.command-stderr }}
-        run: |
-          url="$DEPLOYMENT_URL"
-          if [ -z "$url" ]; then
-            echo "deployment-url output was empty; falling back to the command output."
-            url=$(printf '%s\n%s\n' "$COMMAND_OUTPUT" "$COMMAND_STDERR" \
-              | grep -oE 'https://[0-9a-f]+\.clubsplatform\.pages\.dev' \
-              | head -n 1)
-          fi
-          if [ -z "$url" ]; then
-            echo "::error::Could not determine the preview deployment URL."
-            exit 1
-          fi
-          echo "Preview deployment: $url"
-          echo "E2E_BASE_URL=$url" >> "$GITHUB_ENV"
-
-      # Poll /api/clubs rather than /: the SPA shell answers 200 before D1 is
-      # reachable, and requiring the demo club in the body catches cold start,
-      # propagation and an empty registry in one check.
-      - name: Wait for the deployment to serve the club registry
-        run: |
-          for i in $(seq 1 30); do
-            if curl -fsS "$E2E_BASE_URL/api/clubs" | grep -q '"slug":"demo"'; then
-              echo "Ready after $((i * 2))s."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::$E2E_BASE_URL/api/clubs did not report the demo club within 60s."
-          curl -sS -o - "$E2E_BASE_URL/api/clubs" | head -c 500 || true
-          exit 1
-
-      - name: Run E2E smoke tests
-        run: npm run e2e:smoke
-
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-preview
           path: playwright-report/
           retention-days: 7

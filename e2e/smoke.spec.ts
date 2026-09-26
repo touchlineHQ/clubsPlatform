@@ -21,8 +21,13 @@ test.describe('anonymous browse of the demo club @smoke', () => {
    * seeding as page-load latency.
    */
   test.beforeAll(async ({ playwright }, testInfo) => {
+    // A hand-built request context inherits none of `use`, so baseURL and the
+    // Cloudflare Access headers both have to be passed through. Without the
+    // headers this hook is the first thing to hit a 302 from Access, which is a
+    // confusing place to discover a missing service token.
     const ctx = await playwright.request.newContext({
       baseURL: testInfo.project.use.baseURL,
+      extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,
     });
     const res = await ctx.get('/api/club', { headers: { 'X-Club-Slug': DEMO_SLUG } });
     expect(res.ok(), 'GET /api/club should succeed so the club is seeded').toBeTruthy();
