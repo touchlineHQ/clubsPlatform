@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import {
-  makeContext, makeDb, adminSession, managerSession, memberSession,
+  makeContext, makeDb, adminSession, platformAdminSession, managerSession, memberSession,
   postReq, deleteReq,
 } from '../test-utils';
 
@@ -147,7 +147,8 @@ describe('onRequestPost — validation', () => {
   });
 
   it('returns 400 without an X-Club-Slug header', async () => {
-    const res = await onRequestPost(mergeCtx(postDb(), DEFAULT_BODY, {}) as any);
+    mockGetSession.mockResolvedValue(platformAdminSession);
+    const res = await onRequestPost(mergeCtx(postDb(), DEFAULT_BODY, { 'X-Club-Slug': '' }) as any);
     expect(res.status).toBe(400);
   });
 

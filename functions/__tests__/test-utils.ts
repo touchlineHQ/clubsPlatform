@@ -138,14 +138,38 @@ export function makeContext(
 }
 
 // ─── Request builders ─────────────────────────────────────────────────────────
+// Club-bound admin fixtures must identify the same club as adminSession. Keep
+// this default in the shared builders so ordinary admin requests exercise the
+// handler rather than failing requireAdmin before their assertions run.
+const DEFAULT_ADMIN_CLUB_SLUG = 'test-club';
+const CLUB_SCOPED_ADMIN_PATHS = new Set([
+  '/api/teams',
+  '/api/news',
+  '/api/gallery',
+  '/api/matchday',
+  '/api/registration',
+  '/api/committee',
+  '/api/content',
+  '/api/my-registrations',
+]);
+
+function requestHeaders(path: string, headers: Record<string, string>): Record<string, string> {
+  const pathname = path.split('?', 1)[0];
+  const isClubScopedAdmin = pathname.startsWith('/api/admin/') || CLUB_SCOPED_ADMIN_PATHS.has(pathname);
+  if (!isClubScopedAdmin || Object.keys(headers).some((key) => key.toLowerCase() === 'x-club-slug')) {
+    return headers;
+  }
+  return { 'X-Club-Slug': DEFAULT_ADMIN_CLUB_SLUG, ...headers };
+}
+
 export function getReq(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`https://example.com${path}`, { headers });
+  return new Request(`https://example.com${path}`, { headers: requestHeaders(path, headers) });
 }
 
 export function postReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }
@@ -153,19 +177,19 @@ export function postReq(path: string, body: unknown, headers: Record<string, str
 export function patchReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }
 
 export function deleteReq(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`https://example.com${path}`, { method: 'DELETE', headers });
+  return new Request(`https://example.com${path}`, { method: 'DELETE', headers: requestHeaders(path, headers) });
 }
 
 export function putReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }
