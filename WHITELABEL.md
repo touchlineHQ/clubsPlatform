@@ -6,8 +6,8 @@ This site is designed to work for **any grassroots football club**. No coding re
 
 1. **Fork** this repository on GitHub
 2. **Set up Cloudflare Pages** — connect your fork, set build command to `cd website && npm ci && npm run build`, output to `website/dist`
-3. **Create a D1 database** — `npx wrangler d1 create clubsplatform-auth`, add the ID to `wrangler.toml`
-4. **Set secrets** in Cloudflare dashboard: `BETTER_AUTH_SECRET` (random string), `GITHUB_TOKEN` (repo write access)
+3. **Create a D1 database** — `npx wrangler d1 create clubsplatform-auth`, then add the ID to `wrangler.toml` under **both** `[env.production]` and `[env.preview]`; `vars` and bindings are non-inheritable for Pages, so a value set only at the top level reaches neither
+4. **Set secrets** with `npx wrangler pages secret put BETTER_AUTH_SECRET` (a random string)
 5. **Push to main** — your site deploys automatically
 
 ---
@@ -28,7 +28,7 @@ UPDATE user SET role = 'admin' WHERE email = 'your-email@example.com';
 
 ## Site Admin (Content Editor)
 
-Admin users can edit all site content at `/#/customise`. Changes are saved directly to the GitHub repo, triggering an automatic redeploy.
+Admin users can edit all site content at `/#/customise`. Changes are saved to the site's database and take effect immediately — nothing is committed to the repository and no redeploy happens.
 
 | Tab | What you can edit |
 |-----|-------------------|
@@ -46,7 +46,7 @@ Admin users can edit all site content at `/#/customise`. Changes are saved direc
 2. Click your name in the header, then **Site Admin**
 3. Edit content through the web-based forms
 4. Click **Apply Preview** to see changes live before saving
-5. Click **Save to Site** — changes are committed to GitHub and the site redeploys
+5. Click **Save to Site** — changes are saved to the database and are live straight away
 
 ---
 
@@ -76,10 +76,15 @@ The entire site theme updates automatically — buttons, badges, links, icons al
 
 The site deploys to Cloudflare Pages with serverless Functions for authentication.
 
+These steps are for a **fork** you are setting up yourself, using Cloudflare's Git
+integration. Note that the upstream repository does not deploy this way — it uploads
+directly from GitHub Actions, so its dashboard build settings never run. See the
+README's Deployment section if you are working on the upstream project.
+
 1. Connect your fork to **Cloudflare Pages** in the dashboard
 2. Set build command: `cd website && npm ci && npm run build`
 3. Set build output: `website/dist`
-4. Add D1 database binding (`DB`) and environment secrets (`BETTER_AUTH_SECRET`, `GITHUB_TOKEN`)
+4. Set secrets with `npx wrangler pages secret put BETTER_AUTH_SECRET`. The `DB` binding is **not** set in the dashboard — it comes from `wrangler.toml`, whose presence also makes the dashboard's Functions fields read-only
 5. Push to `main` — the site builds and deploys automatically
 
 ---
@@ -90,7 +95,7 @@ If multiple clubs want to share a single repository (e.g. a league or umbrella o
 
 1. Each club creates a branch (e.g. `club/riverside-fc`)
 2. Each branch has its own `website/public/data/` and `website/public/images/`
-3. Set up separate GitHub Pages deployments per branch, or use separate forks
+3. Set up a separate Cloudflare Pages project per branch, or use separate forks
 
 This approach lets clubs pull upstream improvements (new features, bug fixes) from the `main` branch while keeping their own customisations.
 
@@ -130,7 +135,7 @@ You can edit these directly in GitHub's web editor — no local setup needed.
 To pull new features and fixes from the original repo:
 
 ```bash
-git remote add upstream https://github.com/adamsuk/ELBantams.git
+git remote add upstream https://github.com/touchlineHQ/clubsPlatform.git
 git fetch upstream
 git merge upstream/main
 ```
