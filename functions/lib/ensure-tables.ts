@@ -53,6 +53,12 @@ export const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
+  // Contact email held separately from the auth identity — see #131 / epic #128.
+  // state defaults pending; opt-ins default off; marketing never settable by admin.
+  `CREATE TABLE IF NOT EXISTS "player_contact" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "email" TEXT NOT NULL, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "state" TEXT NOT NULL DEFAULT 'pending' CHECK("state" IN ('pending', 'confirmed', 'withdrawn', 'bounced')), "operationalOptIn" INTEGER NOT NULL DEFAULT 0, "marketingOptIn" INTEGER NOT NULL DEFAULT 0, "sourcedBy" TEXT, "sourcedAt" INTEGER NOT NULL, "signoffId" TEXT, "confirmedAt" INTEGER, "withdrawnAt" INTEGER, "activationTokenHash" TEXT, "activationExpiresAt" INTEGER, UNIQUE("clubSlug", "playerId", "email"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_clubSlug" ON "player_contact" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_playerId" ON "player_contact" ("playerId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_email" ON "player_contact" ("email")`,
   `CREATE TABLE IF NOT EXISTS "club_secret" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "key" TEXT NOT NULL, "encryptedValue" TEXT NOT NULL, "iv" TEXT NOT NULL, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "uq_club_secret_slug_key" ON "club_secret" (COALESCE("clubSlug",''), "key")`,
   `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,

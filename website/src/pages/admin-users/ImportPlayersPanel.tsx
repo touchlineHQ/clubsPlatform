@@ -21,12 +21,12 @@ import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../
 export const IMPORT_CHUNK_ROWS = 15;
 
 /**
- * Distinct addresses per write request — the limit that actually binds.
+ * Distinct addresses per write request.
  *
- * Each address is an account the server seeds, and 15 rows is 30 of them on real
- * data but 165 on a file carrying the maximum parent addresses on every row,
- * which overruns the CPU budget however few the rows. Batching on both means a
- * request fits whatever shape the file is.
+ * Each address becomes one or more pending player_contact rows. 15 rows is ~30
+ * addresses on real data but 165 at the worst the parent-email limit allows.
+ * Batching on both rows and addresses keeps a request inside the Workers
+ * subrequest budget whatever shape the file is.
  *
  * IMPORT_LIMITS.maxCommitEmails mirrors this; the server refuses a larger write.
  */
@@ -77,7 +77,7 @@ interface ImportResult {
   runId?: string;
   players: { created: number };
   registrations: { created: number; updated: number };
-  users: { created: number; skipped: number };
+  contacts: { created: number; skipped: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -244,7 +244,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       ok: true,
       players: { created: 0 },
       registrations: { created: 0, updated: 0 },
-      users: { created: 0, skipped: 0 },
+      contacts: { created: 0, skipped: 0 },
       errors: [],
       stale: preview.stale,
     };
@@ -252,9 +252,9 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
     try {
       for (const [index, chunk] of chunks.entries()) {
-        // Sequential, never parallel: two chunks carrying the same parent's email
-        // would both find no user and both create one, breaking UNIQUE(email) and
-        // paying the password hash twice.
+        // Sequential, never parallel: two chunks carrying the same player+email
+        // would both find no contact and both insert, racing UNIQUE(clubSlug,
+        // playerId, email).
         const res = await fetch('/api/admin/import-players', {
           method: 'POST',
           headers: { ...clubHeaders, 'Content-Type': 'application/json' },
@@ -277,8 +277,8 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
         totals.players.created += data.players.created;
         totals.registrations.created += data.registrations.created;
         totals.registrations.updated += data.registrations.updated;
-        totals.users.created += data.users.created;
-        totals.users.skipped += data.users.skipped;
+        totals.contacts.created += data.contacts.created;
+        totals.contacts.skipped += data.contacts.skipped;
         totals.errors.push(...data.errors);
 
         setImportedSoFar(chunks.slice(0, index + 1).reduce((n, c) => n + c.length, 0));
@@ -333,7 +333,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
           <Group gap="xs">
             <Badge color="blue" radius="xl" variant="light">{summary.uniqueFans} players</Badge>
-            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} email accounts</Badge>
+            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} Contact emails</Badge>
             <Badge color="grape" radius="xl" variant="light">{summary.guardianOnlyEmails} guardians</Badge>
             <Badge color="orange" radius="xl" variant="light">{summary.uniqueTeams} teams</Badge>
           </Group>
@@ -444,7 +444,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             <Stack gap={4}>
               <Text size="sm">New players: <b>{result.players.created}</b></Text>
               <Text size="sm">Registrations: <b>{result.registrations.created}</b> created, <b>{result.registrations.updated}</b> updated</Text>
-              <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
+              <Text size="sm">Contact emails: <b>{result.contacts.created}</b> pending, <b>{result.contacts.skipped}</b> already held</Text>
               <Text size="sm">No longer in the file: <b>{result.stale.count}</b></Text>
             </Stack>
           </Alert>
