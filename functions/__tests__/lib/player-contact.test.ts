@@ -172,6 +172,12 @@ describe('emailForSend / isContactSendable', () => {
       { state: 'pending', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
     )).toBe(false);
     expect(isContactSendable(
+      { state: 'withdrawn', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
+    )).toBe(false);
+    expect(isContactSendable(
+      { state: 'bounced', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
+    )).toBe(false);
+    expect(isContactSendable(
       { state: 'confirmed', operationalOptIn: 0, marketingOptIn: 0 }, 'operational',
     )).toBe(false);
     expect(isContactSendable(
