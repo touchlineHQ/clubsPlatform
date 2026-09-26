@@ -63,6 +63,64 @@ the root one. Covering tests means a third project to reconcile that split.
 
 There is no `npm run lint` yet — no linter is configured in this repo.
 
+### End-to-end tests
+
+Playwright drives the real thing — a browser against the built bundle, the Pages
+Functions and D1 — which is the one seam the vitest suite cannot see. Specs live
+in `e2e/` as `*.spec.ts`.
+
+```bash
+npm run e2e          # starts its own server, runs everything
+npm run e2e:smoke    # only the @smoke subset
+npx playwright show-report
+```
+
+`npm run e2e` needs no running server and no credentials: `e2e:serve` applies the
+migrations to a throwaway local D1 under `.wrangler/e2e-state`, then serves
+`website/dist` with `wrangler pages dev`. **Build first** — it serves `dist`, not
+source:
+
+```bash
+cd website && npm run build
+```
+
+To point the same specs at something already deployed — a Cloudflare preview, say
+— set `E2E_BASE_URL`, which also stops Playwright starting a server of its own:
+
+```bash
+E2E_BASE_URL=https://<deployment>.clubsplatform.pages.dev npm run e2e:smoke
+```
+
+Reset the throwaway database with `rm -rf .wrangler/e2e-state`.
+
+**The `--d1` UUID in `e2e:serve` must stay equal to
+`[env.preview].d1_databases.database_id` in `wrangler.toml`.** `wrangler pages dev`
+rejects `--env` and only ever reads the top-level config, which deliberately has
+no D1 binding, so the binding is supplied on the command line instead. Wrangler
+keys local D1 storage by that id, which is how `e2e:migrate` and `e2e:serve` end
+up talking to the same file. If they ever diverge, the schema is created in a
+different empty database and `/api/clubs` returns an empty list rather than an
+error — which is why the first spec asserts that the registry actually contains
+the demo club.
+
+Both tiers run on every pull request via `.github/workflows/e2e.yml`. `e2e-local`
+is the deterministic one and should be the required check. `e2e-preview` deploys a
+real Pages preview and runs `@smoke` against it, but is `continue-on-error`: every
+preview shares one `clubsplatform-preview` database, and that workflow does not
+migrate it, because applying migrations from an unreviewed branch would break
+preview for every other open PR. `ensureTables` self-heals a missing table but not
+a column added to an existing one, so a PR carrying that kind of migration can
+fail there while being perfectly correct.
+
+If a club on the preview deployment ever renders with no content, its seed was
+claimed but not written (see `functions/lib/seed.ts`). Clear the flag so the next
+request re-seeds:
+
+```sh
+npx wrangler d1 execute clubsplatform-preview --remote --env preview \
+  --command "UPDATE club_config SET seeded=0 WHERE slug='demo'"
+```
+
 ## Environment Variables
 
 Set in `wrangler.toml` under `[vars]`:
