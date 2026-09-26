@@ -78,7 +78,7 @@ export function getClubSlug(request: Request): string | null {
 /**
  * Verify the request has admin authentication and return the session.
  * Returns an error response for unauthenticated or non-admin users.
- * In multi-club mode, also enforces that the admin's club matches the request club.
+ * Always enforces that a club-bound admin's club matches the request club.
  */
 export async function requireAdmin(
   context: EventContext<Env, string, unknown>,
@@ -102,16 +102,14 @@ export async function requireAdmin(
     } as const;
   }
 
-  // In multi-club mode, verify the admin's club matches the request's club.
+  // Enforce club scope regardless of MULTI_CLUB: multi-club rows can exist with the flag off.
   // A user with clubSlug = null is a platform superadmin and may access any club.
-  if (isMultiClubMode(context.env)) {
-    const userClubSlug = (user.clubSlug as string | null) ?? null;
-    const requestClubSlug = getClubSlug(context.request);
-    if (userClubSlug !== null && userClubSlug !== requestClubSlug) {
-      return {
-        error: json({ error: "Access denied: club mismatch" }, { status: 403 }),
-      } as const;
-    }
+  const userClubSlug = (user.clubSlug as string | null) ?? null;
+  const requestClubSlug = getClubSlug(context.request);
+  if (userClubSlug !== null && userClubSlug !== requestClubSlug) {
+    return {
+      error: json({ error: "Access denied: club mismatch" }, { status: 403 }),
+    } as const;
   }
 
   return { session } as const;
