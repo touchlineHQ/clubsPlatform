@@ -28,6 +28,21 @@
     ]
   },
   {
+    "event": "club email signoff accepted",
+    "description": "A club admin independently accepts all three contact-email liabilities under the current policy wording, enabling address collection on import.",
+    "files": [
+      "functions/api/admin/email-signoff.ts",
+      "functions/api/clubs/register.ts"
+    ]
+  },
+  {
+    "event": "club email signoff prompted",
+    "description": "Customise shows the blocking contact-email sign-off prompt because the club has no acceptance under the current policy version.",
+    "files": [
+      "website/src/components/customize/EmailSignoffPrompt.tsx"
+    ]
+  },
+  {
     "event": "club published",
     "description": "An admin takes their club's site live from the Customise page, making it visible to everyone.",
     "files": [
@@ -88,6 +103,13 @@
     "description": "A GoCardless subscription webhook. The suffix is the GoCardless action (created, payment_created, customer_approval_granted, cancelled, finished).",
     "files": [
       "functions/api/gocardless/webhook.ts"
+    ]
+  },
+  {
+    "event": "import contact emails dropped",
+    "description": "An FA player import carried contact emails but the club has no current email sign-off, so addresses were stripped while registration work continued.",
+    "files": [
+      "functions/api/admin/import-players.ts"
     ]
   },
   {

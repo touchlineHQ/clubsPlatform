@@ -2,6 +2,13 @@ import { ensureTables } from "../../lib/ensure-tables";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
+import {
+  parseSignoffTicks,
+  recordEmailSignoff,
+  requestIp,
+  SignoffIncompleteError,
+  EMAIL_SIGNOFF_POLICY_VERSION,
+} from "../../lib/club-email-signoff";
 
 function slugify(name: string): string {
   return name
@@ -27,11 +34,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const { session } = result;
   const userId = session.user.id as string;
 
-  const body = (await context.request.json()) as Partial<{ clubName: string }>;
+  const body = (await context.request.json()) as Partial<{
+    clubName: string;
+    emailSignoff: unknown;
+  }>;
   const clubName = body.clubName?.trim() ?? "";
 
   if (!clubName) {
     return json({ error: "clubName is required" }, { status: 400 });
+  }
+
+  // Three independent liabilities — no bundled accept-all. Required at
+  // registration so a new club cannot collect contact emails unsigned (#130).
+  const ticks = parseSignoffTicks(body.emailSignoff);
+  if (!ticks) {
+    return json(
+      {
+        error:
+          "emailSignoff requires parental_consent, operational_split and right_to_object independently true",
+      },
+      { status: 400 },
+    );
   }
 
   let slug = slugify(clubName);
@@ -70,6 +93,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     .bind(slug, userId)
     .run();
 
+  try {
+    await recordEmailSignoff(context.env.DB, {
+      clubSlug: slug,
+      userId,
+      ipAddress: requestIp(context.request),
+      ticks,
+    });
+  } catch (err) {
+    if (err instanceof SignoffIncompleteError) {
+      return json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
+
   const posthog = getPostHog(context.env);
   if (posthog) {
     await posthog.captureImmediate({
@@ -77,6 +114,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       event: 'club registered',
       ...clubGroups(slug),
       properties: { club_slug: slug, club_name: clubName },
+    });
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'club email signoff accepted',
+      ...clubGroups(slug),
+      properties: {
+        club_slug: slug,
+        policy_version: EMAIL_SIGNOFF_POLICY_VERSION,
+        source: 'registration',
+      },
     });
   }
 

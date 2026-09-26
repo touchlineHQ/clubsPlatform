@@ -2,6 +2,10 @@ import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../.
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import { normaliseTeamName } from "../../lib/team-name";
+import {
+  currentSignoffAcceptanceId,
+  hasCurrentEmailSignoff,
+} from "../../lib/club-email-signoff";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -27,7 +31,7 @@ interface ImportResult {
   /** Player identity rows inserted. A returning player counts in neither field. */
   players: { created: number };
   registrations: { created: number; updated: number };
-  contacts: { created: number; skipped: number };
+  contacts: { created: number; skipped: number; dropped: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -331,7 +335,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0 },
     registrations: { created: 0, updated: 0 },
-    contacts: { created: 0, skipped: 0 },
+    contacts: { created: 0, skipped: 0, dropped: 0 },
     errors: [],
     stale: { count: 0, rows: [] },
   };
@@ -341,14 +345,32 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // One contact row per player×address at this club. The same parent of two
   // siblings therefore yields two rows — that is intentional (UNIQUE is on
   // clubSlug+playerId+email, not on email alone).
+  //
+  // Gate (#130): without a current club email sign-off, strip every address.
+  // Registration work (FAN / team) is contract-basis and still runs; we only
+  // refuse to collect Direct PII the club has not certified a basis for.
+  const hasSignoff = await hasCurrentEmailSignoff(db, clubSlug);
+  const signoffAcceptanceId = hasSignoff
+    ? await currentSignoffAcceptanceId(db, clubSlug)
+    : null;
+
   const contactKey = (fanId: string, email: string) => `${fanId}\0${email}`;
   const contactRelMap = new Map<string, { fanId: string; email: string; relationship: "self" | "guardian" }>();
 
+  let addressesInFile = 0;
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
     if (!fanId) continue;
 
     const playerEmail = String(row.playerEmail ?? "").trim().toLowerCase();
+    if (playerEmail) addressesInFile++;
+
+    for (const raw of row.parentEmails ?? []) {
+      if (raw.trim()) addressesInFile++;
+    }
+
+    if (!hasSignoff) continue;
+
     if (playerEmail) {
       contactRelMap.set(contactKey(fanId, playerEmail), {
         fanId, email: playerEmail, relationship: "self",
@@ -364,6 +386,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         contactRelMap.set(key, { fanId, email: pe, relationship: "guardian" });
       }
     }
+  }
+
+  if (!hasSignoff && addressesInFile > 0) {
+    importResult.contacts.dropped = addressesInFile;
   }
 
   // ── 2. Read what the club already holds ──────────────────────────────────
@@ -568,8 +594,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           to_create: importResult.registrations.created,
           to_update: importResult.registrations.updated,
           stale_count: importResult.stale.count,
+          contacts_dropped: importResult.contacts.dropped,
         },
       });
+      if (importResult.contacts.dropped > 0) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'import contact emails dropped',
+          ...clubGroups(clubSlug),
+          properties: {
+            club_slug: clubSlug,
+            contacts_dropped: importResult.contacts.dropped,
+            dry_run: true,
+            reason: 'club_email_signoff_missing',
+          },
+        });
+      }
     }
     return json(importResult);
   }
@@ -669,7 +709,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
              (id, clubSlug, playerId, email, relationship, state,
               operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
               confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
-           VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, NULL, NULL, NULL, NULL, NULL)`,
+           VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL)`,
         )
         .bind(
           plan.newContactId,
@@ -679,6 +719,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           plan.relationship,
           adminId,
           nowMs(),
+          signoffAcceptanceId,
         )
         .run();
     } catch (err) {
@@ -776,11 +817,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         registrations_updated: runTotals?.registrationsUpdated ?? importResult.registrations.updated,
         contacts_created: runTotals?.usersCreated ?? importResult.contacts.created,
         contacts_skipped: runTotals?.usersSkipped ?? importResult.contacts.skipped,
+        contacts_dropped: importResult.contacts.dropped,
         error_count: runTotals?.errorCount ?? importResult.errors.length,
         stale_count: importResult.stale.count,
       },
     });
   }
 
+  if (posthog && importResult.contacts.dropped > 0 && isFinalPart) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'import contact emails dropped',
+      ...clubGroups(clubSlug),
+      properties: {
+        club_slug: clubSlug,
+        contacts_dropped: importResult.contacts.dropped,
+        dry_run: false,
+        reason: 'club_email_signoff_missing',
+      },
+    });
+  }
+
   return json(importResult);
 };
+

@@ -55,7 +55,7 @@ const previewBody = (over: Record<string, unknown> = {}) => ({
   ok: true,
   players: { created: 1 },
   registrations: { created: 2, updated: 3 },
-  contacts: { created: 0, skipped: 0 },
+  contacts: { created: 0, skipped: 0, dropped: 0 },
   errors: [],
   stale: { count: 0, rows: [] },
   ...over,
@@ -281,7 +281,7 @@ describe('ImportPlayersPanel chunked commit', () => {
     await commitFileOf(BIG_FILE, previewBody({
       players: { created: 1 },
       registrations: { created: 2, updated: 3 },
-      contacts: { created: 1, skipped: 1 },
+      contacts: { created: 1, skipped: 1, dropped: 0 },
       errors: [],
     }));
 

@@ -15,6 +15,14 @@ vi.mock('../../lib/posthog', () => ({
   clubGroups: (clubSlug: string) => ({ groups: { club: clubSlug } }),
 }));
 
+const mockHasCurrentEmailSignoff = vi.hoisted(() => vi.fn(async () => true));
+const mockCurrentSignoffAcceptanceId = vi.hoisted(() => vi.fn(async () => 'emsign_test'));
+vi.mock('../../lib/club-email-signoff', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/club-email-signoff')>()),
+  hasCurrentEmailSignoff: mockHasCurrentEmailSignoff,
+  currentSignoffAcceptanceId: mockCurrentSignoffAcceptanceId,
+}));
+
 beforeEach(() => {
   mockGetPostHog.mockReturnValue(null);
 });
@@ -205,6 +213,8 @@ describe('import-players POST', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   it('imports players and returns ok with created/updated counts', async () => {
@@ -432,6 +442,8 @@ describe('import-players POST — preview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   it('writes nothing when dryRun is true', async () => {
@@ -491,6 +503,8 @@ describe('import-players POST — stale registrations', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   it('lists a registration the file no longer mentions', async () => {
@@ -553,6 +567,8 @@ describe('import-players POST — counters and the import stamp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   it('counts a new team for an existing player as a registration, not a player', async () => {
@@ -640,6 +656,8 @@ describe('import-players POST — an address-heavy write is refused', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   /** Few rows, but every address on them is a contact to insert. */
@@ -686,6 +704,8 @@ describe('import-players POST — a full batch fits the subrequest budget', () =
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   /** Workers Free allows this many subrequests to internal services per request. */
@@ -716,6 +736,8 @@ describe('import-players POST — an unchunked commit is refused', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   /** A file bigger than one batch, as an out-of-date page would send it. */
@@ -765,6 +787,8 @@ describe('import-players POST — chunked writes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
   });
 
   const part = (index: number, total: number, runId?: string) => ({ index, total, ...(runId ? { runId } : {}) });
@@ -919,7 +943,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 0, dropped: 0 });
   });
 
   it('still counts a contact that predates the run as already-held', async () => {
@@ -933,7 +957,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
   });
 
   it('counts a shared parent across two players as two contacts', async () => {
@@ -1002,6 +1026,8 @@ describe('import-players POST — player_contact on real SQLite', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_test');
     sqlite = createSchemaDb();
   });
 
@@ -1052,7 +1078,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n).toBe(1);
   });
 
@@ -1072,7 +1098,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
     const contact = sqlite.prepare(
       `SELECT relationship, state FROM "player_contact" WHERE id = 'pc_1'`,
     ).get() as { relationship: string; state: string };
@@ -1109,7 +1135,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 3 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 3, dropped: 0 });
     const rows = sqlite.prepare(
       `SELECT id, relationship, state FROM "player_contact" ORDER BY id`,
     ).all() as { id: string; relationship: string; state: string }[];
@@ -1281,5 +1307,67 @@ describe('import-fixtures POST', () => {
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(401);
+  });
+});
+
+
+// ─── import-players POST — email sign-off gate (#130) ─────────────────────────
+
+describe('import-players POST — email sign-off gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+    mockHasCurrentEmailSignoff.mockResolvedValue(false);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue(null);
+  });
+
+  it('strips contact emails when the club has no current sign-off and reports dropped', async () => {
+    const db = dbHolding([]);
+    const { res, body } = await runImport(
+      db,
+      [
+        row({
+          fanId: 'FAN001',
+          playerEmail: 'player@example.com',
+          parentEmails: ['parent@example.com'],
+        }),
+      ],
+    );
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.contacts.dropped).toBe(2);
+    expect(body.contacts.created).toBe(0);
+    expect(body.registrations.created).toBe(1);
+    expect(prepared(db).some(p => /INSERT INTO "player_contact"/.test(p.sql))).toBe(false);
+  });
+
+  it('still completes registration work when addresses are stripped', async () => {
+    const db = dbHolding([]);
+    const { body } = await runImport(
+      db,
+      [row({ fanId: 'FAN009', parentEmails: ['a@x.com', 'b@x.com'] })],
+      true,
+    );
+
+    expect(body.contacts.dropped).toBe(2);
+    expect(body.registrations.created).toBe(1);
+    expect(writes(db)).toEqual([]);
+  });
+
+  it('collects contacts when a current sign-off is held', async () => {
+    mockHasCurrentEmailSignoff.mockResolvedValue(true);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue('emsign_held');
+    const db = dbHolding([]);
+    const { body } = await runImport(
+      db,
+      [row({ playerEmail: 'p@example.com', parentEmails: ['g@example.com'] })],
+    );
+
+    expect(body.contacts.dropped).toBe(0);
+    expect(body.contacts.created).toBeGreaterThanOrEqual(1);
+    const insert = prepared(db).find(p => /INSERT INTO "player_contact"/.test(p.sql));
+    expect(insert).toBeTruthy();
+    expect(insert!.bindings).toContain('emsign_held');
   });
 });

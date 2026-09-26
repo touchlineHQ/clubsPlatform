@@ -77,7 +77,7 @@ interface ImportResult {
   runId?: string;
   players: { created: number };
   registrations: { created: number; updated: number };
-  contacts: { created: number; skipped: number };
+  contacts: { created: number; skipped: number; dropped: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -244,7 +244,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
       ok: true,
       players: { created: 0 },
       registrations: { created: 0, updated: 0 },
-      contacts: { created: 0, skipped: 0 },
+      contacts: { created: 0, skipped: 0, dropped: 0 },
       errors: [],
       stale: preview.stale,
     };
@@ -279,6 +279,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
         totals.registrations.updated += data.registrations.updated;
         totals.contacts.created += data.contacts.created;
         totals.contacts.skipped += data.contacts.skipped;
+        totals.contacts.dropped += data.contacts.dropped ?? 0;
         totals.errors.push(...data.errors);
 
         setImportedSoFar(chunks.slice(0, index + 1).reduce((n, c) => n + c.length, 0));
@@ -308,7 +309,25 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
 
   return (
     <Stack gap="md">
-      {!rows && !result && <FileDropzone onFile={handleFile} />}
+      {!rows && !result && (
+        <>
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="gray"
+            radius="md"
+            title="Contact emails need a club sign-off"
+          >
+            <Text size="sm">
+              Addresses in the FA file are only kept when the club has accepted
+              the current three contact-email liabilities on the Customise page.
+              Without that sign-off, FAN / team / registration data still imports,
+              but every playerEmail and parentEmails address is stripped
+              server-side and counted as dropped.
+            </Text>
+          </Alert>
+          <FileDropzone onFile={handleFile} />
+        </>
+      )}
 
       {parseErrors.length > 0 && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not parse file">
@@ -399,6 +418,11 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
                 >
                   {preview.stale.count} no longer in file
                 </Badge>
+                {(preview.contacts.dropped ?? 0) > 0 && (
+                  <Badge color="red" radius="xl" variant="light">
+                    {preview.contacts.dropped} contact emails will be dropped (no sign-off)
+                  </Badge>
+                )}
               </Group>
 
               {preview.stale.count > 0 && <StaleTable rows={preview.stale.rows} />}
@@ -444,7 +468,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             <Stack gap={4}>
               <Text size="sm">New players: <b>{result.players.created}</b></Text>
               <Text size="sm">Registrations: <b>{result.registrations.created}</b> created, <b>{result.registrations.updated}</b> updated</Text>
-              <Text size="sm">Contact emails: <b>{result.contacts.created}</b> pending, <b>{result.contacts.skipped}</b> already held</Text>
+              <Text size="sm">Contact emails: <b>{result.contacts.created}</b> pending, <b>{result.contacts.skipped}</b> already held{(result.contacts.dropped ?? 0) > 0 ? <>, <b>{result.contacts.dropped}</b> dropped (no club sign-off)</> : null}</Text>
               <Text size="sm">No longer in the file: <b>{result.stale.count}</b></Text>
             </Stack>
           </Alert>

@@ -16,6 +16,7 @@ import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
 import { SaveButton } from '../components/customize/SaveButton';
 import { PublishToggle } from '../components/customize/PublishToggle';
+import { EmailSignoffPrompt } from '../components/customize/EmailSignoffPrompt';
 import { useClub } from '../context/ClubContext';
 import { captureEvent } from '../lib/posthog';
 import { PageHeader } from '../components/club/PageHeader';
@@ -112,6 +113,8 @@ export function CustomizePage({
       {onPublishedChange && (
         <PublishToggle published={published} onPublishedChange={onPublishedChange} />
       )}
+
+      <EmailSignoffPrompt />
 
       <Paper p="md" radius="md" withBorder>
         <Group justify="space-between" wrap="wrap">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Anchor, Badge, Box, Button, Container, Group, Menu, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, PasswordInput,
@@ -14,6 +14,12 @@ import type { ClubEntry } from '../types';
 import { signUp, signOut } from '../auth-client';
 import { LoginForm } from '../components/LoginForm';
 import { useAuth, type AuthUser } from '../context/AuthContext';
+import {
+  EmailSignoffCheckboxes,
+  allSignoffTicksSet,
+  type EmailSignoffLiability,
+  type EmailSignoffTicks,
+} from '../components/EmailSignoffCheckboxes';
 
 const DEMO_SLUG = 'demo';
 
@@ -637,11 +643,37 @@ const AuthCard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [liabilities, setLiabilities] = useState<EmailSignoffLiability[]>([]);
+  const [signoffTicks, setSignoffTicks] = useState<EmailSignoffTicks>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/email-signoff-policy');
+        if (!res.ok) return;
+        const data = await res.json() as { liabilities?: EmailSignoffLiability[] };
+        if (!cancelled && data.liabilities) {
+          setLiabilities(data.liabilities);
+          const initial: EmailSignoffTicks = {};
+          for (const l of data.liabilities) initial[l.id] = false;
+          setSignoffTicks(initial);
+        }
+      } catch {
+        // Register will still require the ticks server-side.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
+    if (liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks)) {
+      setError('Please independently accept each contact-email liability before creating your club.');
+      return;
+    }
     setLoading(true);
     try {
       const result = await signUp.email({ name, email, password });
@@ -650,10 +682,13 @@ const AuthCard = () => {
         return;
       }
 
+      const emailSignoff: Record<string, boolean> = {};
+      for (const l of liabilities) emailSignoff[l.id] = signoffTicks[l.id] === true;
+
       const res = await fetch('/api/clubs/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clubName }),
+        body: JSON.stringify({ clubName, emailSignoff }),
       });
       const data = await res.json() as { ok?: boolean; slug?: string; error?: string };
       if (!res.ok) {
@@ -713,7 +748,33 @@ const AuthCard = () => {
               onChange={e => setPassword(e.currentTarget.value)}
               styles={{ label: { fontSize: '0.8rem', fontWeight: 600, color: 'var(--mantine-color-gray-8)' } }}
             />
-            <Button type="submit" fullWidth color="orange" radius="md" size="md" loading={loading} mt={4}>
+            {liabilities.length > 0 && (
+              <Stack gap="sm">
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+                  Contact-email liabilities
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Required before the club can collect contact emails. Each liability
+                  must be accepted separately — there is no accept-all.
+                </Text>
+                <EmailSignoffCheckboxes
+                  liabilities={liabilities}
+                  ticks={signoffTicks}
+                  onChange={setSignoffTicks}
+                  disabled={loading}
+                />
+              </Stack>
+            )}
+            <Button
+              type="submit"
+              fullWidth
+              color="orange"
+              radius="md"
+              size="md"
+              loading={loading}
+              mt={4}
+              disabled={liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks)}
+            >
               Create my club site →
             </Button>
           </Stack>
