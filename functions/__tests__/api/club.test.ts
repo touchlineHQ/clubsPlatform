@@ -182,8 +182,9 @@ describe('PATCH /api/club', () => {
   });
 
   it('returns 400 when X-Club-Slug header is missing', async () => {
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const db = makeDb();
-    const ctx = makeContext(patchReq('/api/club', { name: 'New Name' }), { env: { DB: db as never } });
+    const ctx = makeContext(patchReq('/api/club', { name: 'New Name' }, { 'X-Club-Slug': '' }), { env: { DB: db as never } });
     const res = await onRequestPatch(ctx as never);
     expect(res.status).toBe(400);
   });

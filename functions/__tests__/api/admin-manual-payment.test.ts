@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import {
-  makeContext, makeDb, adminSession, managerSession, memberSession,
+  makeContext, makeDb, adminSession, platformAdminSession, managerSession, memberSession,
   postReq, deleteReq,
 } from '../test-utils';
 
@@ -83,8 +83,11 @@ describe('onRequestPost — validation', () => {
   });
 
   it('returns 400 without an X-Club-Slug header', async () => {
+    // A platform admin reaches the endpoint-level header validation; a
+    // club-bound admin is rejected by requireAdmin before that validation.
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const ctx = makeContext(
-      postReq('/api/admin/manual-payment', { registrationId: 'reg_1' }),
+      postReq('/api/admin/manual-payment', { registrationId: 'reg_1' }, { 'X-Club-Slug': '' }),
       { env: { DB: makeDb() as any } },
     );
     const res = await onRequestPost(ctx as any);
@@ -316,9 +319,9 @@ describe('onRequestDelete', () => {
   });
 
   it('returns 400 without an X-Club-Slug header', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const ctx = makeContext(
-      deleteReq('/api/admin/manual-payment?registrationId=reg_1'),
+      deleteReq('/api/admin/manual-payment?registrationId=reg_1', { 'X-Club-Slug': '' }),
       { env: { DB: makeDb() as any } },
     );
     const res = await onRequestDelete(ctx as any);
