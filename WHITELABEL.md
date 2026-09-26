@@ -6,7 +6,7 @@ This site is designed to work for **any grassroots football club**. No coding re
 
 1. **Fork** this repository on GitHub
 2. **Set up Cloudflare Pages** — connect your fork, set build command to `cd website && npm ci && npm run build`, output to `website/dist`
-3. **Create a D1 database** — `npx wrangler d1 create clubsplatform-auth`, then add the ID to `wrangler.toml` under **both** `[env.production]` and `[env.preview]`; `vars` and bindings are non-inheritable for Pages, so a value set only at the top level reaches neither
+3. **Create separate D1 databases** — run `npx wrangler d1 create clubsplatform-auth` for production and `npx wrangler d1 create clubsplatform-preview` for preview. In `wrangler.toml`, set each `database_id` under its matching `[[env.production.d1_databases]]` or `[[env.preview.d1_databases]]` binding, with `binding = "DB"` in both. Never reuse the production ID for preview. `vars` and bindings are non-inheritable for Pages, so top-level values reach neither environment
 4. **Set secrets** for both environments, using a different random value for each:
    - Production: `npx wrangler pages secret put BETTER_AUTH_SECRET --env production`
    - Preview: `npx wrangler pages secret put BETTER_AUTH_SECRET --env preview`
@@ -30,7 +30,7 @@ UPDATE user SET role = 'admin' WHERE email = 'your-email@example.com';
 
 ## Site Admin (Content Editor)
 
-Admin users can edit database-backed content at `/#/customise`. Changes are saved to the site's database and take effect immediately — nothing is committed to the repository and no redeploy happens. In single-club mode, some content still comes from static JSON files; see [Manual JSON Editing](#manual-json-editing-advanced) below.
+Admin users can edit database-backed content at `/#/customise`. Changes are saved to the current environment's database and take effect there immediately. Edits on a preview deployment use the preview database and do not change production content. Nothing is committed to the repository and no redeploy happens. In single-club mode, some content still comes from static JSON files; see [Manual JSON Editing](#manual-json-editing-advanced) below.
 
 | Tab | What you can edit |
 |-----|-------------------|
@@ -48,7 +48,7 @@ Admin users can edit database-backed content at `/#/customise`. Changes are save
 2. Click your name in the header, then **Site Admin**
 3. Edit content through the web-based forms
 4. Click **Apply Preview** to see changes live before saving
-5. Click **Save to Site** — changes are saved to the database and are live straight away
+5. Click **Save to Site** — changes are saved to the current environment's database and are live there straight away
 
 ---
 

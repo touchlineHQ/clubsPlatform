@@ -18,7 +18,6 @@ help:
 	@echo "  WORKER_PORT=8788 Wrangler dev port (default)"
 
 # Config
-D1_BINDING ?= DB
 # `wrangler pages dev` rejects --env and only ever reads the TOP-LEVEL
 # wrangler.toml, which deliberately defines no d1_databases so that every deploy
 # has to name an environment-scoped database explicitly. That means the binding
@@ -33,8 +32,9 @@ D1_BINDING ?= DB
 # reach the real database: `wrangler pages dev` has no remote mode for D1.
 # (The e2e scripts in package.json use the preview id for the same reason, so a
 # test run cannot wipe a local dev database. See the README.)
-# Not configurable: local migrations use the production id from wrangler.toml.
-override D1_DATABASE_ID := 65a7e9d9-3772-4471-af13-fd2e39ab8f90
+# Defaults to the production id in wrangler.toml. If changed, keep it in sync
+# with the database used by db-migrate-local.
+D1_DATABASE_ID ?= 65a7e9d9-3772-4471-af13-fd2e39ab8f90
 UI_DIR ?= website
 UI_PORT ?= 5173
 WORKER_PORT ?= 8788
@@ -53,7 +53,7 @@ worker:
 	@npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
 		--persist-to "$(PERSIST_DIR)" \
-		--d1 "$(D1_BINDING)=$(D1_DATABASE_ID)"
+		--d1 "DB=$(D1_DATABASE_ID)"
 
 # Ensure local DB is migrated before running worker
 worker-migrated: db-migrate-local worker
@@ -72,7 +72,7 @@ dev:
 	npx wrangler pages dev "$(UI_DIR)/public" \
 		--port "$(WORKER_PORT)" \
 		--persist-to "$(PERSIST_DIR)" \
-		--d1 "$(D1_BINDING)=$(D1_DATABASE_ID)" & \
+		--d1 "DB=$(D1_DATABASE_ID)" & \
 	WRANGLER_PID=$$!; \
 	trap "kill $$WRANGLER_PID 2>/dev/null" EXIT INT TERM; \
 	echo "Waiting for Wrangler on port $(WORKER_PORT)..."; \
@@ -83,7 +83,7 @@ dev:
 preview:
 	@npx wrangler pages dev "$(UI_DIR)/dist" \
 		--persist-to "$(PERSIST_DIR)" \
-		--d1 "$(D1_BINDING)=$(D1_DATABASE_ID)"
+		--d1 "DB=$(D1_DATABASE_ID)"
 
 # --env production is required, not cosmetic: without it wrangler looks for the
 # database in the top-level d1_databases (empty by design) and fails with
