@@ -7,9 +7,9 @@
     }
   },
   "postCreateCommand": "npm install && cd website && npm install",
-  "forwardPorts": [5173, 8787],
+  "forwardPorts": [5173, 8788],
   "portsAttributes": {
     "5173": { "label": "Vite dev server" },
-    "8787": { "label": "Wrangler preview" }
+    "8788": { "label": "Wrangler preview" }
   }
 }

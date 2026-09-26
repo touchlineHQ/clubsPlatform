@@ -42,8 +42,12 @@ npm run test         # vitest, both halves
 npm run test:coverage   # same, with the 80% thresholds enforced
 ```
 
-Both run in CI on every pull request, and again on the job that gates
-deployment — a failure in either stops the release.
+Typechecking and coverage tests run in CI on every pull request, alongside the
+end-to-end suite described below, and again before deployment. Their failures
+stop the release. Browser verification before production deployment is required
+only when both `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are configured.
+If either credential is absent, the preview deployment and browser smoke test
+are skipped, and production deployment may proceed without browser verification.
 
 **`functions/` and `website/` are separate TypeScript projects**, and have to
 be. Pages Functions run on workerd rather than in a browser, so
@@ -421,15 +425,32 @@ Changes save to D1 via the API and take effect immediately.
 
 ## Deployment
 
-Deploy to Cloudflare Pages. Set the build command and output directory in the Pages dashboard:
+Deployment is automatic and there is nothing to run by hand. Pushing to `main`
+runs `.github/workflows/main.yml`, which has three jobs in order:
 
-```
-Build command:   cd website && npm install && npm run build
-Build output:    website/dist
-```
+1. **`test`** — `npm run typecheck`, then `npm run test:coverage`.
+2. **`preview-e2e`** — migrates the preview D1 (a canary: a broken migration
+   trips here before production data is touched). Only when both
+   `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are configured does it
+   deploy the commit as a Cloudflare preview and run the browser smoke test.
+   If either credential is absent, the preview deployment and browser smoke
+   test are skipped, and production deployment may proceed without browser
+   verification.
+3. **`deploy`** — applies production migrations, builds with source-map upload
+   enabled, and uploads to Cloudflare Pages.
 
-Apply production migrations after deploying:
+Each job gates the next: tests and preview migrations must pass before production
+deployment. Browser verification is required only when both Cloudflare Access
+credentials are configured; if either is absent, the preview deployment and
+browser smoke test are skipped, and production may proceed without browser
+verification.
 
-```bash
-make db-migrate-prod
-```
+**Production migrations are applied by CI, before the deploy** — do not run them
+by hand after a release, and note that `make db-migrate-prod` exists for
+emergencies rather than as part of the normal flow.
+
+This is a **direct upload** (`wrangler pages deploy website/dist`) from GitHub
+Actions, not a Cloudflare Git integration. The Pages dashboard's build command,
+build output and build environment variables are not part of this at all — they
+never run. See [Analytics (PostHog)](#analytics-posthog) for what that means for
+the `VITE_*` values, which have to be injected by the workflow's build step.
