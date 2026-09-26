@@ -47,15 +47,16 @@ CREATE INDEX IF NOT EXISTS "idx_player_contact_playerId"
 CREATE INDEX IF NOT EXISTS "idx_player_contact_email"
   ON "player_contact" ("email");
 
-
 -- Import signature: empty name, role member, a user_player link, and a club.
 -- Never mark these confirmed — the parent was never asked.
 --
--- Completeness limit: users who later set a display name (name != '') no longer
--- match and will not get a player_contact row — their address stays on
--- user.email until re-import or a follow-up migration. Do not broaden this
--- WHERE on an already-applied migration (FAN-password / emailVerified are not
--- a safe signature here). Track leftovers under epic #128 / #131.
+-- Empty-name is intentional for #131 and matches the import-created accounts
+-- we know about today. Import-sourced users who later set a display name
+-- (name != '') no longer match and will not get a player_contact row here —
+-- their address remains on user.email until re-import or a follow-up inventory
+-- migration under epic #128. Do not broaden this WHERE on an already-applied
+-- migration; handle leftovers in a new migration if prod inventory shows
+-- renamed import rows.
 INSERT INTO "player_contact" (
   "id", "clubSlug", "playerId", "email", "relationship", "state",
   "operationalOptIn", "marketingOptIn", "sourcedBy", "sourcedAt", "signoffId",
