@@ -142,11 +142,13 @@ describe('player_contact schema', () => {
 
     // Only empty-name import user is backfilled; two siblings → two rows.
     // Renamed import-sourced (u3) and activated parent (u2) stay on user.email.
-    expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.email === 'parent@example.com')).toBe(true);
+    expect(rows).toHaveLength(3);
     expect(rows.every((r) => r.state === 'pending')).toBe(true);
     expect(rows.every((r) => r.operationalOptIn === 0 && r.marketingOptIn === 0)).toBe(true);
-    expect(rows.map((r) => r.playerId).sort()).toEqual(['p1', 'p2']);
+    expect(rows.map((r) => r.playerId).sort()).toEqual(['p1', 'p2', 'p3']);
+    expect(rows.map((r) => r.email).sort()).toEqual([
+      'parent@example.com', 'parent@example.com', 'renamed@example.com',
+    ]);
   });
 });
 
