@@ -63,6 +63,14 @@ the root one. Covering tests means a third project to reconcile that split.
 
 There is no `npm run lint` yet — no linter is configured in this repo.
 
+### Data protection
+
+The platform treats player identity as a blind asset (`fanId` only). Contact
+emails are Direct PII and must not live in the auth `user` table once the
+boundary work lands. See [docs/DATA_PROTECTION.md](docs/DATA_PROTECTION.md)
+for what is held, what is out of bounds, lawful bases, retention, and the
+current gap around imported parent emails.
+
 ### End-to-end tests
 
 Playwright drives the real thing — a browser against the built bundle, the Pages
@@ -255,7 +263,7 @@ upload failure logs a warning and the build carries on. The wrapper also
 deletes the source maps itself in that case: the plugin only removes them after
 a *successful* upload, so without the cleanup a swallowed error would publish
 our source maps to Cloudflare Pages. If that cleanup ever fails, the build
-fails — shipping is worth more than symbolication, but not worth leaking
+fails — shipping is worth more than attribution, but not worth leaking
 source.
 
 Two more things to know if you touch this:
@@ -417,19 +425,3 @@ Changes save to D1 via the API and take effect immediately.
 | `/bookings` | Request a pitch | Requires `PITCH_BOOKINGS` + manager/admin |
 | `/admin/bookings` | Booking requests | Requires `PITCH_BOOKINGS` + admin |
 | `/customise` | Admin panel | Admin only |
-| `/admin/users` | User management | Admin only |
-
-## Deployment
-
-Deploy to Cloudflare Pages. Set the build command and output directory in the Pages dashboard:
-
-```
-Build command:   cd website && npm install && npm run build
-Build output:    website/dist
-```
-
-Apply production migrations after deploying:
-
-```bash
-make db-migrate-prod
-```
