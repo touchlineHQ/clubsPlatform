@@ -33,7 +33,8 @@ D1_BINDING ?= DB
 # reach the real database: `wrangler pages dev` has no remote mode for D1.
 # (The e2e scripts in package.json use the preview id for the same reason, so a
 # test run cannot wipe a local dev database. See the README.)
-D1_DATABASE_ID ?= 65a7e9d9-3772-4471-af13-fd2e39ab8f90
+# Not configurable: local migrations use the production id from wrangler.toml.
+override D1_DATABASE_ID := 65a7e9d9-3772-4471-af13-fd2e39ab8f90
 UI_DIR ?= website
 UI_PORT ?= 5173
 WORKER_PORT ?= 8788
