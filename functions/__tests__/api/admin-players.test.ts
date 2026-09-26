@@ -1,5 +1,6 @@
-import { vi, describe, it, expect, beforeEach, type Mock } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach, type Mock } from 'vitest';
 import { makeContext, makeDb, adminSession, getReq, postReq, patchReq } from '../test-utils';
+import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockGetPostHog = vi.hoisted(() => vi.fn(() => null as any));
@@ -199,7 +200,6 @@ describe('player-payments PATCH', () => {
 // ─── import-players.ts ────────────────────────────────────────────────────────
 
 import { onRequestPost as importPlayersPost, IMPORT_LIMITS } from '../../api/admin/import-players';
-import { hashSeededPwd } from '../../lib/auth';
 
 describe('import-players POST', () => {
   beforeEach(() => {
@@ -256,8 +256,8 @@ describe('import-players POST', () => {
     expect(body.error).toMatch(/rows/i);
   });
 
-  it('creates user accounts for parent emails provided', async () => {
-    // first: null means no existing player, no existing registration, no existing user
+  it('records parent emails as pending player_contact rows', async () => {
+    // first: null means no existing player, no existing registration, no existing contact
     const db = makeDb({
       first: null,
       run: { meta: { changes: 1 } },
@@ -286,7 +286,10 @@ describe('import-players POST', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.ok).toBe(true);
-    expect(body.users.created).toBeGreaterThanOrEqual(0);
+    expect(body.contacts.created).toBeGreaterThanOrEqual(0);
+    expect(prepared(db).some(p => /INSERT INTO "user"/.test(p.sql))).toBe(false);
+    expect(prepared(db).some(p => /INSERT INTO "account"/.test(p.sql))).toBe(false);
+    expect(prepared(db).some(p => /INSERT INTO "player_contact"/.test(p.sql))).toBe(true);
   });
 
   it('returns 401 when not authenticated', async () => {
@@ -375,9 +378,7 @@ const IMPORT_TABLES = [
   'player_import_run',
   'player_import_run_part',
   'club_import_log',
-  'user',
-  'account',
-  'user_player',
+  'player_contact',
 ];
 
 /** Return only the mutating statements the import handler aims at its own tables. */
@@ -472,7 +473,7 @@ describe('import-players POST — preview', () => {
 
     expect(dry.players).toEqual(real.players);
     expect(dry.registrations).toEqual(real.registrations);
-    expect(dry.users).toEqual(real.users);
+    expect(dry.contacts).toEqual(real.contacts);
 
     expect(dry.players.created).toBe(1);
     expect(dry.registrations.created).toBe(2);
@@ -604,7 +605,7 @@ describe('import-players POST — counters and the import stamp', () => {
     expect(body.errors[0].fanId).toBe('FAN001');
   });
 
-  it('takes back both counts when the player write fails, and skips its links', async () => {
+  it('takes back both counts when the player write fails, and skips its contacts', async () => {
     const db = dbFailingOn(/INSERT INTO "player" \(/);
     const { body } = await runImport(
       db,
@@ -614,10 +615,11 @@ describe('import-players POST — counters and the import stamp', () => {
 
     expect(body.players.created).toBe(0);
     expect(body.registrations.created).toBe(0);
-    // One failure, reported once — not a second FK error from a link to a
+    expect(body.contacts.created).toBe(0);
+    // One failure, reported once — not a second FK error from a contact to a
     // player row that was never written.
     expect(body.errors).toHaveLength(1);
-    expect(prepared(db).some(p => /user_player/.test(p.sql))).toBe(false);
+    expect(prepared(db).some(p => /INSERT INTO "player_contact"/.test(p.sql))).toBe(false);
   });
 
   it('stamps club_import_log on a real import', async () => {
@@ -640,7 +642,7 @@ describe('import-players POST — an address-heavy write is refused', () => {
     mockGetSession.mockResolvedValue(adminSession);
   });
 
-  /** Few rows, but every address on them is an account to seed. */
+  /** Few rows, but every address on them is a contact to insert. */
   const addressHeavy = (rows: number, per: number) =>
     Array.from({ length: rows }, (_, i) => row({
       fanId: `FAN${i}`,
@@ -649,14 +651,13 @@ describe('import-players POST — an address-heavy write is refused', () => {
 
   it('refuses a batch inside the row limit but over the address limit', async () => {
     // Rows are a poor proxy for cost: this is well under maxCommitRows and still
-    // more accounts than a request can seed inside the CPU budget.
+    // more addresses than a request may carry.
     const db = dbHolding([]);
     const { res, body } = await runImport(db, addressHeavy(10, IMPORT_LIMITS.maxParentEmails), false);
 
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/email addresses/i);
     expect(writes(db)).toEqual([]);
-    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('allows the same rows once they are inside the address limit', async () => {
@@ -732,7 +733,6 @@ describe('import-players POST — an unchunked commit is refused', () => {
     expect(res.status).toBe(400);
     expect(body.error).toMatch(/out of date/i);
     expect(writes(db)).toEqual([]);
-    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('refuses it whether or not the page claims to be sending a part', async () => {
@@ -751,7 +751,6 @@ describe('import-players POST — an unchunked commit is refused', () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
-    expect(hashSeededPwd).not.toHaveBeenCalled();
   });
 
   it('allows a commit that is within one batch', async () => {
@@ -862,8 +861,8 @@ describe('import-players POST — chunked writes', () => {
         players_created: 7,
         registrations_created: 20,
         registrations_updated: 55,
-        users_created: 8,
-        users_skipped: 12,
+        contacts_created: 8,
+        contacts_skipped: 12,
       }),
     }));
   });
@@ -876,11 +875,11 @@ describe('import-players POST — chunked writes', () => {
     expect(stamp!.bindings).toContain(2);
   });
 
-  it('hashes once per new account, which is the whole reason for chunking', async () => {
-    // One PBKDF2 hash is ~47ms of CPU and Cloudflare bills it against the
-    // request's budget; two rows sharing a parent must not pay for it twice.
+  it('creates one pending contact per player for a shared parent address', async () => {
+    // Same parent of two siblings → two player_contact rows (UNIQUE is per
+    // player, not per email). Auth accounts are not created.
     const db = dbHolding([]);
-    await runImport(
+    const { body } = await runImport(
       db,
       [
         row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] }),
@@ -889,69 +888,92 @@ describe('import-players POST — chunked writes', () => {
       false,
     );
 
-    expect(hashSeededPwd).toHaveBeenCalledTimes(1);
+    expect(body.contacts.created).toBe(2);
+    const inserts = prepared(db).filter(p => /INSERT INTO "player_contact"/.test(p.sql));
+    expect(inserts).toHaveLength(2);
+    expect(prepared(db).some(p => /INSERT INTO "user"/.test(p.sql))).toBe(false);
   });
 
-  /** A later part: the run row, then no player matches. */
-  const laterPartDb = (users: unknown[], runStartedAt = 1000) => makeDb({
-    all: [[], users],
+  /**
+   * A later part: claim the run, then held regs (so FAN001 → player_1), then
+   * existing contacts. `contacts` is what the player_contact email IN (…)
+   * lookup returns.
+   */
+  const laterPartDb = (contacts: unknown[], runStartedAt = 1000) => makeDb({
+    all: [[heldRow()], contacts],
     first: [{ createdAt: runStartedAt }, null],
     run: { meta: { changes: 1 } },
   });
 
-  it('counts an account an earlier part made as neither created nor already-existing', async () => {
-    // One parent, two children either side of a batch boundary. The parts are
-    // summed by the client, so counting this as "already existed" reported one
-    // person as both created and pre-existing.
-    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]);
+  it('counts a contact an earlier part made as neither created nor already-held', async () => {
+    // Same player+email either side of a batch boundary. The parts are summed
+    // by the client, so counting this as "already held" reported one address
+    // as both created and pre-existing.
+    const db = laterPartDb([{
+      id: 'pc_1', playerId: 'player_1', email: 'parent@example.com', sourcedAt: 2000,
+    }]);
     const { body } = await runImport(
-      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+      db,
+      [row({ parentEmails: ['parent@example.com'] })],
+      false,
+      part(1, 3, 'imprun_test'),
     );
 
-    expect(body.users).toEqual({ created: 0, skipped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 0 });
   });
 
-  it('still counts an account that predates the run as already-existing', async () => {
-    const db = laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 500 }]);
+  it('still counts a contact that predates the run as already-held', async () => {
+    const db = laterPartDb([{
+      id: 'pc_1', playerId: 'player_1', email: 'parent@example.com', sourcedAt: 500,
+    }]);
     const { body } = await runImport(
-      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+      db,
+      [row({ parentEmails: ['parent@example.com'] })],
+      false,
+      part(1, 3, 'imprun_test'),
     );
 
-    expect(body.users).toEqual({ created: 0, skipped: 1 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
   });
 
-  it('sums across a batch boundary to one parent, counted once', async () => {
-    // The whole point: two batches either side of a boundary, one person, and
-    // the client adds the parts up.
+  it('counts a shared parent across two players as two contacts', async () => {
+    // Two siblings, one parent address: two player_contact rows. Chunking must
+    // not collapse them the way the old auth UNIQUE(email) did.
     const first = await runImport(
       makeDb({ all: [[], []], first: null, run: { meta: { changes: 1 } } }),
       [row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] })], false, part(0, 3),
     );
     const second = await runImport(
-      laterPartDb([{ id: 'user_1', email: 'parent@example.com', createdAt: 2000 }]),
+      laterPartDb([{
+        id: 'pc_1', playerId: 'player_other', email: 'parent@example.com', sourcedAt: 2000,
+      }]),
       [row({ fanId: 'FAN002', parentEmails: ['parent@example.com'] })], false,
       part(1, 3, 'imprun_test'),
     );
 
     expect({
-      created: first.body.users.created + second.body.users.created,
-      skipped: first.body.users.skipped + second.body.users.skipped,
-    }).toEqual({ created: 1, skipped: 0 });
+      created: first.body.contacts.created + second.body.contacts.created,
+      skipped: first.body.contacts.skipped + second.body.contacts.skipped,
+    }).toEqual({ created: 2, skipped: 0 });
   });
 
-  it('pays no hash for a chunk whose accounts already exist', async () => {
-    // The cross-chunk case: chunk 1 created the parent, so chunk 2 finds them.
+  it('does not insert when the contact already exists', async () => {
     const db = makeDb({
-      all: [[], [{ id: 'user_1', email: 'parent@example.com' }]],
-      first: null,
+      all: [[heldRow()], [{
+        id: 'pc_1', playerId: 'player_1', email: 'parent@example.com', sourcedAt: 500,
+      }]],
+      first: [{ createdAt: 1000 }, null],
       run: { meta: { changes: 1 } },
     });
-    await runImport(db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'));
+    const { body } = await runImport(
+      db, [row({ parentEmails: ['parent@example.com'] })], false, part(1, 3, 'imprun_test'),
+    );
 
-    expect(hashSeededPwd).not.toHaveBeenCalled();
+    expect(body.contacts.skipped).toBe(1);
+    expect(prepared(db).some(p => /INSERT INTO "player_contact"/.test(p.sql))).toBe(false);
   });
 
-  it('looks accounts up in one query rather than one per email', async () => {
+  it('looks contacts up in one query rather than one per email', async () => {
     // This was a sequential round trip per address; a 300-row file carries
     // hundreds.
     const db = dbHolding([]);
@@ -965,9 +987,72 @@ describe('import-players POST — chunked writes', () => {
       false,
     );
 
-    const lookups = prepared(db).filter(p => /FROM "user" WHERE email/.test(p.sql));
+    const lookups = prepared(db).filter(p => /FROM "player_contact"/.test(p.sql) && /email IN/.test(p.sql));
     expect(lookups).toHaveLength(1);
-    expect(lookups[0].bindings).toEqual(['a@example.com', 'b@example.com', 'c@example.com']);
+    expect(lookups[0].bindings).toEqual(['test-club', 'a@example.com', 'b@example.com', 'c@example.com']);
+  });
+});
+
+// ─── import-players.ts: real SQL (player_contact boundary) ────────────────────
+
+describe('import-players POST — player_contact on real SQLite', () => {
+  let sqlite: SqliteDb;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(adminSession);
+    sqlite = createSchemaDb();
+  });
+
+  afterEach(() => {
+    sqlite.close();
+  });
+
+  it('creates pending contacts and no user/account/user_player rows', async () => {
+    const { res, body } = await runImport(
+      d1Over(sqlite),
+      [
+        row({ fanId: 'FAN001', parentEmails: ['parent@example.com'] }),
+        row({ fanId: 'FAN002', parentEmails: ['parent@example.com'] }),
+      ],
+      false,
+    );
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.contacts.created).toBe(2);
+    expect(body.players.created).toBe(2);
+
+    const contacts = sqlite.prepare(
+      `SELECT email, state, relationship, operationalOptIn, marketingOptIn FROM "player_contact" ORDER BY email, relationship`,
+    ).all() as Record<string, unknown>[];
+    expect(contacts).toHaveLength(2);
+    expect(contacts.every((c) => c.state === 'pending')).toBe(true);
+    expect(contacts.every((c) => c.operationalOptIn === 0 && c.marketingOptIn === 0)).toBe(true);
+    expect(contacts.every((c) => c.email === 'parent@example.com')).toBe(true);
+
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "user"`).get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "account"`).get() as { n: number }).n).toBe(0);
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "user_player"`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('skips an address already held for the same player', async () => {
+    sqlite.exec(`INSERT INTO "player" VALUES ('player_1','FAN001',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player_registration" VALUES
+      ('preg_1','test-club','player_1','U11 Boys','U11','2025-07-31','Active',1700000000000,1700000000000)`);
+    sqlite.exec(`INSERT INTO "player_contact"
+      (id, clubSlug, playerId, email, relationship, state,
+       operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+      VALUES ('pc_1','test-club','player_1','parent@example.com','guardian','pending',0,0,NULL,500)`);
+
+    const { body } = await runImport(
+      d1Over(sqlite),
+      [row({ parentEmails: ['parent@example.com'] })],
+      false,
+    );
+
+    expect(body.contacts).toEqual({ created: 0, skipped: 1 });
+    expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n).toBe(1);
   });
 });
 

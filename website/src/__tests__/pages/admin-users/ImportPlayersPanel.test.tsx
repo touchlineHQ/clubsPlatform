@@ -55,7 +55,7 @@ const previewBody = (over: Record<string, unknown> = {}) => ({
   ok: true,
   players: { created: 1 },
   registrations: { created: 2, updated: 3 },
-  users: { created: 0, skipped: 0 },
+  contacts: { created: 0, skipped: 0 },
   errors: [],
   stale: { count: 0, rows: [] },
   ...over,
@@ -281,7 +281,7 @@ describe('ImportPlayersPanel chunked commit', () => {
     await commitFileOf(BIG_FILE, previewBody({
       players: { created: 1 },
       registrations: { created: 2, updated: 3 },
-      users: { created: 1, skipped: 1 },
+      contacts: { created: 1, skipped: 1 },
       errors: [],
     }));
 
@@ -289,7 +289,7 @@ describe('ImportPlayersPanel chunked commit', () => {
     const summary = await screen.findByText(/New players:/);
     expect(summary).toHaveTextContent('New players: 3');
     expect(screen.getByText(/^Registrations:/)).toHaveTextContent('6 created, 9 updated');
-    expect(screen.getByText(/^User accounts:/)).toHaveTextContent('3 created, 3 already existed');
+    expect(screen.getByText(/^Contact emails:/)).toHaveTextContent('3 pending, 3 already held');
   });
 
   it('keeps the stale list from the whole-file preview, not from a slice', async () => {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { D1Database } from '@cloudflare/workers-types';
+import { TABLE_STATEMENTS } from '../../lib/ensure-tables';
 
 // Note: test-utils mocks ensure-tables globally, but this dedicated test
 // file does NOT import test-utils, so the real module is used.
@@ -12,6 +13,11 @@ describe('ensureTables', () => {
     vi.resetModules();
     const mod = await import('../../lib/ensure-tables');
     ensureTables = mod.ensureTables;
+  });
+
+  it('includes the player_contact table in TABLE_STATEMENTS', () => {
+    expect(TABLE_STATEMENTS.some((s) => /CREATE TABLE IF NOT EXISTS "player_contact"/.test(s))).toBe(true);
+    expect(TABLE_STATEMENTS.some((s) => /operationalOptIn/.test(s) && /marketingOptIn/.test(s))).toBe(true);
   });
 
   it('calls db.exec once with all SQL statements on first invocation', async () => {

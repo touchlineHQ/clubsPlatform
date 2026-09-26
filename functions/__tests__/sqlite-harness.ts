@@ -80,7 +80,12 @@ export function d1Over(db: SqliteDb): {
     return {
       all: async () => ({ results: statement.all(...params), success: true, meta: {} }),
       first: async () => (statement.all(...params)[0] as unknown) ?? null,
-      run: async () => ({ results: [], success: true, meta: { changes: 0 } }),
+      // Execute for side effects. node:sqlite's .all() runs the statement; .run
+      // exists on the real object but is omitted from the thin SqliteStatement type.
+      run: async () => {
+        statement.all(...params);
+        return { results: [], success: true, meta: { changes: 1 } };
+      },
       // Carried so batch() can execute a statement someone already bound.
       __sql: sql,
       __params: params,
