@@ -51,13 +51,11 @@ CREATE INDEX IF NOT EXISTS "idx_player_contact_email"
 -- Import signature: empty name, role member, a user_player link, and a club.
 -- Never mark these confirmed — the parent was never asked.
 --
--- Completeness limit: only empty-name import-signature users are backfilled.
--- Import-sourced users who later set a display name (name != '') keep their
--- address only on user.email until a follow-up migration or re-import.
--- We deliberately do not broaden to FAN-password / emailVerified heuristics —
--- those are not a well-defined safe signature in this codebase. Do not broaden
--- this WHERE on an already-applied migration; handle leftovers in a new
--- migration if prod inventory shows renamed import rows (epic #128).
+-- Completeness limit: users who later set a display name (name != '') no longer
+-- match and will not get a player_contact row — their address stays on
+-- user.email until re-import or a follow-up migration. Do not broaden this
+-- WHERE on an already-applied migration (FAN-password / emailVerified are not
+-- a safe signature here). Track leftovers under epic #128 / #131.
 INSERT INTO "player_contact" (
   "id", "clubSlug", "playerId", "email", "relationship", "state",
   "operationalOptIn", "marketingOptIn", "sourcedBy", "sourcedAt", "signoffId",

@@ -114,7 +114,7 @@ describe('player_contact schema', () => {
     // Import signature: empty name, role member, clubSlug set.
     db.exec(`INSERT INTO "user" VALUES
       ('u1','','parent@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
-    // Renamed after import — outside the empty-name signature (documented gap).
+    // Renamed after import — documents the signature gap (not backfilled).
     db.exec(`INSERT INTO "user" VALUES
       ('u3','Later Name','renamed@example.com',0,NULL,'member','${CLUB}',${NOW},${NOW})`);
     db.exec(`INSERT INTO "account"
@@ -123,6 +123,9 @@ describe('player_contact schema', () => {
     // Real activated parent — must not be backfilled.
     db.exec(`INSERT INTO "user" VALUES
       ('u2','Real Parent','real@example.com',1,NULL,'member','${CLUB}',${NOW},${NOW})`);
+    db.exec(`INSERT INTO "account"
+      (id, accountId, providerId, userId, password, createdAt, updatedAt)
+      VALUES ('a2','real@example.com','credential','u2','hash',${NOW},${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up1','u1','p1','guardian',${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up2','u1','p2','guardian',${NOW})`);
     db.exec(`INSERT INTO "user_player" VALUES ('up3','u2','p1','guardian',${NOW})`);
@@ -140,15 +143,14 @@ describe('player_contact schema', () => {
         marketingOptIn: number; playerId: string;
       }[];
 
-    // Only empty-name import user is backfilled; two siblings → two rows.
-    // Renamed import-sourced (u3) and activated parent (u2) stay on user.email.
-    expect(rows).toHaveLength(3);
+    // Only the empty-name import user is backfilled; two siblings → two rows.
+    // Renamed import-sourced user (u3) and activated parent (u2) are excluded —
+    // documented gap; follow-up under epic #128 / #131 if prod inventory needs it.
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.email === 'parent@example.com')).toBe(true);
     expect(rows.every((r) => r.state === 'pending')).toBe(true);
     expect(rows.every((r) => r.operationalOptIn === 0 && r.marketingOptIn === 0)).toBe(true);
-    expect(rows.map((r) => r.playerId).sort()).toEqual(['p1', 'p2', 'p3']);
-    expect(rows.map((r) => r.email).sort()).toEqual([
-      'parent@example.com', 'parent@example.com', 'renamed@example.com',
-    ]);
+    expect(rows.map((r) => r.playerId).sort()).toEqual(['p1', 'p2']);
   });
 });
 
