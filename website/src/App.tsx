@@ -277,6 +277,7 @@ function AppRoutes() {
             {data.visibility['/matchday'] && <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />}
             {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
             <Route path="/privacy" element={<PrivacyNoticePage />} />
+            <Route path="/consent/:token" element={<ParentConsentPage />} />
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
