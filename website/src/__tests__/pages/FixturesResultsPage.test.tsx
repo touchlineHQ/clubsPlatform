@@ -4,7 +4,12 @@ import { renderWithMantine, mockSection, mockSingleClub } from '../test-utils';
 import { FixturesResultsPage } from '../../pages/FixturesResultsPage';
 import type { ClubFeed, TeamsData, LiveTeam } from '../../types';
 
-const emptyFeed: ClubFeed = { fixtures: [], results: [], generated: '2026-01-01T00:00:00Z' };
+const emptyFeed: ClubFeed = {
+  club: 'test-club',
+  fixtures: [],
+  results: [],
+  generated: '2026-01-01T00:00:00Z',
+};
 
 const teams: TeamsData = {
   sections: [
@@ -62,12 +67,13 @@ describe('FixturesResultsPage', () => {
 
   it('shows fixture opponent in fixtures table', () => {
     const feed: ClubFeed = {
+      club: 'test-club',
       generated: '2026-01-01T00:00:00Z',
       fixtures: [{ id: 'f1', date: '2026-06-01', time: '15:00', opponent: 'Rivals FC', home_away: 'home', league: 'sunday-league', team: 'First XI', home_team: 'First XI', away_team: 'Rivals FC', venue: '', division: 'League' }],
       results: [],
     };
     const liveTeamsWithTeam: LiveTeam[] = [
-      { slug: 'first-xi', name: 'First XI', league: 'sunday-league', leagueUrl: null, leagueName: 'Sunday League', contact: null },
+      { slug: 'first-xi', name: 'First XI', league: 'sunday-league' },
     ];
     renderWithMantine(
       <FixturesResultsPage feed={feed} teams={teams} liveTeams={liveTeamsWithTeam} />,
@@ -78,6 +84,7 @@ describe('FixturesResultsPage', () => {
 
   it('shows results in results table', () => {
     const feed: ClubFeed = {
+      club: 'test-club',
       generated: '2026-01-01T00:00:00Z',
       fixtures: [],
       results: [{ id: 'r1', date: '2026-05-01', time: '15:00', opponent: 'Old Rivals', home_away: 'away', league: 'sunday-league', team: 'First XI', home_team: 'Old Rivals', away_team: 'First XI', venue: '', division: 'League', goals_for: 3, goals_against: 1, home_score: 1, away_score: 3 }],
@@ -90,12 +97,16 @@ describe('FixturesResultsPage', () => {
   });
 
   it('shows W/D/L stats when results have scores', () => {
+    // home_away values corrected to the LiveResult union ('home' | 'away'); the
+    // previous 'H'/'A' literals were stale and only survived while tests were
+    // untyped. Assertions still key off goals_for/goals_against for W/D/L.
     const feed: ClubFeed = {
+      club: 'test-club',
       generated: '2026-01-01T00:00:00Z',
       fixtures: [],
       results: [
-        { id: 'r1', date: '2026-05-01', time: '15:00', opponent: 'Team A', home_away: 'H', league: 'sunday-league', team: 'First XI', competition: 'League', goals_for: 2, goals_against: 0 },
-        { id: 'r2', date: '2026-04-01', time: '15:00', opponent: 'Team B', home_away: 'A', league: 'sunday-league', team: 'First XI', competition: 'League', goals_for: 1, goals_against: 1 },
+        { id: 'r1', date: '2026-05-01', time: '15:00', opponent: 'Team A', home_away: 'home', league: 'sunday-league', team: 'First XI', home_team: 'First XI', away_team: 'Team A', venue: '', division: 'League', goals_for: 2, goals_against: 0, home_score: 2, away_score: 0 },
+        { id: 'r2', date: '2026-04-01', time: '15:00', opponent: 'Team B', home_away: 'away', league: 'sunday-league', team: 'First XI', home_team: 'Team B', away_team: 'First XI', venue: '', division: 'League', goals_for: 1, goals_against: 1, home_score: 1, away_score: 1 },
       ],
     };
     renderWithMantine(
@@ -110,10 +121,11 @@ describe('FixturesResultsPage', () => {
 
   it('shows team select dropdown when feed has multiple teams', () => {
     const feed: ClubFeed = {
+      club: 'test-club',
       generated: '2026-01-01T00:00:00Z',
       fixtures: [
-        { id: 'f1', date: '2026-06-01', time: '15:00', opponent: 'A', home_away: 'H', league: 'sunday-league', team: 'First XI', competition: 'League' },
-        { id: 'f2', date: '2026-06-02', time: '15:00', opponent: 'B', home_away: 'A', league: 'sunday-league', team: 'Second XI', competition: 'League' },
+        { id: 'f1', date: '2026-06-01', time: '15:00', opponent: 'A', home_away: 'home', league: 'sunday-league', team: 'First XI', home_team: 'First XI', away_team: 'A', venue: '', division: 'League' },
+        { id: 'f2', date: '2026-06-02', time: '15:00', opponent: 'B', home_away: 'away', league: 'sunday-league', team: 'Second XI', home_team: 'B', away_team: 'Second XI', venue: '', division: 'League' },
       ],
       results: [],
     };

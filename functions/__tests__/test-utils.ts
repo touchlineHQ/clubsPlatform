@@ -18,7 +18,7 @@ export const TEST_ENCRYPTION_KEY =
 
 export function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
-    DB: makeDb() as unknown as D1Database,
+    DB: makeDb(),
     ASSETS: { fetch: async () => new Response() },
     BETTER_AUTH_SECRET: 'test-secret',
     SECRETS_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
@@ -54,7 +54,7 @@ function dequeue<T>(store: T | T[]): () => T {
   return () => (q.length > 1 ? (q.shift() as T) : (q[0] as T));
 }
 
-export function makeDb(config: DbConfig = {}): Partial<D1Database> {
+export function makeDb(config: DbConfig = {}): D1Database {
   const nextAll = dequeue(config.all ?? []);
   const nextFirst = dequeue(config.first ?? null);
   const defaultRun = { meta: { changes: 1 } };
@@ -65,8 +65,11 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
   const batchResults = config.batch ?? [];
   let batchIdx = 0;
 
+  // Cast once at the boundary: the fake only implements the methods the suite
+  // exercises (prepare/batch/exec). Returning D1Database keeps makeEnv and the
+  // handlers under test honest without Partial<> leaking into every call site.
   return {
-    exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })) as unknown as D1Database['exec'],
+    exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })),
     prepare: vi.fn(() => {
       const boundObj = {
         all: vi.fn(async () => ({ results: nextAll(), success: true, meta: config.allMeta ?? {} })),
@@ -80,7 +83,7 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
         run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
         bind: vi.fn(() => boundObj),
       };
-    }) as unknown as D1Database['prepare'],
+    }),
     batch: vi.fn(async (stmts: unknown) => {
       const configured = batchResults[batchIdx];
       batchIdx++;
@@ -89,8 +92,8 @@ export function makeDb(config: DbConfig = {}): Partial<D1Database> {
       const results = configured
         ?? (Array.isArray(stmts) ? stmts.map(() => [] as unknown[]) : []);
       return results.map((rows) => ({ results: rows, success: true, ...batchRunMeta }));
-    }) as unknown as D1Database['batch'],
-  };
+    }),
+  } as unknown as D1Database;
 }
 
 // ─── Session builders ─────────────────────────────────────────────────────────

@@ -24,16 +24,16 @@ vi.mock('../../lib/posthog', () => ({
 
 // The export writes a real file otherwise, and these tests are about which rows
 // reach it rather than how SheetJS serialises them.
-const writeFile = vi.fn();
-const jsonToSheet = vi.fn(() => ({}) as Record<string, unknown>);
+const writeFile = vi.fn((..._args: unknown[]) => undefined);
+const jsonToSheet = vi.fn((..._args: unknown[]) => ({}) as Record<string, unknown>);
 vi.mock('xlsx', () => ({
   utils: {
     // Named so a test can read back which rows reached the workbook.
-    json_to_sheet: (...args: unknown[]) => jsonToSheet(...args),
+    json_to_sheet: (rows: unknown) => jsonToSheet(rows),
     book_new: vi.fn(() => ({})),
     book_append_sheet: vi.fn(),
   },
-  writeFile: (...args: unknown[]) => writeFile(...args),
+  writeFile: (data: unknown, name: unknown) => writeFile(data, name),
 }));
 
 import { captureError, captureEvent } from '../../lib/posthog';
@@ -759,7 +759,7 @@ describe('RegistrationsPage', () => {
     }
 
     /** Picks an option from one of the filter Selects. */
-    async function chooseFilter(filter: RegExp, option: string) {
+    async function chooseFilter(filter: string | RegExp, option: string) {
       fireEvent.click(screen.getByRole('combobox', { name: filter }));
       // Click inside the retry: Mantine closes the dropdown a tick after it opens.
       await waitFor(() => {

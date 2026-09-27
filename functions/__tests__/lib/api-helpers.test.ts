@@ -50,7 +50,7 @@ function makeContext(
         ? { user }
         : null;
   const getSession = vi.fn().mockResolvedValue(sessionValue);
-  mockCreateAuth.mockReturnValue({ api: { getSession } } as ReturnType<typeof createAuth>);
+  mockCreateAuth.mockReturnValue({ api: { getSession } } as unknown as ReturnType<typeof createAuth>);
 
   const headers = new Headers(headerOverrides);
   return {

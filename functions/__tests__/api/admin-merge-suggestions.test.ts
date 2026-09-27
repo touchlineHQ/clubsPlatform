@@ -19,7 +19,7 @@ vi.mock('../../lib/read-cost', async (importOriginal) => ({
 // Null by default, so the writes under test take the same path they do on a
 // deployment with no PostHog configured. One test hands back a client that
 // rejects, to prove analytics cannot fail a write that already committed.
-const getPostHog = vi.hoisted(() => vi.fn<[], unknown>(() => null));
+const getPostHog = vi.hoisted(() => vi.fn<() => unknown>(() => null));
 vi.mock('../../lib/posthog', () => ({
   getPostHog,
   clubGroups: (slug?: string | null) => (slug ? { groups: { club: slug } } : {}),

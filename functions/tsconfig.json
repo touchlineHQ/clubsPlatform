@@ -21,7 +21,7 @@
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["**/*.ts"],
-  // Tests are not typechecked yet: they resolve @testing-library and vitest
-  // from the root node_modules, which needs a third project to model.
+  // Tests live in tsconfig.tests.json — same workers types, plus vitest.
+  // Kept separate so the source project stays free of test-only globals.
   "exclude": ["__tests__"]
 }

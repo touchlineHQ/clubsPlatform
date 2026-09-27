@@ -10,20 +10,20 @@ const SHEET = [
   ['FAN003', 'Alan', 'Turing', '23/06/2011', 'U18 Blues', 'Active'],
 ];
 
-const writeFile = vi.fn();
-const jsonToSheet = vi.fn(() => ({}) as Record<string, unknown>);
-const bookAppendSheet = vi.fn();
-const sheetToJson = vi.fn(() => SHEET);
+const writeFile = vi.fn((..._args: unknown[]) => undefined);
+const jsonToSheet = vi.fn((..._args: unknown[]) => ({}) as Record<string, unknown>);
+const bookAppendSheet = vi.fn((..._args: unknown[]) => undefined);
+const sheetToJson = vi.fn((..._args: unknown[]) => SHEET);
 
 vi.mock('xlsx', () => ({
   read: vi.fn(() => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } })),
   utils: {
-    sheet_to_json: (...args: unknown[]) => sheetToJson(...args),
-    json_to_sheet: (...args: unknown[]) => jsonToSheet(...args),
+    sheet_to_json: (sheet: unknown, opts?: unknown) => sheetToJson(sheet, opts),
+    json_to_sheet: (rows: unknown) => jsonToSheet(rows),
     book_new: vi.fn(() => ({})),
-    book_append_sheet: (...args: unknown[]) => bookAppendSheet(...args),
+    book_append_sheet: (book: unknown, sheet: unknown, name: unknown) => bookAppendSheet(book, sheet, name),
   },
-  writeFile: (...args: unknown[]) => writeFile(...args),
+  writeFile: (data: unknown, name: unknown) => writeFile(data, name),
   SSF: { parse_date_code: vi.fn(() => null) },
 }));
 

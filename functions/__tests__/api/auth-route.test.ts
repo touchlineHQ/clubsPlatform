@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { makeContext, makeEnv, getReq, postReq } from '../test-utils';
 
-const authHandler = vi.fn(async () =>
+const authHandler = vi.fn(async (_req: Request) =>
   new Response(JSON.stringify({ token: 'abc' }), { status: 200 }),
 );
 
