@@ -160,7 +160,7 @@ export async function recordMarketingConsentGrant(
   const id = randomId("consent");
   const recordedAt = nowMs();
 
-  await db
+  const grantInsert = db
     .prepare(
       `INSERT INTO "consent_record"
          (id, clubSlug, subjectType, subjectId, purpose, channel, state,
@@ -178,18 +178,22 @@ export async function recordMarketingConsentGrant(
       policyPayload.policyVersion,
       policyPayload.wordingHash,
       withdrawTokenHash,
-    )
-    .run();
+    );
 
+  const statements = [grantInsert];
   if (subjectType === "player_contact") {
-    await db
-      .prepare(
-        `UPDATE "player_contact" SET marketingOptIn = 1
-          WHERE id = ? AND clubSlug = ?`,
-      )
-      .bind(subjectId, clubSlug)
-      .run();
+    statements.push(
+      db
+        .prepare(
+          `UPDATE "player_contact" SET marketingOptIn = 1
+            WHERE id = ? AND clubSlug = ?`,
+        )
+        .bind(subjectId, clubSlug),
+    );
   }
+  // Keep the append-only evidence and its denormalised send mirror in one
+  // transaction so a partial grant cannot enable or record consent alone.
+  await db.batch(statements);
 
   return { recordId: id, withdrawToken };
 }
