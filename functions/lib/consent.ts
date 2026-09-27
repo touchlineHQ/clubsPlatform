@@ -103,7 +103,7 @@ export async function latestConsentRecord(
          FROM "consent_record"
         WHERE clubSlug = ? AND subjectType = ? AND subjectId = ?
           AND purpose = ? AND channel = ?
-        ORDER BY recordedAt DESC
+        ORDER BY recordedAt DESC, rowid DESC
         LIMIT 1`,
     )
     .bind(clubSlug, subjectType, subjectId, purpose, channel)
@@ -204,32 +204,22 @@ export async function withdrawMarketingConsentByToken(
   ipAddress: string | null,
 ): Promise<{ ok: true; clubSlug: string; subjectId: string } | { ok: false; reason: "not_found" }> {
   const tokenHash = await hashToken(token);
+  // Resolve the token regardless of the state of the row it belongs to. An
+  // older token must still withdraw a newer grant for the same subject.
   const grant = await db
     .prepare(
       `SELECT id, clubSlug, subjectType, subjectId, purpose, channel, state,
               recordedAt, ipAddress, policyVersion, wordingHash,
               withdrawTokenHash, supersedesId
          FROM "consent_record"
-        WHERE withdrawTokenHash = ? AND state = 'granted'
-        ORDER BY recordedAt DESC
+        WHERE withdrawTokenHash = ?
+        ORDER BY recordedAt DESC, rowid DESC
         LIMIT 1`,
     )
     .bind(tokenHash)
     .first<ConsentRecordRow>();
 
-  if (!grant) {
-    // Token may belong to an already-withdrawn grant — treat as success for
-    // the caller so repeated clicks stay quiet (no enumeration of active grants).
-    const any = await db
-      .prepare(
-        `SELECT clubSlug, subjectId FROM "consent_record"
-          WHERE withdrawTokenHash = ? LIMIT 1`,
-      )
-      .bind(tokenHash)
-      .first<{ clubSlug: string; subjectId: string }>();
-    if (!any) return { ok: false, reason: "not_found" };
-    return { ok: true, clubSlug: any.clubSlug, subjectId: any.subjectId };
-  }
+  if (!grant) return { ok: false, reason: "not_found" };
 
   const latest = await latestConsentRecord(db, {
     clubSlug: grant.clubSlug,
@@ -240,6 +230,7 @@ export async function withdrawMarketingConsentByToken(
     return { ok: true, clubSlug: grant.clubSlug, subjectId: grant.subjectId };
   }
 
+  const effective = latest ?? grant;
   const id = randomId("consent");
   await db
     .prepare(
@@ -256,9 +247,9 @@ export async function withdrawMarketingConsentByToken(
       grant.subjectId,
       nowMs(),
       ipAddress,
-      grant.policyVersion,
-      grant.wordingHash,
-      grant.id,
+      effective.policyVersion,
+      effective.wordingHash,
+      effective.id,
     )
     .run();
 

@@ -9,6 +9,7 @@ import {
   requestIp,
   SignoffIncompleteError,
   SignoffPolicyMismatchError,
+  validatePolicySubmission,
   EMAIL_SIGNOFF_POLICY_VERSION,
 } from "../../lib/club-email-signoff";
 import {
@@ -16,6 +17,7 @@ import {
   recordDpaAcceptance,
   DpaPolicyMismatchError,
   DPA_POLICY_VERSION,
+  validateDpaSubmission,
 } from "../../lib/dpa";
 
 function slugify(name: string): string {
@@ -29,6 +31,7 @@ function slugify(name: string): string {
     .slice(0, 60);
 }
 
+/** Create a private club after validating all versioned signup acceptances. */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!isMultiClubMode(context.env)) {
     return json({ error: "Multi-club mode is not enabled" }, { status: 403 });
@@ -77,6 +80,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       { error: "dpaAcceptance requires accepted=true with policyVersion and wordingHash" },
       { status: 400 },
     );
+  }
+
+  // Validate both versioned policies before any club/user write. A stale form
+  // must not leave behind a private club without the acceptances required by
+  // signup. The recording functions validate again before persisting.
+  try {
+    await validatePolicySubmission(policy);
+    await validateDpaSubmission(dpa);
+  } catch (err) {
+    if (err instanceof SignoffPolicyMismatchError || err instanceof DpaPolicyMismatchError) {
+      return json({ error: err.message }, { status: 409 });
+    }
+    throw err;
   }
 
   let slug = slugify(clubName);

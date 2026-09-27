@@ -53,7 +53,7 @@ export function parseDpaAcceptance(raw: unknown): DpaPolicySubmission | null {
   };
 }
 
-async function validateDpaSubmission(submission: DpaPolicySubmission): Promise<void> {
+export async function validateDpaSubmission(submission: DpaPolicySubmission): Promise<void> {
   const expected = await currentDpaPolicy();
   if (
     submission.policyVersion !== expected.policyVersion

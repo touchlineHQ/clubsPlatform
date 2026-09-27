@@ -186,6 +186,7 @@ function AppRoutes() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/privacy" element={<PrivacyNoticePage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>

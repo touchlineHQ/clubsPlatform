@@ -117,7 +117,7 @@ async function currentWordingHashes(): Promise<Record<EmailSignoffLiabilityId, s
   return hashes;
 }
 
-async function validatePolicySubmission(
+export async function validatePolicySubmission(
   submission: EmailSignoffPolicySubmission,
 ): Promise<void> {
   const expected = await currentWordingHashes();

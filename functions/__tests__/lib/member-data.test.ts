@@ -56,6 +56,17 @@ describe('member data export/delete', () => {
     expect(bundle!.consentRecords.some((c) => c.state === 'granted')).toBe(true);
   });
 
+  it('excludes a linked player that has no registration or contact at this club', async () => {
+    sqlite.exec(`INSERT INTO "player" VALUES ('p2','FAN002',${NOW},${NOW})`);
+    sqlite.exec(`INSERT INTO "user_player" VALUES ('up2','u_member','p2','guardian',${NOW})`);
+    sqlite.exec(`INSERT INTO "player_registration"
+      (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt)
+      VALUES ('reg2','other-club','p2','U12 Reds','U12','2027-06-30','Registered',${NOW},${NOW})`);
+
+    const bundle = await exportMemberData(d1Over(sqlite) as any, CLUB, 'u_member');
+    expect(bundle!.players.map((p) => p.fanId)).toEqual(['FAN001']);
+  });
+
   it('deletes contacts and consent while retaining the FAN registration', async () => {
     const db = d1Over(sqlite);
     const policy = await currentMarketingConsentPolicy();

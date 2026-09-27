@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { makeContext, makeDb, memberSession, adminSession, getReq, postReq, deleteReq } from '../test-utils';
+import { makeContext, makeDb, memberSession, adminSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 import {
   currentMarketingConsentPolicy,
@@ -15,11 +15,12 @@ vi.mock('../../lib/auth', () => ({
 import { onRequestGet as consentPolicyGet } from '../../api/consent-policy';
 import { onRequestGet as dpaPolicyGet } from '../../api/dpa-policy';
 import { onRequestGet as privacyNoticeGet } from '../../api/privacy-notice';
-import { onRequestGet as unsubscribeGet } from '../../api/unsubscribe';
+import { onRequestGet as unsubscribeGet, onRequestPost as unsubscribePost } from '../../api/unsubscribe';
 import { onRequestPost as consentGrantPost } from '../../api/consent/grant';
 import {
   onRequestGet as memberDataGet,
   onRequestDelete as memberDataDelete,
+  onRequestPatch as memberDataPatch,
 } from '../../api/admin/member-data';
 
 const NOW = 1_700_000_000_000;
@@ -112,7 +113,19 @@ describe('unsubscribe + consent grant', () => {
     const token = new URL(body.unsubscribePath, 'https://example.test').searchParams.get('token')!;
     const unsubReq = getReq(`/api/unsubscribe?token=${encodeURIComponent(token)}`);
     const unsubCtx = makeContext(unsubReq, { env: { DB: d1Over(sqlite) as any } });
-    const unsubRes = await unsubscribeGet(unsubCtx as any);
+    const previewRes = await unsubscribeGet(unsubCtx as any);
+    expect(previewRes.status).toBe(200);
+    expect(previewRes.headers.get('content-type')).toContain('text/html');
+    expect(await previewRes.text()).toContain('Unsubscribe');
+
+    const optInBeforePost = sqlite.prepare(
+      `SELECT marketingOptIn FROM "player_contact" WHERE id = 'pc_1'`,
+    ).get() as { marketingOptIn: number };
+    expect(optInBeforePost).toEqual({ marketingOptIn: 1 });
+
+    const postReqWithToken = postReq(`/api/unsubscribe?token=${encodeURIComponent(token)}`, undefined);
+    const postCtx = makeContext(postReqWithToken, { env: { DB: d1Over(sqlite) as any } });
+    const unsubRes = await unsubscribePost(postCtx as any);
     expect(unsubRes.status).toBe(200);
     const unsubBody = await unsubRes.json() as any;
     expect(unsubBody.withdrawn).toBe(true);
@@ -163,6 +176,20 @@ describe('admin member-data', () => {
   });
 
   afterEach(() => sqlite.close());
+
+  it('corrects member account data for an admin', async () => {
+    const req = patchReq('/api/admin/member-data?userId=u_member', {
+      name: 'Corrected Parent', email: 'corrected@example.com',
+    }, { 'X-Club-Slug': CLUB });
+    const ctx = makeContext(req, { env: { DB: d1Over(sqlite) as any } });
+    const res = await memberDataPatch(ctx as any);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(expect.objectContaining({
+      ok: true, user: { id: 'u_member', name: 'Corrected Parent', email: 'corrected@example.com' },
+    }));
+    const row = sqlite.prepare(`SELECT name, email FROM "user" WHERE id = 'u_member'`).get() as { name: string; email: string };
+    expect(row).toEqual({ name: 'Corrected Parent', email: 'corrected@example.com' });
+  });
 
   it('exports and deletes member data for an admin', async () => {
     const get = getReq('/api/admin/member-data?userId=u_member', { 'X-Club-Slug': CLUB });

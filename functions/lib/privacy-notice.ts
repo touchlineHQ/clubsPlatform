@@ -42,6 +42,7 @@ export type PrivacyNotice = {
 
 const PROCESSOR_NAME = "touchlineHQ";
 
+/** Generate the public notice from the club's controller details. */
 export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
   const addressParts = [
     club.address?.line1,
@@ -98,7 +99,7 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
       },
       {
         data: "Lapsed registration",
-        period: "6 years from last active season; contact email purged earlier when withdrawn.",
+        period: "6 years from last active season; marketing consent withdrawal does not delete the contact email.",
       },
       {
         data: "Unactivated contact invitation",

@@ -1,6 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { nowMs } from "./api-helpers";
-import { writeAuditLog } from "./audit-log";
+import { prepareAuditLog } from "./audit-log";
 
 /**
  * Admin export / delete of a member's personal data at a club (#75 rights).
@@ -72,6 +72,7 @@ type UserRow = {
   createdAt: number;
 };
 
+/** Load a club-bound user, never crossing the requested club boundary. */
 async function loadUserInClub(
   db: D1Database,
   clubSlug: string,
@@ -88,6 +89,7 @@ async function loadUserInClub(
     .first<UserRow>();
 }
 
+/** Build the personal-data bundle visible to an admin of one club. */
 export async function exportMemberData(
   db: D1Database,
   clubSlug: string,
@@ -101,9 +103,19 @@ export async function exportMemberData(
       `SELECT p.id, p.fanId, up.relationship
          FROM "user_player" up
          JOIN "player" p ON p.id = up.playerId
-        WHERE up.userId = ?`,
+        WHERE up.userId = ?
+          AND (
+            EXISTS (
+              SELECT 1 FROM "player_registration" pr
+               WHERE pr.playerId = p.id AND pr.clubSlug = ?
+            )
+            OR EXISTS (
+              SELECT 1 FROM "player_contact" pc
+               WHERE pc.playerId = p.id AND pc.clubSlug = ?
+            )
+          )`,
     )
-    .bind(userId)
+    .bind(userId, clubSlug, clubSlug)
     .all<{ id: string; fanId: string; relationship: string }>()).results ?? [];
 
   const playerIds = players.map((p) => p.id);
@@ -221,6 +233,7 @@ export type MemberDeleteResult = {
  * payment rows are retained (contract basis). Audit note must not contain
  * the deleted address.
  */
+/** Atomically purge direct PII while retaining contract records required by the club. */
 export async function deleteMemberData(
   db: D1Database,
   {
@@ -253,77 +266,66 @@ export async function deleteMemberData(
   if (!bundle) return null;
 
   const contactIds = bundle.contacts.map((c) => c.id);
-  let deletedContacts = 0;
-  let deletedConsentRecords = 0;
-
-  if (contactIds.length > 0) {
-    const placeholders = contactIds.map(() => "?").join(",");
-    const consentDel = await db
-      .prepare(
+  const placeholders = contactIds.map(() => "?").join(",");
+  const consentDelete = contactIds.length > 0
+    ? db.prepare(
         `DELETE FROM "consent_record"
           WHERE clubSlug = ?
             AND (
               (subjectType = 'user' AND subjectId = ?)
               OR (subjectType = 'player_contact' AND subjectId IN (${placeholders}))
             )`,
-      )
-      .bind(clubSlug, userId, ...contactIds)
-      .run();
-    deletedConsentRecords = consentDel.meta?.changes ?? 0;
-
-    const contactDel = await db
-      .prepare(
-        `DELETE FROM "player_contact"
-          WHERE clubSlug = ? AND id IN (${placeholders})`,
-      )
-      .bind(clubSlug, ...contactIds)
-      .run();
-    deletedContacts = contactDel.meta?.changes ?? 0;
-  } else {
-    const consentDel = await db
-      .prepare(
+      ).bind(clubSlug, userId, ...contactIds)
+    : db.prepare(
         `DELETE FROM "consent_record"
           WHERE clubSlug = ? AND subjectType = 'user' AND subjectId = ?`,
-      )
-      .bind(clubSlug, userId)
-      .run();
-    deletedConsentRecords = consentDel.meta?.changes ?? 0;
-  }
+      ).bind(clubSlug, userId);
 
-  const rolesDel = await db
+  const contactDelete = contactIds.length > 0
+    ? db.prepare(
+        `DELETE FROM "player_contact"
+          WHERE clubSlug = ? AND id IN (${placeholders})`,
+      ).bind(clubSlug, ...contactIds)
+    : null;
+
+  const rolesDelete = db
     .prepare(
       `DELETE FROM "user_team_role"
         WHERE userId = ? AND (clubSlug = ? OR clubSlug IS NULL)`,
     )
-    .bind(userId, clubSlug)
-    .run();
+    .bind(userId, clubSlug);
 
   // Anonymise the auth identity at this club rather than hard-deleting — the
   // user row may still own sessions; FAN links stay for membership continuity.
   const tombstoneEmail = `deleted+${userId}@invalid.touchlinehq.local`;
-  await db
+  const userUpdate = db
     .prepare(
       `UPDATE "user" SET name = '', email = ?, updatedAt = ?
         WHERE id = ? AND clubSlug = ?`,
     )
-    .bind(tombstoneEmail, nowMs(), userId, clubSlug)
-    .run();
+    .bind(tombstoneEmail, nowMs(), userId, clubSlug);
 
-  await writeAuditLog(db, {
+  const audit = prepareAuditLog(db, {
     clubSlug,
     adminId,
     action: "member_data_deleted",
     targetTable: "user",
     targetId: userId,
-    note: `contacts=${deletedContacts};consent=${deletedConsentRecords}`,
+    note: `contacts=${contactIds.length};consent=${bundle.consentRecords.length}`,
   });
 
+  const statements = [consentDelete];
+  if (contactDelete) statements.push(contactDelete);
+  statements.push(rolesDelete, userUpdate, audit);
+  await db.batch(statements);
+
   return {
-    deletedContacts,
-    deletedConsentRecords,
-    deletedTeamRoles: rolesDel.meta?.changes ?? 0,
+    deletedContacts: contactIds.length,
+    deletedConsentRecords: bundle.consentRecords.length,
+    deletedTeamRoles: bundle.teamRoles.length,
     anonymisedUser: true,
   };
+
 }
 
 export class LastAdminDeleteError extends Error {

@@ -144,6 +144,27 @@ describe('consent_record persistence', () => {
     expect(again.ok).toBe(true);
   });
 
+  it('uses an older unsubscribe token to withdraw a newer grant', async () => {
+    const db = d1Over(sqlite);
+    const policy = await validPolicy();
+    const first = await recordMarketingConsentGrant(db as any, {
+      clubSlug: CLUB, subjectType: 'player_contact', subjectId: 'pc_1',
+      ipAddress: null, policy,
+    });
+    await withdrawMarketingConsentByToken(db as any, first.withdrawToken, null);
+    const second = await recordMarketingConsentGrant(db as any, {
+      clubSlug: CLUB, subjectType: 'player_contact', subjectId: 'pc_1',
+      ipAddress: null, policy,
+    });
+    expect(await hasCurrentMarketingConsent(db as any, CLUB, 'player_contact', 'pc_1')).toBe(true);
+
+    const result = await withdrawMarketingConsentByToken(db as any, first.withdrawToken, null);
+    expect(result.ok).toBe(true);
+    expect(await hasCurrentMarketingConsent(db as any, CLUB, 'player_contact', 'pc_1')).toBe(false);
+    expect(await emailForSend(db as any, CLUB, 'pc_1', 'marketing')).toBeNull();
+    expect(second.withdrawToken).not.toBe(first.withdrawToken);
+  });
+
   it('does not send marketing when marketingOptIn is stale without a consent_record', async () => {
     sqlite.exec(`UPDATE "player_contact" SET marketingOptIn = 1 WHERE id = 'pc_1'`);
     const db = d1Over(sqlite);
