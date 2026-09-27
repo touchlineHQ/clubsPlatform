@@ -170,6 +170,27 @@
     ]
   },
   {
+    "event": "parent consent link created",
+    "description": "Admin minted a tokenised parent contact-consent URL for a FAN (copy-link flow; mail optional).",
+    "files": [
+      "functions/api/admin/player-contacts.ts"
+    ]
+  },
+  {
+    "event": "parent contact confirmed",
+    "description": "Parent completed the club-scoped consent form without an account; player_contact confirmed.",
+    "files": [
+      "functions/api/consent/form.ts"
+    ]
+  },
+  {
+    "event": "parent contact withdrawn",
+    "description": "Parent withdrew contact consent via the same activation token on the form.",
+    "files": [
+      "functions/api/consent/form.ts"
+    ]
+  },
+  {
     "event": "payment completed",
     "description": "A player's GoCardless payment is confirmed and a subscription created.",
     "files": [

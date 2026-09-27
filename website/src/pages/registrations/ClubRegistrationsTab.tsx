@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  Alert, Box, Button, Center, Group, Loader, Modal, Radio, Stack, Text, Textarea,
+  Alert, Box, Button, Center, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
 } from '@mantine/core';
 import {
   IconArrowsJoin, IconClipboardList, IconFileSpreadsheet, IconFileUpload,
@@ -62,6 +62,18 @@ export function ClubRegistrationsTab({
   const [pendingDelete, setPendingDelete] = useState<RegistrationRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+
+  // Parent contact consent (#149): secretary mints a copyable link; no mail required.
+  const [consentRow, setConsentRow] = useState<RegistrationRow | null>(null);
+  const [consentEmail, setConsentEmail] = useState('');
+  const [consentRelationship, setConsentRelationship] = useState<'guardian' | 'self'>('guardian');
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState('');
+  const [consentLink, setConsentLink] = useState<string | null>(null);
+  const [consentContacts, setConsentContacts] = useState<Array<{
+    id: string; email: string; state: string; relationship: string;
+    marketingOptIn: number; operationalOptIn: number;
+  }>>([]);
 
   /**
    * The rows picked for merging, held whole rather than by id.
@@ -404,6 +416,70 @@ export function ClubRegistrationsTab({
     filtersActive,
   );
 
+
+  const openConsentModal = useCallback(async (row: RegistrationRow) => {
+    setConsentRow(row);
+    setConsentEmail('');
+    setConsentRelationship('guardian');
+    setConsentError('');
+    setConsentLink(null);
+    setConsentContacts([]);
+    try {
+      const res = await fetch(
+        `/api/admin/player-contacts?fanId=${encodeURIComponent(row.fanId)}`,
+        { headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (res.ok) {
+        const data = await res.json() as { contacts: typeof consentContacts };
+        setConsentContacts(data.contacts ?? []);
+        const pending = (data.contacts ?? []).find((c) => c.state === 'pending');
+        if (pending) setConsentEmail(pending.email);
+      }
+    } catch {
+      // Listing is best-effort; minting still works.
+    }
+  }, [clubSlug]);
+
+  const createConsentLink = useCallback(async () => {
+    if (!consentRow) return;
+    setConsentBusy(true);
+    setConsentError('');
+    setConsentLink(null);
+    try {
+      const res = await fetch('/api/admin/player-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          fanId: consentRow.fanId,
+          email: consentEmail,
+          relationship: consentRelationship,
+        }),
+      });
+      const data = await res.json() as {
+        error?: string; consentUrl?: string; contacts?: unknown;
+      };
+      if (!res.ok) {
+        setConsentError(data.error || 'Could not create consent link');
+        return;
+      }
+      setConsentLink(data.consentUrl ?? null);
+      // Refresh status list
+      const list = await fetch(
+        `/api/admin/player-contacts?fanId=${encodeURIComponent(consentRow.fanId)}`,
+        { headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (list.ok) {
+        const body = await list.json() as { contacts: typeof consentContacts };
+        setConsentContacts(body.contacts ?? []);
+      }
+    } catch {
+      setConsentError('Could not create consent link');
+    } finally {
+      setConsentBusy(false);
+    }
+  }, [consentRow, consentEmail, consentRelationship, clubSlug]);
+
+
   return (
     <Stack gap="sm">
       <Group justify="space-between" align="center" wrap="wrap" gap="sm">
@@ -536,6 +612,7 @@ export function ClubRegistrationsTab({
             onMark: openManualModal,
             onUnmark: handleUnmarkPaid,
           }}
+          contactConsent={{ onAsk: (row) => { void openConsentModal(row); } }}
         />
       )}
 
@@ -707,6 +784,84 @@ export function ClubRegistrationsTab({
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      <Modal
+        opened={consentRow !== null}
+        onClose={() => { setConsentRow(null); setConsentLink(null); }}
+        title="Ask parent for contact consent"
+        size="md"
+        centered
+      >
+        {consentRow && (
+          <Stack>
+            {consentError && <Alert color="red" variant="light">{consentError}</Alert>}
+            <Text size="sm">
+              Create a link for FAN <strong>{consentRow.fanId}</strong> ({consentRow.teamName}).
+              Copy it into WhatsApp or your usual email — mail from this site is optional.
+            </Text>
+            {consentContacts.length > 0 && (
+              <Stack gap={6}>
+                <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Existing contacts</Text>
+                {consentContacts.map((c) => (
+                  <Group key={c.id} gap="xs">
+                    <Text size="sm" ff="monospace">{c.email}</Text>
+                    <Badge size="xs" variant="light" color={
+                      c.state === 'confirmed' ? 'green'
+                        : c.state === 'pending' ? 'yellow'
+                          : c.state === 'withdrawn' ? 'orange' : 'gray'
+                    }>
+                      {c.state}
+                    </Badge>
+                    {c.marketingOptIn === 1 && (
+                      <Badge size="xs" variant="outline" color="grape">marketing</Badge>
+                    )}
+                  </Group>
+                ))}
+              </Stack>
+            )}
+            <TextInput
+              label="Parent / guardian email"
+              value={consentEmail}
+              onChange={(e) => setConsentEmail(e.currentTarget.value)}
+              type="email"
+              required
+            />
+            <Select
+              label="Relationship"
+              data={[
+                { value: 'guardian', label: 'Guardian / parent' },
+                { value: 'self', label: 'Player (self)' },
+              ]}
+              value={consentRelationship}
+              onChange={(v) => setConsentRelationship(v === 'self' ? 'self' : 'guardian')}
+            />
+            <Text size="xs" c="dimmed">
+              You cannot opt the parent into marketing — only they can, on the form.
+            </Text>
+            <Button
+              radius="xl"
+              loading={consentBusy}
+              disabled={!consentEmail.trim()}
+              onClick={() => void createConsentLink()}
+            >
+              Create consent link
+            </Button>
+            {consentLink && (
+              <Stack gap="xs">
+                <Text size="sm" fw={600}>Copy this link</Text>
+                <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{consentLink}</Text>
+                <CopyButton value={consentLink}>
+                  {({ copied, copy }) => (
+                    <Button variant="light" color={copied ? 'teal' : 'blue'} radius="xl" onClick={copy}>
+                      {copied ? 'Copied' : 'Copy link'}
+                    </Button>
+                  )}
+                </CopyButton>
+              </Stack>
+            )}
+          </Stack>
+        )}
       </Modal>
     </Stack>
   );

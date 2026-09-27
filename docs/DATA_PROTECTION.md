@@ -124,4 +124,5 @@ When a change stores a new personal-data field (or changes how an existing one i
 - #131 — `player_contact` schema
 - #130 — club sign-off gating collection
 - #75 — consent records, privacy notice, processor agreement (landed: `consent_record`, `club_dpa_acceptance`, privacy notice, admin export/delete)
+- #149 — parent-facing contact consent form (activation token on `player_contact`; operational + optional marketing evidence on `consent_record`)
 - #134 — one-click purge (once contact is separated from auth)

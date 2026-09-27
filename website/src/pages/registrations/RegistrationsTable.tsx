@@ -235,6 +235,10 @@ interface ManualPaymentProps {
   onUnmark: (row: RegistrationRow) => void;
 }
 
+interface ContactConsentProps {
+  onAsk: (row: RegistrationRow) => void;
+}
+
 /**
  * Mirrors the rule enforced by POST /api/admin/manual-payment: a registration
  * with a live GoCardless mandate ('pending'), a live subscription ('active') or
@@ -315,6 +319,8 @@ export interface TableProps {
   manualPayment?: ManualPaymentProps;
   /** Present only on the admin club tab; merging is an admin action. */
   merge?: MergeProps;
+  /** Ask parent for contact consent (#149). */
+  contactConsent?: ContactConsentProps;
 
   /**
    * Present when the caller sorts in SQL. The header then reports intent
@@ -326,8 +332,18 @@ export interface TableProps {
   };
 }
 
+function ContactConsentAction({ row, onAsk }: ContactConsentProps & { row: RegistrationRow }) {
+  return (
+    <Tooltip label="Create a parent consent link to copy into WhatsApp or email" withArrow multiline w={240}>
+      <Button size="xs" variant="subtle" color="teal" onClick={() => onAsk(row)}>
+        Ask parent
+      </Button>
+    </Tooltip>
+  );
+}
+
 export function RegistrationsTable({
-  rows, sixthHeader, canDelete, onDelete, editableLevels, manualPayment, merge, serverSort,
+  rows, sixthHeader, canDelete, onDelete, editableLevels, manualPayment, merge, contactConsent, serverSort,
 }: TableProps) {
   // Uncontrolled for the personal tab, controlled by the club tab's hook when
   // sorting happens in SQL. One component either way so the two cannot drift.
@@ -393,6 +409,7 @@ export function RegistrationsTable({
               </Group>
               <Group gap="xs" wrap="wrap">
                 {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
+                {contactConsent && <ContactConsentAction row={r} {...contactConsent} />}
                 {merge && <UnmergeAction row={r} {...merge} />}
               </Group>
               <Text size="xs" c="dimmed"><b>Expiry:</b> {r.registrationExpiry || '—'}</Text>
@@ -422,7 +439,7 @@ export function RegistrationsTable({
 
   const miw = (canDelete
     ? (editableLevels ? 1060 : 880)
-    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0) + (merge ? 140 : 0);
+    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0) + (merge ? 140 : 0) + (contactConsent ? 110 : 0);
 
   return (
     <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
@@ -487,6 +504,7 @@ export function RegistrationsTable({
                   <Group gap="xs" wrap="nowrap" justify="flex-end">
                     {merge && <UnmergeAction row={r} {...merge} />}
                     {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
+                    {contactConsent && <ContactConsentAction row={r} {...contactConsent} />}
                     <Tooltip label="Remove registration">
                       <ActionIcon
                         variant="subtle"

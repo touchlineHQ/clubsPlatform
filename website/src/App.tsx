@@ -24,6 +24,7 @@ import { GalleryPage } from './pages/GalleryPage';
 import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
 import { PrivacyNoticePage } from './pages/PrivacyNoticePage';
+import { ParentConsentPage } from './pages/ParentConsentPage';
 import { pageview } from './lib/posthog';
 import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
@@ -187,6 +188,7 @@ function AppRoutes() {
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
               <Route path="/privacy" element={<PrivacyNoticePage />} />
+              <Route path="/consent/:token" element={<ParentConsentPage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>

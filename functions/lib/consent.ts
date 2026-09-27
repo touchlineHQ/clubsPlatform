@@ -21,8 +21,24 @@ export const MARKETING_CONSENT_WORDING =
   + "via the unsubscribe link in any marketing email. This is separate from "
   + "messages needed to run my membership (fixtures, safety, kit, subscriptions).";
 
+
+/**
+ * Operational contact agreement (#149).
+ *
+ * Lawful basis is contract / legitimate interests (not consent), but we still
+ * record the exact wording the parent agreed to, with time and IP, so the club
+ * can evidence what was offered. Bump the version when editing the wording.
+ */
+export const OPERATIONAL_CONSENT_POLICY_VERSION = "1";
+
+export const OPERATIONAL_CONSENT_WORDING =
+  "I agree that the club may use this email address for necessary club "
+  + "administration: fixtures and cancellations, safety notices, kit sizing, "
+  + "and subscription reminders. This is not marketing. I can ask the club to "
+  + "stop using this address at any time.";
+
 export type ConsentSubjectType = "player_contact" | "user";
-export type ConsentPurpose = "marketing";
+export type ConsentPurpose = "marketing" | "operational";
 export type ConsentChannel = "email";
 export type ConsentState = "granted" | "withdrawn";
 
@@ -60,6 +76,17 @@ export async function currentMarketingConsentPolicy() {
   };
 }
 
+export async function currentOperationalConsentPolicy() {
+  const wordingHash = await hashWording(OPERATIONAL_CONSENT_WORDING);
+  return {
+    purpose: "operational" as const,
+    channel: "email" as const,
+    policyVersion: OPERATIONAL_CONSENT_POLICY_VERSION,
+    wording: OPERATIONAL_CONSENT_WORDING,
+    wordingHash,
+  };
+}
+
 export function parseConsentPolicy(raw: unknown): ConsentPolicySubmission | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
@@ -68,13 +95,22 @@ export function parseConsentPolicy(raw: unknown): ConsentPolicySubmission | null
   return { policyVersion: obj.policyVersion, wordingHash: obj.wordingHash };
 }
 
-async function validateConsentPolicy(submission: ConsentPolicySubmission): Promise<void> {
-  const expected = await currentMarketingConsentPolicy();
+async function validateConsentPolicy(
+  submission: ConsentPolicySubmission,
+  purpose: ConsentPurpose = "marketing",
+): Promise<void> {
+  const expected = purpose === "operational"
+    ? await currentOperationalConsentPolicy()
+    : await currentMarketingConsentPolicy();
   if (
     submission.policyVersion !== expected.policyVersion
     || submission.wordingHash !== expected.wordingHash
   ) {
-    throw new ConsentPolicyMismatchError();
+    throw new ConsentPolicyMismatchError(
+      purpose === "operational"
+        ? "The operational agreement wording changed; reload and review the current wording"
+        : undefined,
+    );
   }
 }
 
@@ -121,13 +157,13 @@ export async function hasCurrentMarketingConsent(
   return latest?.state === "granted";
 }
 
-function randomTokenHex(bytes = 32): string {
+export function randomTokenHex(bytes = 32): string {
   const arr = new Uint8Array(bytes);
   crypto.getRandomValues(arr);
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function hashToken(token: string): Promise<string> {
+export async function hashToken(token: string): Promise<string> {
   return hashWording(token);
 }
 
@@ -272,6 +308,95 @@ export async function withdrawMarketingConsentByToken(
 }
 
 /**
+ * Record an operational-email agreement for a player_contact (#149).
+ * No withdraw token — the parent uses the activation token (or #135) to object.
+ * Does not flip player_contact.operationalOptIn; the parent-consent confirm
+ * path sets that atomically with state=confirmed.
+ */
+export async function recordOperationalConsentGrant(
+  db: D1Database,
+  {
+    clubSlug,
+    subjectId,
+    ipAddress,
+    policy,
+  }: {
+    clubSlug: string;
+    subjectId: string;
+    ipAddress: string | null;
+    policy: ConsentPolicySubmission;
+  },
+): Promise<{ recordId: string }> {
+  await validateConsentPolicy(policy, "operational");
+  const policyPayload = await currentOperationalConsentPolicy();
+  const id = randomId("consent");
+  await db
+    .prepare(
+      `INSERT INTO "consent_record"
+         (id, clubSlug, subjectType, subjectId, purpose, channel, state,
+          recordedAt, ipAddress, policyVersion, wordingHash, withdrawTokenHash, supersedesId)
+       VALUES (?, ?, 'player_contact', ?, 'operational', 'email', 'granted',
+               ?, ?, ?, ?, NULL, NULL)`,
+    )
+    .bind(
+      id,
+      clubSlug,
+      subjectId,
+      nowMs(),
+      ipAddress,
+      policyPayload.policyVersion,
+      policyPayload.wordingHash,
+    )
+    .run();
+  return { recordId: id };
+}
+
+/**
+ * Append a withdrawn operational consent row (right to object). Idempotent when
+ * the latest operational row is already withdrawn.
+ */
+export async function withdrawOperationalConsent(
+  db: D1Database,
+  {
+    clubSlug,
+    subjectId,
+    ipAddress,
+  }: {
+    clubSlug: string;
+    subjectId: string;
+    ipAddress: string | null;
+  },
+): Promise<void> {
+  const latest = await latestConsentRecord(db, {
+    clubSlug,
+    subjectType: "player_contact",
+    subjectId,
+    purpose: "operational",
+  });
+  if (latest?.state === "withdrawn") return;
+  const policyPayload = await currentOperationalConsentPolicy();
+  await db
+    .prepare(
+      `INSERT INTO "consent_record"
+         (id, clubSlug, subjectType, subjectId, purpose, channel, state,
+          recordedAt, ipAddress, policyVersion, wordingHash, withdrawTokenHash, supersedesId)
+       VALUES (?, ?, 'player_contact', ?, 'operational', 'email', 'withdrawn',
+               ?, ?, ?, ?, NULL, ?)`,
+    )
+    .bind(
+      randomId("consent"),
+      clubSlug,
+      subjectId,
+      nowMs(),
+      ipAddress,
+      latest?.policyVersion ?? policyPayload.policyVersion,
+      latest?.wordingHash ?? policyPayload.wordingHash,
+      latest?.id ?? null,
+    )
+    .run();
+}
+
+/**
  * Build the unsubscribe path a mailer embeds. Absolute URL is the caller's job
  * (club origin). Token is the plaintext returned from recordMarketingConsentGrant.
  */
@@ -280,8 +405,8 @@ export function unsubscribePath(token: string): string {
 }
 
 export class ConsentPolicyMismatchError extends Error {
-  constructor() {
-    super("The marketing consent policy changed; reload and review the current wording");
+  constructor(message?: string) {
+    super(message ?? "The marketing consent policy changed; reload and review the current wording");
     this.name = "ConsentPolicyMismatchError";
   }
 }
