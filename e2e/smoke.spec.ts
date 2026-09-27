@@ -49,12 +49,15 @@ test.describe('anonymous browse of the demo club @smoke', () => {
 
     const body = (await res.json()) as {
       multiClub: boolean;
+      selfRegister: boolean;
       clubs: { slug: string; name: string; published: boolean }[];
     };
 
     // The demo club is filtered out of this endpoint entirely unless multi-club
     // mode is on, so a false here explains an otherwise empty list.
     expect(body.multiClub, 'MULTI_CLUB must be enabled for /demo/ to resolve').toBe(true);
+    // Self-serve signup is a separate flag from MULTI_CLUB (issue #144).
+    expect(body.selfRegister, 'production/preview keep ALLOW_CLUB_SELF_REGISTER off').toBe(false);
 
     const demo = body.clubs.find((c) => c.slug === DEMO_SLUG);
     expect(demo, `no "${DEMO_SLUG}" club in the registry — is D1 bound and migrated?`).toBeDefined();

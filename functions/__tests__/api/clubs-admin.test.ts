@@ -346,7 +346,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
       env: {
-        MULTI_CLUB: '1',
+        MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1',
         // Schema check succeeds, then the slug lookup finds no conflicts.
         DB: makeDb({ all: [[{ name: 'published' }], []], run: { meta: { changes: 1 } } }),
       },
@@ -365,7 +365,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
       env: {
-        MULTI_CLUB: '1',
+        MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1',
         // .all() returns a row with the base slug already taken
         DB: makeDb({ all: [[{ name: 'published' }], [{ slug: 'riverside-fc' }]], run: { meta: { changes: 1 } } }),
       },
@@ -382,7 +382,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   it('returns 400 when clubName is missing', async () => {
     const req = postReq('/api/clubs/register', {});
     const ctx = makeContext(req, {
-      env: { MULTI_CLUB: '1', DB: makeDb() },
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: makeDb() },
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(400);
@@ -393,7 +393,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   it('returns 400 when email sign-off liabilities are missing', async () => {
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC' });
     const ctx = makeContext(req, {
-      env: { MULTI_CLUB: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(400);
@@ -404,7 +404,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   it('returns 400 when DPA acceptance is missing', async () => {
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff() });
     const ctx = makeContext(req, {
-      env: { MULTI_CLUB: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(400);
@@ -418,7 +418,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
       emailSignoff: await partialEmailSignoff(),
     });
     const ctx = makeContext(req, {
-      env: { MULTI_CLUB: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(400);
@@ -433,11 +433,33 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     expect(body.error).toMatch(/Multi-club/);
   });
 
+  it('returns 403 when multi-club is on but self-registration is off', async () => {
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
+    const ctx = makeContext(req, {
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: 'false', DB: makeDb() },
+    });
+    const res = await registerPost(ctx as any);
+    expect(res.status).toBe(403);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/self-registration/i);
+  });
+
+  it('returns 403 when multi-club is on and ALLOW_CLUB_SELF_REGISTER is unset', async () => {
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
+    const ctx = makeContext(req, {
+      env: { MULTI_CLUB: '1', DB: makeDb() },
+    });
+    const res = await registerPost(ctx as any);
+    expect(res.status).toBe(403);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/self-registration/i);
+  });
+
   it('returns 401 when not authenticated', async () => {
     mockGetSession.mockResolvedValue(null);
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
-      env: { MULTI_CLUB: '1', DB: makeDb() },
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: makeDb() },
     });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(401);
@@ -446,7 +468,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   it('returns 503 without registering a club when migration 0021 is not applied', async () => {
     const db = makeDb({ all: [[{ name: 'id' }]] });
     const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
-    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
+    const ctx = makeContext(req, { env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: db } });
 
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(503);
@@ -472,10 +494,23 @@ describe('clubs GET (registry)', () => {
     const ctx = makeContext(getReq('/api/clubs'), { env: { MULTI_CLUB: '1', DB: db } });
     const res = await clubsGet(ctx as any);
     const body = await res.json() as any;
+    expect(body.selfRegister).toBe(false);
     expect(body.clubs.map((c: any) => [c.slug, c.published])).toEqual([
       ['live-fc', true],
       ['quiet-fc', false],
     ]);
+  });
+
+  it('exposes selfRegister true when ALLOW_CLUB_SELF_REGISTER is on', async () => {
+    const db = makeDb({
+      all: [[{ id: 'club_1', slug: 'live-fc', name: 'Live FC', active: 1, primaryColor: null, secondaryColor: null, published: 1, createdAt: 1 }]],
+    });
+    const ctx = makeContext(getReq('/api/clubs'), {
+      env: { MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1', DB: db },
+    });
+    const res = await clubsGet(ctx as any);
+    const body = await res.json() as any;
+    expect(body.selfRegister).toBe(true);
   });
 
   it('keeps private clubs in the registry so their admins can still reach them', async () => {

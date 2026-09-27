@@ -275,7 +275,7 @@ describe('atomic club registration', () => {
         wordingHashes: Object.fromEntries(policy.liabilities.map(l => [l.id, l.wordingHash])),
       },
       dpaAcceptance: { ...await currentDpaPolicy(), accepted: true, ...(stale ? { wordingHash: 'stale' } : {}) },
-    }), { env: { DB: d1Over(sqlite) as any, MULTI_CLUB: '1' } }) as any);
+    }), { env: { DB: d1Over(sqlite) as any, MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1' } }) as any);
   }
 
   it('persists the club, admin role and all acceptances', async () => {

@@ -19,6 +19,7 @@ compatibility_flags = [ "nodejs_compat" ]
 # ---------------------------------------------------------------------------
 [vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 # GoCardless environment: "sandbox" for testing, "live" for production.
 # The flip to "live" in [env.production.vars] is the final manual go-live toggle.
 GC_ENVIRONMENT = "sandbox"
@@ -51,6 +52,7 @@ migrations_dir = "migrations"
 
 [env.production.vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 # Final manual go-live toggle: flip to "live" via Cloudflare dashboard or by
 # editing this line once all other go-live checks have passed.
 GC_ENVIRONMENT = "live"
@@ -76,6 +78,7 @@ migrations_dir = "migrations"
 
 [env.preview.vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 GC_ENVIRONMENT = "sandbox"
 # Repeated rather than inherited: `vars` is non-inheritable for Pages, and this
 # block overrides the top-level [vars], so anything omitted here is simply

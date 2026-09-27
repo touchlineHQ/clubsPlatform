@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../../lib/club-publication";
-import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from "../../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode, isClubSelfRegisterAllowed } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   parseSignoffTicks,
@@ -35,6 +35,9 @@ function slugify(name: string): string {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!isMultiClubMode(context.env)) {
     return json({ error: "Multi-club mode is not enabled" }, { status: 403 });
+  }
+  if (!isClubSelfRegisterAllowed(context.env)) {
+    return json({ error: "Club self-registration is not enabled" }, { status: 403 });
   }
 
   await ensureTables(context.env.DB);

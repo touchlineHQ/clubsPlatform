@@ -48,7 +48,7 @@ describe('LandingPage', () => {
         },
       };
     }));
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load the processor agreement');
     expect(screen.getByRole('button', { name: /Create my club site/ })).toBeDisabled();
     expect(screen.queryByRole('checkbox', { name: /processor agreement/ })).toBeNull();
@@ -61,7 +61,7 @@ describe('LandingPage', () => {
         ? { policyVersion: '1', wording: 'Current processor agreement wording', wordingHash: 'hash' }
         : {},
     })));
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     expect(await screen.findByText('Current processor agreement wording')).toBeVisible();
     const checkbox = screen.getByRole('checkbox', { name: /processor agreement/ });
     const submit = screen.getByRole('button', { name: /Create my club site/ });
@@ -73,27 +73,27 @@ describe('LandingPage', () => {
   });
 
   it('renders the hero section with a heading', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);
   });
 
   it('renders the platform name', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     expect(screen.getAllByText(/Touchline/i).length).toBeGreaterThan(0);
   });
 
   it('renders the sign up form section', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     expect(document.querySelector('form')).toBeTruthy();
   });
 
   it('renders without error with empty clubs list', () => {
-    renderWithMantine(<LandingPage clubs={[]} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={[]} selfRegister />, { authValue: mockLoggedOut });
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);
   });
 
   it('form input changes update field values', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const inputs = document.querySelectorAll('input[type="text"], input[type="email"]');
     if (inputs.length > 0) {
       fireEvent.change(inputs[0], { target: { value: 'Test Club FC' } });
@@ -102,7 +102,7 @@ describe('LandingPage', () => {
   });
 
   it('nav button clicks trigger scroll handler without error', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const buttons = screen.getAllByRole('button');
     buttons.forEach(btn => {
       try { fireEvent.click(btn); } catch { /* ignore */ }
@@ -111,7 +111,7 @@ describe('LandingPage', () => {
   });
 
   it('mouse enter/leave on interactive elements does not crash', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const anchors = document.querySelectorAll('a');
     anchors.forEach(a => {
       try {
@@ -123,7 +123,7 @@ describe('LandingPage', () => {
   });
 
   it('typing in club name field updates state', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const clubNameInput = document.querySelector('input[placeholder*="club"]') as HTMLInputElement | null;
     if (clubNameInput) {
       fireEvent.change(clubNameInput, { target: { value: 'My New Club' } });
@@ -134,7 +134,7 @@ describe('LandingPage', () => {
   });
 
   it('club directory section renders', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     // The demo club card is always shown (slug === 'demo')
     expect(screen.getAllByText(/Demo Club/i).length).toBeGreaterThan(0);
   });
@@ -146,14 +146,14 @@ describe('LandingPage', () => {
   // advertising a club whose site isn't ready.
   it('never advertises a club whose site is private', () => {
     renderWithMantine(
-      <LandingPage clubs={[...clubs, { id: 'c3', slug: 'quiet-fc', name: 'Quiet FC', published: false }]} />,
+      <LandingPage clubs={[...clubs, { id: 'c3', slug: 'quiet-fc', name: 'Quiet FC', published: false }]} selfRegister />,
       { authValue: mockLoggedOut },
     );
     expect(screen.queryByText(/Quiet FC/i)).toBeNull();
   });
 
   it('hero buttons mouse enter/leave triggers style updates without error', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const buttons = document.querySelectorAll('button');
     buttons.forEach(btn => {
       try {
@@ -166,7 +166,7 @@ describe('LandingPage', () => {
 
   it('sign up form submission calls signUp', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, slug: 'new-club' }) }));
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const form = document.querySelector('form');
     if (form) {
       fireEvent.submit(form);
@@ -175,7 +175,7 @@ describe('LandingPage', () => {
   });
 
   it('typing in password field updates state', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement | null;
     if (passwordInput) {
       fireEvent.change(passwordInput, { target: { value: 'secret123' } });
@@ -186,7 +186,7 @@ describe('LandingPage', () => {
   });
 
   it('clicking link buttons does not crash', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const links = screen.getAllByRole('link');
     links.forEach(link => {
       try { fireEvent.click(link); } catch { /* ignore */ }
@@ -195,7 +195,7 @@ describe('LandingPage', () => {
   });
 
   it('typing in club name field (Radcliffe placeholder) updates state', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const clubNameInput = screen.queryByPlaceholderText('e.g. Radcliffe Olympic FC') as HTMLInputElement;
     if (clubNameInput) {
       fireEvent.change(clubNameInput, { target: { value: 'My Great Club' } });
@@ -206,7 +206,7 @@ describe('LandingPage', () => {
   });
 
   it('typing in your name field (First and last name placeholder) updates state', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const nameInput = screen.queryByPlaceholderText('First and last name') as HTMLInputElement;
     if (nameInput) {
       fireEvent.change(nameInput, { target: { value: 'John Smith' } });
@@ -221,13 +221,13 @@ describe('LandingPage', () => {
   // them away.
   describe('header auth', () => {
     it('offers a login button when signed out', () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
       expect(screen.getByRole('button', { name: /log in/i })).toBeTruthy();
       expect(screen.queryByTestId('modal')).toBeNull();
     });
 
     it('opens the login modal when that button is clicked', () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
       fireEvent.click(screen.getByRole('button', { name: /log in/i }));
       const modal = screen.getByTestId('modal');
       expect(modal.querySelector('input[type="email"]')).toBeTruthy();
@@ -235,20 +235,20 @@ describe('LandingPage', () => {
     });
 
     it('shows nothing to sign in with while auth is still loading', () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, {
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, {
         authValue: { ...mockLoggedOut, loading: true },
       });
       expect(screen.queryByRole('button', { name: /log in/i })).toBeNull();
     });
 
     it('swaps the login button for an account menu once signed in', () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: adminOfTestFc });
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: adminOfTestFc });
       expect(screen.queryByRole('button', { name: /log in/i })).toBeNull();
       expect(screen.getByRole('button', { name: /Admin/ })).toBeTruthy();
     });
 
     it("links a signed-in user to their own club", async () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: adminOfTestFc });
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: adminOfTestFc });
       fireEvent.click(screen.getByRole('button', { name: /Admin/ }));
       await waitFor(() => {
         expect(screen.getByText(/Go to Test FC/).closest('a')?.getAttribute('href')).toBe('/test-fc/');
@@ -257,7 +257,7 @@ describe('LandingPage', () => {
 
     it('badges that link as private while the club has not gone live', async () => {
       const privateClubs: ClubEntry[] = [{ id: 'c1', slug: 'test-fc', name: 'Test FC', published: false }];
-      renderWithMantine(<LandingPage clubs={privateClubs} />, { authValue: adminOfTestFc });
+      renderWithMantine(<LandingPage clubs={privateClubs} selfRegister />, { authValue: adminOfTestFc });
       fireEvent.click(screen.getByRole('button', { name: /Admin/ }));
       await waitFor(() => {
         expect(screen.getByText(/Go to Test FC/).closest('a')?.textContent).toContain('Private');
@@ -265,7 +265,7 @@ describe('LandingPage', () => {
     });
 
     it('gives a platform admin no club link — they belong to none', async () => {
-      renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockPlatformAdmin });
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockPlatformAdmin });
       fireEvent.click(screen.getByRole('button', { name: /Super/ }));
       await waitFor(() => {
         expect(screen.getByText('Logout')).toBeTruthy();
@@ -275,7 +275,7 @@ describe('LandingPage', () => {
   });
 
   it('mouseEnter/Leave on AddClubCard triggers hover state without error', () => {
-    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister />, { authValue: mockLoggedOut });
     const addClubElements = screen.queryAllByText('Add your club');
     if (addClubElements.length > 0) {
       let el: Element | null = addClubElements[0];
@@ -286,4 +286,36 @@ describe('LandingPage', () => {
     }
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);
   });
+
+  describe('when self-register is off', () => {
+    it('does not render the signup form or Create your club CTA', () => {
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister={false} />, { authValue: mockLoggedOut });
+      expect(document.querySelector('form')).toBeNull();
+      expect(screen.queryByRole('button', { name: /Create your club/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Get Your Club Online/i })).toBeNull();
+      expect(screen.queryByText(/10 min/i)).toBeNull();
+      expect(screen.queryByText(/ready in minutes/i)).toBeNull();
+    });
+
+    it('still offers View Demo Club and Log in', () => {
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister={false} />, { authValue: mockLoggedOut });
+      expect(screen.getAllByRole('link', { name: /View Demo Club/i }).length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: /log in/i })).toBeTruthy();
+    });
+
+    it('shows how-to-get-this instead of getstarted', () => {
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister={false} />, { authValue: mockLoggedOut });
+      expect(document.getElementById('getstarted')).toBeNull();
+      expect(document.getElementById('get-this')).toBeTruthy();
+      expect(screen.getByText(/Not offering self-serve signup/i)).toBeTruthy();
+    });
+
+    it('login modal points at contact/demo rather than create', () => {
+      renderWithMantine(<LandingPage clubs={clubs} selfRegister={false} />, { authValue: mockLoggedOut });
+      fireEvent.click(screen.getByRole('button', { name: /log in/i }));
+      expect(screen.queryByText(/Don't have a club yet/i)).toBeNull();
+      expect(screen.getByText(/Want this for your club/i)).toBeTruthy();
+    });
+  });
+
 });

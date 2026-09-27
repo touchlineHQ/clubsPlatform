@@ -184,7 +184,8 @@ Set in `wrangler.toml` under `[vars]`:
 |----------|-------------|---------|
 | `BETTER_AUTH_SECRET` | Auth signing secret | required |
 | `BETTER_AUTH_URL` | Override auth base URL | auto-detected |
-| `MULTI_CLUB` | Enable multi-club platform mode | disabled |
+| `MULTI_CLUB` | Enable multi-club platform mode (path routing + demo slug) | disabled |
+| `ALLOW_CLUB_SELF_REGISTER` | Allow `POST /api/clubs/register` self-serve club creation (requires `MULTI_CLUB`) | disabled |
 | `PITCH_BOOKINGS` | Enable pitch scheduling & booking features | disabled |
 | `SECRETS_ENCRYPTION_KEY` | AES-256-GCM key for at-rest secret encryption (64 hex chars) | required for secrets |
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
@@ -346,10 +347,16 @@ For **production** set `SECRETS_ENCRYPTION_KEY` and `SECRETS_TRANSPORT_PRIVATE_K
 
 Set `MULTI_CLUB = "true"` in `wrangler.toml` to activate:
 
-- Root URL shows the **landing page** (club directory + self-service sign-up)
+- Root URL shows the **landing page** (club directory; self-serve signup only when also allowed — see below)
 - Each club is served at `/{slug}/`
 - Club data is stored in D1 and seeded from static JSON on first access
-- Any authenticated user can create their own club and become its admin
+- The seeded **`demo`** club is a shop-window with fake content only (no FA CSV import, no parent emails, no live GoCardless on that slug). Keep it that way; create real clubs via platform-admin `POST /api/clubs` or seed JSON.
+
+### Self-serve club registration
+
+`MULTI_CLUB` alone does **not** open public club creation. Set `ALLOW_CLUB_SELF_REGISTER = "true"` (in addition to `MULTI_CLUB`) to allow authenticated users to `POST /api/clubs/register` and become that club's admin.
+
+Production and preview keep `ALLOW_CLUB_SELF_REGISTER = "false"` in `wrangler.toml` so a multi-club deploy can host live + demo without strangers creating clubs. Platform admins can still create clubs with `POST /api/clubs`. `GET /api/clubs` exposes `selfRegister` so the landing page can show or hide the signup funnel from the API flag.
 
 ### Seeding
 
@@ -386,6 +393,8 @@ Changes save to D1 via the API and take effect immediately.
 
 | Flag | What it shows |
 |------|---------------|
+| `MULTI_CLUB = "true"` | Path routing per club slug, landing page, demo club registry entry |
+| `ALLOW_CLUB_SELF_REGISTER = "true"` | Landing signup funnel + `POST /api/clubs/register` (requires `MULTI_CLUB`) |
 | `PITCH_BOOKINGS = "true"` | Pitch Schedule, Request a Pitch, Booking Requests in the sidebar |
 
 ## Project Structure
