@@ -142,7 +142,11 @@ describe('isClubSelfRegisterAllowed', () => {
     expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
   });
 
-  it.each([['0'], ['false'], [undefined]])('returns false for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+  it.each([[' TRUE '], ['YES'], ['On']])('normalizes enabled ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
+  });
+
+  it.each([['0'], ['false'], ['FALSE'], ['off'], ['unexpected'], [''], [undefined]])('returns false for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
     expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(false);
   });
 });

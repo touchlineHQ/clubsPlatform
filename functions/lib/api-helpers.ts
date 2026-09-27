@@ -66,10 +66,10 @@ export function isMultiClubMode(env: Env): boolean {
   return !!(v && v !== "0" && v !== "false");
 }
 
-/** Returns true when ALLOW_CLUB_SELF_REGISTER env var is set to a truthy value. */
+/** Returns true for supported enabled values of ALLOW_CLUB_SELF_REGISTER. */
 export function isClubSelfRegisterAllowed(env: Env): boolean {
-  const v = env.ALLOW_CLUB_SELF_REGISTER;
-  return !!(v && v !== "0" && v !== "false");
+  const v = env.ALLOW_CLUB_SELF_REGISTER?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */

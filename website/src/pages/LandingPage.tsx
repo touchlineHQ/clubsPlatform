@@ -494,8 +494,7 @@ const ClubDirectorySection = ({ clubs, selfRegister }: { clubs: ClubEntry[]; sel
   const demoClub = clubs.find(c => c.slug === DEMO_SLUG);
   // published === false means the club's site isn't live yet — /api/clubs still
   // lists it so its admins can reach their own login page, but it has no place
-  // in the public directory. Applied here, not where the cards render, so the
-  // TODO below can be uncommented without leaking a club that isn't ready.
+  // in the public directory.
   const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG && c.published !== false);
 
   return (
@@ -530,7 +529,6 @@ const ClubDirectorySection = ({ clubs, selfRegister }: { clubs: ClubEntry[]; sel
               href={`/${DEMO_SLUG}/`}
             />
           )}
-          {/* TODO: Add featured clubs functionality so only a select few are displayed on the homepage
           {realClubs.map(club => (
             <ClubCard
               key={club.slug}
@@ -541,7 +539,7 @@ const ClubDirectorySection = ({ clubs, selfRegister }: { clubs: ClubEntry[]; sel
               badgeEmoji="🏆"
               href={`/${club.slug}/`}
             />
-          ))} */}
+          ))}
 
           {selfRegister && (
             <AddClubCard onClick={() => scrollTo('getstarted')} />
