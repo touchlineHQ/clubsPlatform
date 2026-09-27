@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { resolve } from 'node:path';
-// @ts-expect-error — plain .mjs helper, shared with scripts/generate-posthog-events.mjs
 import { extractEvents, readRegistry } from '../../scripts/posthog-events.mjs';
 
 /**

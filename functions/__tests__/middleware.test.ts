@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeContext, makeEnv, getReq } from './test-utils';
 
-const captureExceptionImmediate = vi.fn(async () => {});
+const captureExceptionImmediate = vi.fn(async (_err: unknown, _distinctId?: string, _props?: Record<string, unknown>) => {});
 const getPostHog = vi.fn();
 
 vi.mock('../lib/posthog', () => ({

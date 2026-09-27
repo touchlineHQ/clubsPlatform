@@ -8,10 +8,10 @@ vi.mock('@mantine/core', async (importOriginal) => {
   return { ...mod, Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</> };
 });
 
-const mockUseMediaQuery = vi.fn(() => false);
+const mockUseMediaQuery = vi.fn((..._args: unknown[]) => false);
 vi.mock('@mantine/hooks', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@mantine/hooks')>();
-  return { ...mod, useMediaQuery: (...args: unknown[]) => mockUseMediaQuery(...args) };
+  return { ...mod, useMediaQuery: (query: string, initial?: boolean | { getInitialValueInEffect?: boolean }) => mockUseMediaQuery(query, initial) };
 });
 
 const mockFetch = vi.fn();

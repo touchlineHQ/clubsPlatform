@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, type Mock, beforeEach } from 'vitest';
 import { makeContext, makeDb, makeEnv, adminSession, memberSession, postReq, patchReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -387,10 +387,10 @@ describe('POST /api/admin/player-payments — GoCardless rejection', () => {
 describe('PATCH /api/admin/player-payments — deactivate', () => {
   beforeEach(() => mockGetSession.mockResolvedValue(adminSession));
 
-  function patchCtx(db: any) {
+  function patchCtx(db: ReturnType<typeof makeDb>) {
     return makeContext(
       patchReq('/api/admin/player-payments', { id: 'pay_1' }, { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
+      { env: { DB: db } },
     );
   }
 
@@ -399,8 +399,8 @@ describe('PATCH /api/admin/player-payments — deactivate', () => {
     const res = await onRequestPatch(patchCtx(db) as never);
 
     expect(res.status).toBe(200);
-    const updateSql = (db.prepare as Mock).mock.calls
-      .map(([sql]) => sql as string)
+    const updateSql = (db.prepare as unknown as Mock<(sql: string) => unknown>).mock.calls
+      .map(([sql]) => sql)
       .find(sql => sql.includes(`SET status = 'inactive'`));
     expect(updateSql).toContain(`status != 'completed'`);
     expect(writeAuditLog).toHaveBeenCalled();
