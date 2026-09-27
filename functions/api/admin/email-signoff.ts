@@ -65,7 +65,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json(
       {
         error:
-          "Each of parental_consent, operational_split and right_to_object must be independently true",
+          "Each of operational_split and right_to_object must be independently true",
       },
       { status: 400 },
     );

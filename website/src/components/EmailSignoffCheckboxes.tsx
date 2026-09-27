@@ -19,7 +19,7 @@ interface Props {
 }
 
 /**
- * Three independent liability ticks for club contact-email collection (#130).
+ * Independent liability ticks for club contact-email collection (#130 / #148).
  * Deliberately no "accept all" control — each must be evidenced separately.
  */
 export function EmailSignoffCheckboxes({

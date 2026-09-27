@@ -55,6 +55,9 @@ describe('PrivacyNoticePage', () => {
     expect(screen.getByText(/Date of birth/i)).toBeTruthy();
     expect(screen.getByText(/GoCardless/i)).toBeTruthy();
     expect(screen.getByText(/correct or delete/i)).toBeTruthy();
+    // One-club model: public notice names the club only (#148)
+    expect(screen.queryByText(/touchlineHQ/i)).toBeNull();
+    expect(screen.queryByText(/Hosting \/ software/i)).toBeNull();
     expect(fetchMock).toHaveBeenCalled();
   });
 

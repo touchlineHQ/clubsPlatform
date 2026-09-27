@@ -34,7 +34,8 @@ describe('buildPrivacyNotice', () => {
     expect(notice.rights.length).toBeGreaterThan(3);
     expect(notice.retention.length).toBeGreaterThan(3);
     expect(notice.icoFeeNote.toLowerCase()).toContain('ico');
-    expect(notice.icoFeeNote.toLowerCase()).toMatch(/one real club|self-serve|allow_club_self_register/);
+    expect(notice.icoFeeNote.toLowerCase()).toContain('club');
+    expect(notice.icoFeeNote.toLowerCase()).not.toMatch(/processor|touchlinehq as|third-party/);
   });
 
   it.each([

@@ -103,7 +103,8 @@ export const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_player_import_run_club_createdAt" ON "player_import_run" ("clubSlug", "createdAt")`,
   `CREATE TABLE IF NOT EXISTS "player_import_run_part" ("runId" TEXT NOT NULL REFERENCES "player_import_run"("id") ON DELETE CASCADE, "partIndex" INTEGER NOT NULL, "rowCount" INTEGER NOT NULL, "playersCreated" INTEGER NOT NULL, "registrationsCreated" INTEGER NOT NULL, "registrationsUpdated" INTEGER NOT NULL, "usersCreated" INTEGER NOT NULL, "usersSkipped" INTEGER NOT NULL, "contactsDropped" INTEGER NOT NULL DEFAULT 0, "errorCount" INTEGER NOT NULL, "recordedAt" INTEGER NOT NULL, PRIMARY KEY ("runId", "partIndex"))`,
   // Club email sign-off (#130): one row per liability under a policy version.
-  // acceptanceId groups the three ticks; player_contact.signoffId references it.
+  // acceptanceId groups the liability ticks; player_contact.signoffId references it.
+  // parental_consent remains in the CHECK for historical v1 rows (#148 removed it from current policy).
   `CREATE TABLE IF NOT EXISTS "club_email_signoff" ("id" TEXT PRIMARY KEY NOT NULL, "acceptanceId" TEXT NOT NULL, "clubSlug" TEXT NOT NULL, "liability" TEXT NOT NULL CHECK("liability" IN ('parental_consent', 'operational_split', 'right_to_object')), "userId" TEXT NOT NULL, "acceptedAt" INTEGER NOT NULL, "ipAddress" TEXT, "policyVersion" TEXT NOT NULL, "wordingHash" TEXT NOT NULL, UNIQUE("clubSlug", "liability", "policyVersion"))`,
   `CREATE INDEX IF NOT EXISTS "idx_club_email_signoff_clubSlug" ON "club_email_signoff" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_club_email_signoff_acceptanceId" ON "club_email_signoff" ("acceptanceId")`,

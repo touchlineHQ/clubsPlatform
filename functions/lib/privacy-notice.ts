@@ -89,9 +89,8 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
   const hostingRole =
     "Provides the clubsPlatform software and hosting used to run this club site. "
     + "The club decides what is stored and answers access, correction, and deletion "
-    + "requests. While this deployment hosts only one real club (plus a fake demo) "
-    + "and self-serve club registration is off, touchlineHQ is not operating as a "
-    + "multi-tenant Art. 28 processor for other clubs' member data.";
+    + "requests. This deployment hosts one real club (plus a fake demo); the club "
+    + "is the sole controller named on the public privacy notice.";
 
   return {
     controller: {
@@ -186,11 +185,7 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
     icoFeeNote:
       "UK organisations that process personal data generally need to pay the ICO data "
       + "protection fee. The club, as controller, is responsible for checking and paying "
-      + "any fee that applies: https://ico.org.uk/for-organisations/data-protection-fee/ "
-      + "While this deployment hosts only one real club and self-serve registration is off, "
-      + "touchlineHQ does not treat itself as needing a separate host ICO registration or "
-      + "Art. 28 DPAs for other clubs — that changes if a second real club is hosted or "
-      + "ALLOW_CLUB_SELF_REGISTER is turned on.",
+      + "any fee that applies: https://ico.org.uk/for-organisations/data-protection-fee/",
     generatedAt: new Date().toISOString(),
   };
 }

@@ -22,7 +22,7 @@ describe('GET /api/email-signoff-policy', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.policyVersion).toBe(EMAIL_SIGNOFF_POLICY_VERSION);
-    expect(body.liabilities).toHaveLength(3);
+    expect(body.liabilities).toHaveLength(2);
     expect(body.liabilities[0].wordingHash).toMatch(/^[a-f0-9]{64}$/);
   });
 });
@@ -56,7 +56,7 @@ describe('admin email-signoff', () => {
     const wordingHashes = Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash]));
     const bad = postReq(
       '/api/admin/email-signoff',
-      { liabilities: { parental_consent: true, operational_split: true, right_to_object: false } },
+      { liabilities: { operational_split: true, right_to_object: false } },
       { 'X-Club-Slug': 'test-club' },
     );
     const badRes = await onRequestPost(makeContext(bad, { env: { DB: d1Over(sqlite) as any } }) as any);
@@ -66,7 +66,6 @@ describe('admin email-signoff', () => {
       '/api/admin/email-signoff',
       {
         liabilities: {
-          parental_consent: true,
           operational_split: true,
           right_to_object: true,
         },
@@ -90,17 +89,17 @@ describe('admin email-signoff', () => {
     const status = await onRequestGet(makeContext(statusReq, { env: { DB: d1Over(sqlite) as any } }) as any);
     const statusBody = await status.json() as any;
     expect(statusBody.current).toBe(true);
-    expect(statusBody.acceptedLiabilities).toHaveLength(3);
+    expect(statusBody.acceptedLiabilities).toHaveLength(2);
   });
 
   it('rejects a stale wording hash before recording acceptance', async () => {
     const policy = await currentPolicyPayload();
     const wordingHashes = Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash]));
-    wordingHashes.parental_consent = 'stale-hash';
+    wordingHashes.operational_split = 'stale-hash';
     const req = postReq(
       '/api/admin/email-signoff',
       {
-        liabilities: { parental_consent: true, operational_split: true, right_to_object: true },
+        liabilities: { operational_split: true, right_to_object: true },
         policyVersion: policy.policyVersion,
         wordingHashes,
       },

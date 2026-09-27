@@ -24,7 +24,7 @@ import { currentDpaPolicy } from '../../lib/dpa';
 async function validEmailSignoff() {
   const policy = await currentPolicyPayload();
   return {
-    liabilities: { parental_consent: true, operational_split: true, right_to_object: true },
+    liabilities: Object.fromEntries(policy.liabilities.map((l) => [l.id, true])),
     policyVersion: policy.policyVersion,
     wordingHashes: Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash])),
   };

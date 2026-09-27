@@ -52,7 +52,6 @@ export function PrivacyNoticePage() {
     return () => { cancelled = true; };
   }, [clubSlug]);
 
-  const hosting = notice?.hosting ?? notice?.processor;
 
   return (
     <Stack gap="lg">
@@ -73,11 +72,6 @@ export function PrivacyNoticePage() {
             <Text fw={700}>{notice.controller.name}</Text>
             {notice.controller.email && <Text size="sm">Email: {notice.controller.email}</Text>}
             {notice.controller.address && <Text size="sm">Address: {notice.controller.address}</Text>}
-            {hosting && (
-              <Text size="sm" c="dimmed" mt="sm">
-                Hosting / software: {hosting.name}. {hosting.role}
-              </Text>
-            )}
           </Paper>
 
           {notice.held && notice.held.length > 0 && (
