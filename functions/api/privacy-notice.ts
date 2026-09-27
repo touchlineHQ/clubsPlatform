@@ -9,8 +9,9 @@ type ClubRow = {
 };
 
 /**
- * Per-club privacy notice naming the club as controller (#75).
- * Public — consent is only informed when the notice is reachable without login.
+ * Per-club privacy notice naming the club as controller (#75 / #146).
+ * Public — reachable without login. Always available once the club exists;
+ * published contact details are optional extras, not a gate.
  */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
@@ -47,14 +48,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }
   }
 
-  const notice = buildPrivacyNotice({
+  return json(buildPrivacyNotice({
     slug: row.slug,
     name: row.name,
     email,
     address,
-  });
-  if (!notice) {
-    return json({ error: "Privacy notice unavailable until the club provides contact details" }, { status: 503 });
-  }
-  return json(notice);
+  }));
 };

@@ -67,6 +67,10 @@ describe('privacy-notice GET', () => {
     expect(body.controller.name).toBe('Test FC');
     expect(body.controller.email).toBe('sec@test.example');
     expect(body.processor.name).toBe('touchlineHQ');
+    expect(body.hosting.name).toBe('touchlineHQ');
+    expect(body.held.some((h: string) => /FAN/i.test(h))).toBe(true);
+    expect(body.notHeld.some((h: string) => /Date of birth/i.test(h))).toBe(true);
+    expect(body.payments.toLowerCase()).toContain('gocardless');
   });
 
   it.each([
@@ -81,13 +85,16 @@ describe('privacy-notice GET', () => {
     expect((await res.json() as any).controller.address).toBe(expected);
   });
 
-  it.each(['{}', 'null', '{bad', '{"email":" ","address":{"line1":42}}'])('withholds a notice without contact details: %s', async (data) => {
+  it.each(['{}', 'null', '{bad', '{"email":" ","address":{"line1":42}}'])('still returns a notice without usable contact details: %s', async (data) => {
     sqlite.prepare(`UPDATE club_config SET data = ?`).run!(data);
     const res = await privacyNoticeGet(makeContext(getReq('/api/privacy-notice', { 'X-Club-Slug': CLUB }), {
       env: { DB: d1Over(sqlite) as any },
     }) as any);
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: expect.stringContaining('contact details') });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.controller.name).toBe('Test FC');
+    expect(body.held?.length).toBeGreaterThan(0);
+    expect(body.notHeld?.length).toBeGreaterThan(0);
   });
 
   it('returns 400 without club slug', async () => {
