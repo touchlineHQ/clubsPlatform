@@ -348,16 +348,18 @@ export function AdminUsersPage({ liveTeams }: Props) {
         subtitle={`${users.length} registered user${users.length !== 1 ? 's' : ''} · ${assignments.length} team assignment${assignments.length !== 1 ? 's' : ''}`}
       />
 
-      <Modal opened={editingUser !== null} onClose={() => setEditingUser(null)} title="Correct member data">
-        <Stack>
-          <TextInput label="Name" value={editName} onChange={(event) => setEditName(event.currentTarget.value)} required />
-          <TextInput label="Email" type="email" value={editEmail} onChange={(event) => setEditEmail(event.currentTarget.value)} required />
-          <Group justify="flex-end">
-            <Button variant="default" onClick={() => setEditingUser(null)} disabled={savingCorrection}>Cancel</Button>
-            <Button onClick={handleCorrection} loading={savingCorrection}>Save correction</Button>
-          </Group>
-        </Stack>
-      </Modal>
+      {editingUser !== null && (
+        <Modal opened onClose={() => setEditingUser(null)} title="Correct member data">
+          <Stack>
+            <TextInput label="Name" value={editName} onChange={(event) => setEditName(event.currentTarget.value)} required />
+            <TextInput label="Email" type="email" value={editEmail} onChange={(event) => setEditEmail(event.currentTarget.value)} required />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setEditingUser(null)} disabled={savingCorrection}>Cancel</Button>
+              <Button onClick={handleCorrection} loading={savingCorrection}>Save correction</Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
 
       <Tabs defaultValue="users">
         <Tabs.List>
