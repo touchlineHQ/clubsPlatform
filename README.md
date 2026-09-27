@@ -78,6 +78,14 @@ boundary work lands. See [docs/DATA_PROTECTION.md](docs/DATA_PROTECTION.md)
 for what is held, what is out of bounds, lawful bases, retention, and the
 current gap around imported parent emails.
 
+**One-club mode (current production posture):** one real club + fake `demo`,
+with `ALLOW_CLUB_SELF_REGISTER` off. Each club is the controller; the club site
+serves a privacy notice at `/#/privacy`. touchlineHQ does **not** need a host
+ICO fee or Art. 28 DPAs for other clubs until a second real club is hosted or
+self-serve registration is turned on. Do not run `import-players` against a
+real FA CSV on the live club until contact emails are not auth identities —
+prefer FAN-only import.
+
 ### End-to-end tests
 
 Playwright drives the real thing — a browser against the built bundle, the Pages

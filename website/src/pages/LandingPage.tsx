@@ -54,6 +54,7 @@ export const LandingPage = ({ clubs, selfRegister = false }: LandingPageProps) =
     <LandingHeader clubs={clubs} selfRegister={selfRegister} />
     <HeroSection selfRegister={selfRegister} />
     <ClubDirectorySection clubs={clubs} selfRegister={selfRegister} />
+    <FeaturesSection />
     {selfRegister ? <GetStartedSection /> : <HowToGetThisSection />}
     <ContactSection />
     <LandingFooter />
@@ -647,6 +648,83 @@ const AddClubCard = ({ onClick }: { onClick: () => void }) => {
   );
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FeaturesSection — honest data copy (#146); no "zero personal data" claims
+// ─────────────────────────────────────────────────────────────────────────────
+const FEATURES = [
+  {
+    icon: <IconUsers size={22} />,
+    title: 'Team pages & fixtures',
+    desc: 'Squad pages with live FA Full-Time fixtures and results, plus committee contacts the club chooses to publish.',
+    points: ['Coach & manager contacts the club publishes', 'Daily fixture sync', 'Scores hidden for younger age groups'],
+  },
+  {
+    icon: <IconCalendar size={22} />,
+    title: 'Membership & payments',
+    desc: 'Registrations keyed by FA Number (FAN). Subscriptions collected via GoCardless — payment references only, not card numbers.',
+    points: ['FAN / team / registration refs', 'GoCardless payment references', 'Admin tools for the club'],
+  },
+  {
+    icon: <IconShield size={22} />,
+    title: 'Privacy-aware by design',
+    desc: 'Each club is the data controller. The site holds admin logins and the membership refs needed to run the club — not player name, DOB, address, phone, medical, or safeguarding notes.',
+    points: ['Club named as controller on its privacy notice', 'No player name / DOB / medical in membership records', 'See each club\'s privacy notice for details'],
+  },
+] as const;
+
+function FeaturesSection() {
+  return (
+    <Box id="features" style={{ background: DARK, padding: '80px 24px' }}>
+      <Container size="xl">
+        <Stack gap={8} mb={40} style={{ textAlign: 'center' }}>
+          <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5 }}>Features</Text>
+          <Title order={2} fw={800} c="white" style={{ fontSize: '2rem' }}>
+            Built for grassroots clubs
+          </Title>
+          <Text c="gray.4" maw={640} mx="auto">
+            Open-source club sites with live fixtures, registrations, and an admin panel.
+            Personal data is limited to what the club needs — and each club publishes its own privacy notice.
+          </Text>
+        </Stack>
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
+          {FEATURES.map(({ icon, title, desc, points }) => (
+            <Paper
+              key={title}
+              radius="lg"
+              p="xl"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              <Group gap={12} mb="md">
+                <Box style={{
+                  width: 44, height: 44, borderRadius: 12,
+                  background: 'rgba(240,120,32,0.15)', color: O5,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {icon}
+                </Box>
+                <Text fw={700} c="white" size="lg">{title}</Text>
+              </Group>
+              <Text size="sm" c="gray.4" mb="md" lh={1.6}>{desc}</Text>
+              <Stack gap={6}>
+                {points.map((p) => (
+                  <Group key={p} gap={8} wrap="nowrap" align="flex-start">
+                    <IconCheck size={14} color={G5} style={{ marginTop: 3, flexShrink: 0 }} />
+                    <Text size="sm" c="gray.3">{p}</Text>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+          ))}
+        </SimpleGrid>
+      </Container>
+    </Box>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HowToGetThisSection (shown when self-register is off)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1049,9 +1127,15 @@ const LandingFooter = () => (
         </Text>
       </Box>
 
-      <Text size="xs" c="gray.5" m="auto">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
+      <Text size="xs" c="gray.5" m="auto" style={{ maxWidth: 420, textAlign: 'center' }}>
+        © {new Date().getFullYear()} touchlineHQ. Each club is the data controller of its site —
+        see that club's privacy notice (e.g.{' '}
+        <Anchor href={`/${DEMO_SLUG}/#/privacy`} size="xs" style={{ color: G5 }}>demo</Anchor>
+        ).
+      </Text>
 
       <Group gap={16} wrap="nowrap" style={{ flexShrink: 0, margin: 'auto' }}>
+        <Anchor href={`/${DEMO_SLUG}/#/privacy`} size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>Privacy</Anchor>
         <Anchor href="https://touchlinehq.co.uk" target="_blank" size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>touchlineHQ.co.uk ↗</Anchor>
       </Group>
     </div>

@@ -323,4 +323,18 @@ describe('LandingPage', () => {
     });
   });
 
+
+  it('renders an honest features section without zero-PII oversell', () => {
+    renderWithMantine(<LandingPage clubs={clubs} selfRegister={false} />, { authValue: mockLoggedOut });
+    expect(document.getElementById('features')).toBeTruthy();
+    expect(screen.getByText(/Privacy-aware by design/i)).toBeTruthy();
+    expect(screen.getAllByText(/data controller/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/zero personal data/i)).toBeNull();
+    expect(screen.queryByText(/no PII/i)).toBeNull();
+    expect(screen.queryByText(/GDPR-compliant architecture/i)).toBeNull();
+    expect(screen.queryByText(/No personal data stored/i)).toBeNull();
+    expect(screen.getByRole('link', { name: /^Privacy$/i })).toHaveAttribute('href', '/demo/#/privacy');
+  });
+
+
 });

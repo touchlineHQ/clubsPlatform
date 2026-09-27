@@ -1,13 +1,11 @@
 /**
- * Per-club privacy notice (#75).
+ * Per-club privacy notice (#75 / #146).
  *
- * The club is the data controller; touchlineHQ is the processor. Consent is
- * only valid when informed, so each club site must serve a notice naming the
- * controller, purposes, retention and rights. Generated from club_config —
- * no per-club free-text editing in this issue.
+ * The club is the data controller. Content is a fixed template filled with the
+ * club's name and published contact details from club_config — not free-text
+ * editing. Must stay aligned with docs/DATA_PROTECTION.md (what the DB holds).
  *
- * Retention periods are placeholders pending legal confirmation; see
- * docs/DATA_PROTECTION.md.
+ * Retention periods are placeholders pending legal confirmation.
  */
 
 export type PrivacyNoticeClub = {
@@ -28,22 +26,52 @@ export type PrivacyNotice = {
     email: string | null;
     address: string | null;
   };
+  /** Hosting / software provider — not a substitute for the club as controller. */
+  hosting: {
+    name: string;
+    role: string;
+  };
+  /** @deprecated Prefer `hosting`; kept for older clients. */
   processor: {
     name: string;
     role: string;
   };
+  held: string[];
+  notHeld: string[];
+  payments: string;
   purposes: Array<{ purpose: string; basis: string; notes: string }>;
   retention: Array<{ data: string; period: string }>;
   rights: string[];
+  howToContact: string;
   marketingConsent: string;
   icoFeeNote: string;
   generatedAt: string;
 };
 
-const PROCESSOR_NAME = "touchlineHQ";
+const HOSTING_NAME = "touchlineHQ";
 
-/** Generate the public notice from the club's controller details. */
-export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice | null {
+const HELD = [
+  "Admin and member account logins (email, name, password hash / OAuth tokens)",
+  "FA Number (FAN), team, registration status, and payment references",
+  "Session security data (IP address and user-agent) for the life of the session",
+  "Committee and coach contact details the club chooses to publish on this site",
+  "Club contact email and address the club publishes about itself",
+];
+
+const NOT_HELD = [
+  "Player or parent name (as a membership field)",
+  "Date of birth",
+  "Postal address of players or parents",
+  "Phone number",
+  "Medical information",
+  "Safeguarding notes",
+];
+
+/**
+ * Build the public notice. Always returns a notice when the club exists —
+ * controller contact details are optional (club name is enough).
+ */
+export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
   const addressParts = [
     club.address?.line1,
     club.address?.line2,
@@ -52,7 +80,18 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice | nul
 
   const email = club.email?.trim() || null;
   const address = addressParts.length > 0 ? addressParts.join(", ") : null;
-  if (!email && !address) return null;
+  const contactHint = email
+    ? `Email ${email}`
+    : address
+      ? `Write to ${address}`
+      : "Use the Contact page on this site, or speak to a club official";
+
+  const hostingRole =
+    "Provides the clubsPlatform software and hosting used to run this club site. "
+    + "The club decides what is stored and answers access, correction, and deletion "
+    + "requests. While this deployment hosts only one real club (plus a fake demo) "
+    + "and self-serve club registration is off, touchlineHQ is not operating as a "
+    + "multi-tenant Art. 28 processor for other clubs' member data.";
 
   return {
     controller: {
@@ -61,12 +100,20 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice | nul
       email,
       address,
     },
-    processor: {
-      name: PROCESSOR_NAME,
-      role:
-        "Processes personal data only on the documented instructions of the club "
-        + "and does not use parent or member contact data for its own marketing.",
+    hosting: {
+      name: HOSTING_NAME,
+      role: hostingRole,
     },
+    processor: {
+      name: HOSTING_NAME,
+      role: hostingRole,
+    },
+    held: [...HELD],
+    notHeld: [...NOT_HELD],
+    payments:
+      "Subscriptions and registration fees are collected through GoCardless. "
+      + "The club stores payment and mandate references only — not card numbers. "
+      + "The FA Number (FAN) is used as the membership reference for payments.",
     purposes: [
       {
         purpose: "Membership and subscriptions (FAN, team, payment status)",
@@ -130,13 +177,20 @@ export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice | nul
       "Withdraw marketing consent — use the unsubscribe link in any marketing email, or contact the club.",
       "Complain — you may complain to the ICO (https://ico.org.uk).",
     ],
+    howToContact:
+      `To ask ${club.name} to correct or delete personal data it holds about you: ${contactHint}. `
+      + "Membership FAN and payment history may be retained where the club still needs them for the membership contract.",
     marketingConsent:
       "Marketing emails are sent only when you have a current granted consent record. "
       + "Withdrawing marketing consent does not affect membership or operational messages.",
     icoFeeNote:
       "UK organisations that process personal data generally need to pay the ICO data "
       + "protection fee. The club, as controller, is responsible for checking and paying "
-      + "any fee that applies: https://ico.org.uk/for-organisations/data-protection-fee/",
+      + "any fee that applies: https://ico.org.uk/for-organisations/data-protection-fee/ "
+      + "While this deployment hosts only one real club and self-serve registration is off, "
+      + "touchlineHQ does not treat itself as needing a separate host ICO registration or "
+      + "Art. 28 DPAs for other clubs — that changes if a second real club is hosted or "
+      + "ALLOW_CLUB_SELF_REGISTER is turned on.",
     generatedAt: new Date().toISOString(),
   };
 }

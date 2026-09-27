@@ -11,10 +11,15 @@ type PrivacyNotice = {
     email: string | null;
     address: string | null;
   };
+  hosting?: { name: string; role: string };
   processor: { name: string; role: string };
+  held?: string[];
+  notHeld?: string[];
+  payments?: string;
   purposes: Array<{ purpose: string; basis: string; notes: string }>;
   retention: Array<{ data: string; period: string }>;
   rights: string[];
+  howToContact?: string;
   marketingConsent: string;
   icoFeeNote: string;
   generatedAt: string;
@@ -47,11 +52,13 @@ export function PrivacyNoticePage() {
     return () => { cancelled = true; };
   }, [clubSlug]);
 
+  const hosting = notice?.hosting ?? notice?.processor;
+
   return (
     <Stack gap="lg">
       <PageHeader
         title="Privacy notice"
-        subtitle="Who holds your data, why, and your rights"
+        subtitle="Who holds your data, what is stored, and how to ask for a correction or deletion"
       />
 
       {loading && (
@@ -66,10 +73,44 @@ export function PrivacyNoticePage() {
             <Text fw={700}>{notice.controller.name}</Text>
             {notice.controller.email && <Text size="sm">Email: {notice.controller.email}</Text>}
             {notice.controller.address && <Text size="sm">Address: {notice.controller.address}</Text>}
-            <Text size="sm" c="dimmed" mt="sm">
-              Processor: {notice.processor.name}. {notice.processor.role}
-            </Text>
+            {hosting && (
+              <Text size="sm" c="dimmed" mt="sm">
+                Hosting / software: {hosting.name}. {hosting.role}
+              </Text>
+            )}
           </Paper>
+
+          {notice.held && notice.held.length > 0 && (
+            <Paper p="lg" withBorder radius="md">
+              <Title order={3} ff={clubDesign.font.heading} mb="sm">What this club holds</Title>
+              <List size="sm">
+                {notice.held.map((item) => (
+                  <List.Item key={item}>{item}</List.Item>
+                ))}
+              </List>
+            </Paper>
+          )}
+
+          {notice.notHeld && notice.notHeld.length > 0 && (
+            <Paper p="lg" withBorder radius="md">
+              <Title order={3} ff={clubDesign.font.heading} mb="sm">What this club does not hold</Title>
+              <List size="sm">
+                {notice.notHeld.map((item) => (
+                  <List.Item key={item}>{item}</List.Item>
+                ))}
+              </List>
+              <Text size="sm" c="dimmed" mt="md">
+                Those fields appear on some FA export CSVs. The platform is designed not to store them.
+              </Text>
+            </Paper>
+          )}
+
+          {notice.payments && (
+            <Paper p="lg" withBorder radius="md">
+              <Title order={3} ff={clubDesign.font.heading} mb="sm">Payments</Title>
+              <Text size="sm">{notice.payments}</Text>
+            </Paper>
+          )}
 
           <Paper p="lg" withBorder radius="md">
             <Title order={3} ff={clubDesign.font.heading} mb="sm">Purposes and lawful basis</Title>
@@ -102,6 +143,9 @@ export function PrivacyNoticePage() {
                 <List.Item key={r}>{r}</List.Item>
               ))}
             </List>
+            {notice.howToContact && (
+              <Text size="sm" mt="md">{notice.howToContact}</Text>
+            )}
             <Text size="sm" mt="md">{notice.marketingConsent}</Text>
           </Paper>
 
