@@ -4,7 +4,8 @@ import { useMediaQuery } from '@mantine/hooks';
 import { useLocation, Link } from 'react-router-dom';
 import {
   IconBallFootball, IconCalendar, IconChevronRight, IconClipboardList, IconKey,
-  IconLogout, IconReceipt, IconSettings, IconShirt, IconShoppingBag, IconUsers, IconX,
+  IconLogout, IconReceipt, IconSettings, IconShirt, IconShoppingBag,
+  IconShield, IconUsers, IconX,
 } from '@tabler/icons-react';
 import type { Club, NavItem, TeamFeed, TeamSection } from '../types';
 import { useSection } from '../context/SectionContext';
@@ -696,6 +697,14 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
             )}
           </Paper>
         )}
+        <NavRow
+          to="/privacy"
+          label="Privacy notice"
+          icon={<IconShield size={16} />}
+          active={pathname === '/privacy'}
+          onClick={onNavClick}
+        />
+
         {user && (
           <UnstyledButton
             onClick={handleLogout}

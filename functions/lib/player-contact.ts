@@ -1,4 +1,5 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import { hasCurrentMarketingConsent } from "./consent";
 
 /**
  * Purpose a club may send to a contact address for.
@@ -19,12 +20,11 @@ export interface PlayerContactForSend {
 }
 
 /**
- * Whether a contact row is eligible to receive mail for `purpose`.
+ * Whether a contact row's local columns look eligible for `purpose`.
  *
- * The only gate callers may use. Do not SELECT `player_contact.email` (or
- * fall back to `user.email`) for outbound mail outside this helper — that is
- * how pending / withdrawn / marketing-without-consent addresses leak onto the
- * wire. The send guard in #133 builds on this.
+ * For marketing, callers that can hit the DB must use emailForSend (or
+ * hasCurrentMarketingConsent) — marketingOptIn is a denormalised mirror of
+ * consent_record and is not authoritative on its own (#75).
  */
 export function isContactSendable(
   contact: Pick<PlayerContactForSend, "state" | "operationalOptIn" | "marketingOptIn">,
@@ -38,6 +38,11 @@ export function isContactSendable(
 /**
  * Resolve a contact address for sending within `clubSlug`. Returns null when
  * the row is missing, belongs to another club, or is not eligible for `purpose`.
+ *
+ * Marketing requires a current granted consent_record (#75) in addition to a
+ * confirmed contact. Operational still uses the operationalOptIn column.
+ * Do not SELECT player_contact.email (or fall back to user.email) for outbound
+ * mail outside this helper.
  */
 export async function emailForSend(
   db: D1Database,
@@ -53,6 +58,21 @@ export async function emailForSend(
     .bind(contactId, clubSlug)
     .first<PlayerContactForSend>();
 
-  if (!row || !isContactSendable(row, purpose)) return null;
+  if (!row || row.state !== "confirmed") return null;
+
+  if (purpose === "operational") {
+    if (row.operationalOptIn !== 1) return null;
+    return row.email;
+  }
+
+  // Marketing: consent_record is authoritative. marketingOptIn is synced on
+  // grant/withdraw but a stale 1 must not leak past a withdrawn consent.
+  const consented = await hasCurrentMarketingConsent(
+    db,
+    clubSlug,
+    "player_contact",
+    contactId,
+  );
+  if (!consented) return null;
   return row.email;
 }

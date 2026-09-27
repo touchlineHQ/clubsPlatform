@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Anchor, Badge, Box, Button, Container, Group, Menu, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, PasswordInput,
-  Title, Alert,
+  Title, Alert, Checkbox,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
@@ -646,20 +646,40 @@ const AuthCard = () => {
   const [liabilities, setLiabilities] = useState<EmailSignoffLiability[]>([]);
   const [policyVersion, setPolicyVersion] = useState<string | null>(null);
   const [signoffTicks, setSignoffTicks] = useState<EmailSignoffTicks>({});
+  const [dpaAccepted, setDpaAccepted] = useState(false);
+  const [dpaPolicyVersion, setDpaPolicyVersion] = useState<string | null>(null);
+  const [dpaWording, setDpaWording] = useState<string>('');
+  const [dpaWordingHash, setDpaWordingHash] = useState<string>('');
+  const [dpaIcoNote, setDpaIcoNote] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/email-signoff-policy');
-        if (!res.ok) return;
-        const data = await res.json() as { policyVersion?: string; liabilities?: EmailSignoffLiability[] };
-        if (!cancelled && data.liabilities && data.policyVersion) {
-          setPolicyVersion(data.policyVersion);
-          setLiabilities(data.liabilities);
-          const initial: EmailSignoffTicks = {};
-          for (const l of data.liabilities) initial[l.id] = false;
-          setSignoffTicks(initial);
+        const [signoffRes, dpaRes] = await Promise.all([
+          fetch('/api/email-signoff-policy'),
+          fetch('/api/dpa-policy'),
+        ]);
+        if (signoffRes.ok) {
+          const data = await signoffRes.json() as { policyVersion?: string; liabilities?: EmailSignoffLiability[] };
+          if (!cancelled && data.liabilities && data.policyVersion) {
+            setPolicyVersion(data.policyVersion);
+            setLiabilities(data.liabilities);
+            const initial: EmailSignoffTicks = {};
+            for (const l of data.liabilities) initial[l.id] = false;
+            setSignoffTicks(initial);
+          }
+        }
+        if (dpaRes.ok) {
+          const data = await dpaRes.json() as {
+            policyVersion?: string; wording?: string; wordingHash?: string; icoFeeNote?: string;
+          };
+          if (!cancelled && data.policyVersion && data.wording && data.wordingHash) {
+            setDpaPolicyVersion(data.policyVersion);
+            setDpaWording(data.wording);
+            setDpaWordingHash(data.wordingHash);
+            setDpaIcoNote(data.icoFeeNote ?? '');
+          }
         }
       } catch {
         // Register will still require the ticks server-side.
@@ -674,6 +694,10 @@ const AuthCard = () => {
     setSuccess('');
     if (liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks)) {
       setError('Please independently accept each contact-email liability before creating your club.');
+      return;
+    }
+    if (!dpaAccepted || !dpaPolicyVersion || !dpaWordingHash) {
+      setError('Please accept the processor agreement (DPA) before creating your club.');
       return;
     }
     setLoading(true);
@@ -697,6 +721,11 @@ const AuthCard = () => {
         body: JSON.stringify({
           clubName,
           emailSignoff: { liabilities: signoffLiabilities, policyVersion, wordingHashes },
+          dpaAcceptance: {
+            accepted: true,
+            policyVersion: dpaPolicyVersion,
+            wordingHash: dpaWordingHash,
+          },
         }),
       });
       const data = await res.json() as { ok?: boolean; slug?: string; error?: string };
@@ -774,6 +803,23 @@ const AuthCard = () => {
                 />
               </Stack>
             )}
+            {dpaWording && (
+              <Stack gap="xs">
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+                  Processor agreement
+                </Text>
+                <Text size="xs" c="dimmed">{dpaWording}</Text>
+                {dpaIcoNote && (
+                  <Text size="xs" c="dimmed">{dpaIcoNote}</Text>
+                )}
+                <Checkbox
+                  label="I accept the processor agreement on behalf of this club"
+                  checked={dpaAccepted}
+                  onChange={(e) => setDpaAccepted(e.currentTarget.checked)}
+                  disabled={loading}
+                />
+              </Stack>
+            )}
             <Button
               type="submit"
               fullWidth
@@ -782,7 +828,10 @@ const AuthCard = () => {
               size="md"
               loading={loading}
               mt={4}
-              disabled={liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks)}
+              disabled={
+                (liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks))
+                || !dpaAccepted
+              }
             >
               Create my club site →
             </Button>

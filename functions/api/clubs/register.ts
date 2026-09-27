@@ -11,6 +11,12 @@ import {
   SignoffPolicyMismatchError,
   EMAIL_SIGNOFF_POLICY_VERSION,
 } from "../../lib/club-email-signoff";
+import {
+  parseDpaAcceptance,
+  recordDpaAcceptance,
+  DpaPolicyMismatchError,
+  DPA_POLICY_VERSION,
+} from "../../lib/dpa";
 
 function slugify(name: string): string {
   return name
@@ -39,6 +45,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body = (await context.request.json()) as Partial<{
     clubName: string;
     emailSignoff: unknown;
+    dpaAcceptance: unknown;
   }>;
   const clubName = body.clubName?.trim() ?? "";
 
@@ -59,6 +66,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         error:
           "emailSignoff requires parental_consent, operational_split and right_to_object independently true",
       },
+      { status: 400 },
+    );
+  }
+
+  // UK GDPR Art. 28 processor agreement — signup cannot complete without it (#75).
+  const dpa = parseDpaAcceptance(body.dpaAcceptance);
+  if (!dpa) {
+    return json(
+      { error: "dpaAcceptance requires accepted=true with policyVersion and wordingHash" },
       { status: 400 },
     );
   }
@@ -99,11 +115,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     .bind(slug, userId)
     .run();
 
+  const ip = requestIp(context.request);
+
   try {
     await recordEmailSignoff(context.env.DB, {
       clubSlug: slug,
       userId,
-      ipAddress: requestIp(context.request),
+      ipAddress: ip,
       ticks,
       policy,
     });
@@ -112,6 +130,20 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       return json({ error: err.message }, { status: 400 });
     }
     if (err instanceof SignoffPolicyMismatchError) {
+      return json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
+
+  try {
+    await recordDpaAcceptance(context.env.DB, {
+      clubSlug: slug,
+      userId,
+      ipAddress: ip,
+      policy: dpa,
+    });
+  } catch (err) {
+    if (err instanceof DpaPolicyMismatchError) {
       return json({ error: err.message }, { status: 409 });
     }
     throw err;
@@ -132,6 +164,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       properties: {
         club_slug: slug,
         policy_version: EMAIL_SIGNOFF_POLICY_VERSION,
+        source: 'registration',
+      },
+    });
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'dpa accepted',
+      ...clubGroups(slug),
+      properties: {
+        club_slug: slug,
+        policy_version: DPA_POLICY_VERSION,
         source: 'registration',
       },
     });

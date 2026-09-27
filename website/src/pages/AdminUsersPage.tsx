@@ -3,7 +3,7 @@ import {
   Table, Select, Stack, Alert, Loader, Center, Badge, Text,
   Tabs, Paper, Group, Button, Box,
 } from '@mantine/core';
-import { IconUsers, IconUserCog } from '@tabler/icons-react';
+import { IconUsers, IconUserCog, IconDownload, IconTrash } from '@tabler/icons-react';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
@@ -43,6 +43,8 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
+  const [dataBusy, setDataBusy] = useState<string | null>(null);
+  const [dataMessage, setDataMessage] = useState('');
 
   // Team assignments tab state
   const [assignments, setAssignments] = useState<TeamRoleAssignment[]>([]);
@@ -121,6 +123,62 @@ export function AdminUsersPage({ liveTeams }: Props) {
       setError('Failed to update role');
     } finally {
       setUpdating(null);
+    }
+  };
+
+
+  const handleExportMember = async (userId: string, label: string) => {
+    setDataBusy(userId);
+    setDataMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/member-data?userId=${encodeURIComponent(userId)}`, {
+        headers: clubHeaders,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Export failed');
+      }
+      const bundle = await res.json();
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `member-data-${label || userId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDataMessage('Member data exported.');
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.exportMember' });
+      setError(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setDataBusy(null);
+    }
+  };
+
+  const handleDeleteMember = async (userId: string, label: string) => {
+    if (!window.confirm(
+      `Delete personal data for ${label || userId}? Contact emails and consent records at this club will be purged. Membership FAN/payment records are kept.`,
+    )) return;
+    setDataBusy(userId);
+    setDataMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/member-data?userId=${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        headers: clubHeaders,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Delete failed');
+      }
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setDataMessage('Member personal data deleted.');
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.deleteMember' });
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDataBusy(null);
     }
   };
 
@@ -262,6 +320,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
         <Tabs.Panel value="users" pt="md">
           <Stack>
             {error && <Alert color="red" variant="light">{error}</Alert>}
+            {dataMessage && <Alert color="green" variant="light">{dataMessage}</Alert>}
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
               <Table striped highlightOnHover>
                 <Table.Thead>
@@ -269,6 +328,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
                     <Table.Th>Name</Table.Th>
                     <Table.Th>Email</Table.Th>
                     <Table.Th>Role</Table.Th>
+                    <Table.Th>Data rights</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -294,6 +354,29 @@ export function AdminUsersPage({ liveTeams }: Props) {
                           radius="md"
                           disabled={updating === user.id}
                         />
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={6} wrap="nowrap">
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconDownload size={12} />}
+                            loading={dataBusy === user.id}
+                            onClick={() => handleExportMember(user.id, user.email || user.name)}
+                          >
+                            Export
+                          </Button>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            color="red"
+                            leftSection={<IconTrash size={12} />}
+                            loading={dataBusy === user.id}
+                            onClick={() => handleDeleteMember(user.id, user.email || user.name)}
+                          >
+                            Delete
+                          </Button>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}
