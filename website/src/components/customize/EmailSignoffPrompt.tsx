@@ -95,11 +95,15 @@ export function EmailSignoffPrompt() {
     setError('');
     try {
       const liabilities: Record<string, boolean> = {};
-      for (const l of status.liabilities) liabilities[l.id] = true;
+      const wordingHashes: Record<string, string> = {};
+      for (const l of status.liabilities) {
+        liabilities[l.id] = true;
+        wordingHashes[l.id] = l.wordingHash;
+      }
       const res = await fetch('/api/admin/email-signoff', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ liabilities }),
+        body: JSON.stringify({ liabilities, policyVersion: status.policyVersion, wordingHashes }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };

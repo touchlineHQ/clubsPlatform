@@ -51,6 +51,11 @@ export const EMAIL_SIGNOFF_LIABILITY_IDS = Object.keys(
 
 export type EmailSignoffTicks = Record<EmailSignoffLiabilityId, boolean>;
 
+export type EmailSignoffPolicySubmission = {
+  policyVersion: string;
+  wordingHashes: Record<EmailSignoffLiabilityId, string>;
+};
+
 /** SHA-256 hex digest of the exact wording string shown for a liability. */
 export async function hashWording(wording: string): Promise<string> {
   const bytes = new TextEncoder().encode(wording);
@@ -89,6 +94,70 @@ export async function currentPolicyPayload() {
   };
 }
 
+/** Parse the policy metadata a client says it displayed before accepting. */
+export function parseSignoffPolicy(raw: unknown): EmailSignoffPolicySubmission | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.policyVersion !== "string" || !obj.policyVersion) return null;
+  if (!obj.wordingHashes || typeof obj.wordingHashes !== "object") return null;
+  const hashes = obj.wordingHashes as Record<string, unknown>;
+  const wordingHashes = {} as Record<EmailSignoffLiabilityId, string>;
+  for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
+    if (typeof hashes[id] !== "string" || !hashes[id]) return null;
+    wordingHashes[id] = hashes[id] as string;
+  }
+  return { policyVersion: obj.policyVersion, wordingHashes };
+}
+
+async function currentWordingHashes(): Promise<Record<EmailSignoffLiabilityId, string>> {
+  const hashes = {} as Record<EmailSignoffLiabilityId, string>;
+  for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
+    hashes[id] = await hashWording(EMAIL_SIGNOFF_LIABILITIES[id].wording);
+  }
+  return hashes;
+}
+
+async function validatePolicySubmission(
+  submission: EmailSignoffPolicySubmission,
+): Promise<void> {
+  const expected = await currentWordingHashes();
+  if (
+    submission.policyVersion !== EMAIL_SIGNOFF_POLICY_VERSION
+    || EMAIL_SIGNOFF_LIABILITY_IDS.some((id) => submission.wordingHashes[id] !== expected[id])
+  ) {
+    throw new SignoffPolicyMismatchError();
+  }
+}
+
+type CurrentSignoffRow = { liability: string; acceptanceId: string; wordingHash: string };
+
+async function currentSignoffRows(
+  db: D1Database,
+  clubSlug: string,
+): Promise<CurrentSignoffRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT liability, acceptanceId, wordingHash FROM "club_email_signoff"
+        WHERE clubSlug = ? AND policyVersion = ?`,
+    )
+    .bind(clubSlug, EMAIL_SIGNOFF_POLICY_VERSION)
+    .all<CurrentSignoffRow>();
+  return results ?? [];
+}
+
+async function isCompleteCurrentSignoff(rows: CurrentSignoffRow[]): Promise<boolean> {
+  if (rows.length !== EMAIL_SIGNOFF_LIABILITY_IDS.length) return false;
+  const ids = new Set(rows.map((row) => row.liability));
+  const acceptanceIds = new Set(rows.map((row) => row.acceptanceId));
+  if (
+    ids.size !== EMAIL_SIGNOFF_LIABILITY_IDS.length
+    || !EMAIL_SIGNOFF_LIABILITY_IDS.every((id) => ids.has(id))
+    || acceptanceIds.size !== 1
+  ) return false;
+  const expected = await currentWordingHashes();
+  return rows.every((row) => expected[row.liability as EmailSignoffLiabilityId] === row.wordingHash);
+}
+
 /**
  * True when the club has accepted every liability under the current policy
  * version. Partial acceptance, or acceptance under an older wording, is false.
@@ -97,16 +166,7 @@ export async function hasCurrentEmailSignoff(
   db: D1Database,
   clubSlug: string,
 ): Promise<boolean> {
-  const { results } = await db
-    .prepare(
-      `SELECT liability FROM "club_email_signoff"
-        WHERE clubSlug = ? AND policyVersion = ?`,
-    )
-    .bind(clubSlug, EMAIL_SIGNOFF_POLICY_VERSION)
-    .all<{ liability: string }>();
-
-  const held = new Set((results ?? []).map((r) => r.liability));
-  return EMAIL_SIGNOFF_LIABILITY_IDS.every((id) => held.has(id));
+  return isCompleteCurrentSignoff(await currentSignoffRows(db, clubSlug));
 }
 
 /** Acceptance group id for the club's current-version sign-off, or null. */
@@ -114,17 +174,9 @@ export async function currentSignoffAcceptanceId(
   db: D1Database,
   clubSlug: string,
 ): Promise<string | null> {
-  const row = await db
-    .prepare(
-      `SELECT acceptanceId FROM "club_email_signoff"
-        WHERE clubSlug = ? AND policyVersion = ?
-        LIMIT 1`,
-    )
-    .bind(clubSlug, EMAIL_SIGNOFF_POLICY_VERSION)
-    .first<{ acceptanceId: string }>();
-  if (!row) return null;
-  if (!(await hasCurrentEmailSignoff(db, clubSlug))) return null;
-  return row.acceptanceId;
+  const rows = await currentSignoffRows(db, clubSlug);
+  if (!(await isCompleteCurrentSignoff(rows))) return null;
+  return rows[0].acceptanceId;
 }
 
 /**
@@ -162,11 +214,13 @@ export async function recordEmailSignoff(
     userId,
     ipAddress,
     ticks,
+    policy,
   }: {
     clubSlug: string;
     userId: string;
     ipAddress: string | null;
     ticks: EmailSignoffTicks;
+    policy: EmailSignoffPolicySubmission;
   },
 ): Promise<{ acceptanceId: string; alreadyHeld: boolean }> {
   for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
@@ -175,18 +229,27 @@ export async function recordEmailSignoff(
     }
   }
 
+  await validatePolicySubmission(policy);
+
   if (await hasCurrentEmailSignoff(db, clubSlug)) {
     const existing = await currentSignoffAcceptanceId(db, clubSlug);
     return { acceptanceId: existing!, alreadyHeld: true };
   }
 
-  const acceptanceId = randomId("emsign");
+  const existingRows = await currentSignoffRows(db, clubSlug);
+  const existingAcceptanceIds = new Set(existingRows.map((row) => row.acceptanceId));
+  if (existingAcceptanceIds.size > 1) {
+    throw new Error("Email sign-off rows have inconsistent acceptance IDs");
+  }
+  const acceptanceId = existingRows[0]?.acceptanceId ?? randomId("emsign");
   const acceptedAt = nowMs();
   const policyVersion = EMAIL_SIGNOFF_POLICY_VERSION;
+  const wordingHashes = await currentWordingHashes();
 
-  for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
-    const wordingHash = await hashWording(EMAIL_SIGNOFF_LIABILITIES[id].wording);
-    await db
+  // D1 batches execute atomically. Keeping all three INSERTs in one batch means
+  // a failed accept cannot leave a partial sign-off behind.
+  await db.batch(EMAIL_SIGNOFF_LIABILITY_IDS.map((id) =>
+    db
       .prepare(
         `INSERT INTO "club_email_signoff"
            (id, acceptanceId, clubSlug, liability, userId, acceptedAt, ipAddress, policyVersion, wordingHash)
@@ -202,10 +265,9 @@ export async function recordEmailSignoff(
         acceptedAt,
         ipAddress,
         policyVersion,
-        wordingHash,
-      )
-      .run();
-  }
+        wordingHashes[id],
+      ),
+  ));
 
   // A concurrent accept may have won the UNIQUE race with a different
   // acceptanceId. Re-read so callers stamp player_contact with the held one.
@@ -214,6 +276,13 @@ export async function recordEmailSignoff(
     throw new Error("Failed to record email sign-off");
   }
   return { acceptanceId: held, alreadyHeld: false };
+}
+
+export class SignoffPolicyMismatchError extends Error {
+  constructor() {
+    super("The email sign-off policy changed; reload the page and review the current wording");
+    this.name = "SignoffPolicyMismatchError";
+  }
 }
 
 export class SignoffIncompleteError extends Error {

@@ -4,6 +4,7 @@ import {
   EMAIL_SIGNOFF_LIABILITY_IDS,
   EMAIL_SIGNOFF_POLICY_VERSION,
   currentAcceptedLiabilities,
+  currentPolicyPayload,
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
   hashWording,
@@ -64,6 +65,14 @@ describe('club-email-signoff policy', () => {
   });
 });
 
+async function validPolicy() {
+  const payload = await currentPolicyPayload();
+  return {
+    policyVersion: payload.policyVersion,
+    wordingHashes: Object.fromEntries(payload.liabilities.map((l) => [l.id, l.wordingHash])) as any,
+  };
+}
+
 describe('club-email-signoff persistence', () => {
   let sqlite: SqliteDb;
 
@@ -88,6 +97,7 @@ describe('club-email-signoff persistence', () => {
       userId: 'user_1',
       ipAddress: '203.0.113.9',
       ticks,
+      policy: await validPolicy(),
     });
 
     expect(acceptanceId).toMatch(/^emsign_/);
@@ -122,6 +132,24 @@ describe('club-email-signoff persistence', () => {
     expect(await currentAcceptedLiabilities(db as any, 'test-club')).toEqual(['parental_consent']);
   });
 
+  it('fills a partial shared acceptance atomically under one acceptanceId', async () => {
+    const db = d1Over(sqlite);
+    const policy = await validPolicy();
+    const hash = await hashWording(EMAIL_SIGNOFF_LIABILITIES.parental_consent.wording);
+    sqlite.exec(`INSERT INTO "club_email_signoff"
+      (id, acceptanceId, clubSlug, liability, userId, acceptedAt, ipAddress, policyVersion, wordingHash)
+      VALUES ('partial','shared_a','test-club','parental_consent','user_1',1,NULL,'${EMAIL_SIGNOFF_POLICY_VERSION}','${hash}')`);
+
+    const { acceptanceId } = await recordEmailSignoff(db as any, {
+      clubSlug: 'test-club', userId: 'user_2', ipAddress: null,
+      ticks: { parental_consent: true, operational_split: true, right_to_object: true },
+      policy,
+    });
+    expect(acceptanceId).toBe('shared_a');
+    const rows = sqlite.prepare(`SELECT DISTINCT acceptanceId FROM "club_email_signoff" WHERE clubSlug = 'test-club'`).all() as { acceptanceId: string }[];
+    expect(rows).toEqual([{ acceptanceId: 'shared_a' }]);
+  });
+
   it('keeps old-version rows but treats the club as unsigned for new collection', async () => {
     const db = d1Over(sqlite);
     for (const liability of EMAIL_SIGNOFF_LIABILITY_IDS) {
@@ -142,6 +170,7 @@ describe('club-email-signoff persistence', () => {
         operational_split: true,
         right_to_object: true,
       },
+      policy: await validPolicy(),
     });
 
     expect(await hasCurrentEmailSignoff(db as any, 'test-club')).toBe(true);

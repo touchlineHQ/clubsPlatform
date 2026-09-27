@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { makeContext, adminSession, getReq, postReq } from '../test-utils';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
-import { EMAIL_SIGNOFF_POLICY_VERSION } from '../../lib/club-email-signoff';
+import { currentPolicyPayload, EMAIL_SIGNOFF_POLICY_VERSION } from '../../lib/club-email-signoff';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockGetPostHog = vi.hoisted(() => vi.fn(() => null as any));
@@ -52,6 +52,8 @@ describe('admin email-signoff', () => {
   });
 
   it('rejects a partial accept and records a full one', async () => {
+    const policy = await currentPolicyPayload();
+    const wordingHashes = Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash]));
     const bad = postReq(
       '/api/admin/email-signoff',
       { liabilities: { parental_consent: true, operational_split: true, right_to_object: false } },
@@ -68,6 +70,8 @@ describe('admin email-signoff', () => {
           operational_split: true,
           right_to_object: true,
         },
+        policyVersion: policy.policyVersion,
+        wordingHashes,
       },
       { 'X-Club-Slug': 'test-club', 'CF-Connecting-IP': '198.51.100.20' },
     );
@@ -87,6 +91,23 @@ describe('admin email-signoff', () => {
     const statusBody = await status.json() as any;
     expect(statusBody.current).toBe(true);
     expect(statusBody.acceptedLiabilities).toHaveLength(3);
+  });
+
+  it('rejects a stale wording hash before recording acceptance', async () => {
+    const policy = await currentPolicyPayload();
+    const wordingHashes = Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash]));
+    wordingHashes.parental_consent = 'stale-hash';
+    const req = postReq(
+      '/api/admin/email-signoff',
+      {
+        liabilities: { parental_consent: true, operational_split: true, right_to_object: true },
+        policyVersion: policy.policyVersion,
+        wordingHashes,
+      },
+      { 'X-Club-Slug': 'test-club' },
+    );
+    const res = await onRequestPost(makeContext(req, { env: { DB: d1Over(sqlite) as any } }) as any);
+    expect(res.status).toBe(409);
   });
 
   it('returns 401 when not authenticated', async () => {

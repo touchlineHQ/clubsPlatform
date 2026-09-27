@@ -4,6 +4,7 @@ export type EmailSignoffLiability = {
   id: string;
   title: string;
   wording: string;
+  wordingHash: string;
 };
 
 export type EmailSignoffTicks = Record<string, boolean>;

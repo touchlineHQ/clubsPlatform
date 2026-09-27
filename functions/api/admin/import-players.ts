@@ -176,6 +176,7 @@ interface ImportRunTotals {
   /** Contact counts; column names retained from the pre-#131 schema. */
   usersCreated: number;
   usersSkipped: number;
+  contactsDropped: number;
   errorCount: number;
 }
 
@@ -735,8 +736,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .prepare(
         `INSERT INTO "player_import_run_part"
            (runId, partIndex, rowCount, playersCreated, registrationsCreated,
-            registrationsUpdated, usersCreated, usersSkipped, errorCount, recordedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            registrationsUpdated, usersCreated, usersSkipped, contactsDropped, errorCount, recordedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         importRunId,
@@ -747,6 +748,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         importResult.registrations.updated,
         importResult.contacts.created,
         importResult.contacts.skipped,
+        importResult.contacts.dropped,
         importResult.errors.length,
         nowMs(),
       )
@@ -762,6 +764,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
                   COALESCE(SUM(registrationsUpdated), 0) AS registrationsUpdated,
                   COALESCE(SUM(usersCreated), 0) AS usersCreated,
                   COALESCE(SUM(usersSkipped), 0) AS usersSkipped,
+                  COALESCE(SUM(contactsDropped), 0) AS contactsDropped,
                   COALESCE(SUM(errorCount), 0) AS errorCount
              FROM "player_import_run_part" WHERE runId = ?`,
         )
@@ -803,6 +806,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // One event per import, not per chunk — otherwise a 300-row file reports as
   // twelve small imports and the funnel counts are meaningless. The per-chunk
   // counts stay in the response for the client to sum.
+  const contactsDropped = runTotals?.contactsDropped ?? importResult.contacts.dropped;
   if (posthog && isFinalPart) {
     await posthog.captureImmediate({
       distinctId: adminId,
@@ -817,21 +821,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         registrations_updated: runTotals?.registrationsUpdated ?? importResult.registrations.updated,
         contacts_created: runTotals?.usersCreated ?? importResult.contacts.created,
         contacts_skipped: runTotals?.usersSkipped ?? importResult.contacts.skipped,
-        contacts_dropped: importResult.contacts.dropped,
+        contacts_dropped: contactsDropped,
         error_count: runTotals?.errorCount ?? importResult.errors.length,
         stale_count: importResult.stale.count,
       },
     });
   }
 
-  if (posthog && importResult.contacts.dropped > 0 && isFinalPart) {
+  if (posthog && contactsDropped > 0 && isFinalPart) {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'import contact emails dropped',
       ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
-        contacts_dropped: importResult.contacts.dropped,
+        contacts_dropped: contactsDropped,
         dry_run: false,
         reason: 'club_email_signoff_missing',
       },

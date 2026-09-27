@@ -867,6 +867,7 @@ describe('import-players POST — chunked writes', () => {
       registrationsUpdated: 55,
       usersCreated: 8,
       usersSkipped: 12,
+      contactsDropped: 17,
       errorCount: 2,
     };
     const db = makeDb({
@@ -887,6 +888,7 @@ describe('import-players POST — chunked writes', () => {
         registrations_updated: 55,
         contacts_created: 8,
         contacts_skipped: 12,
+        contacts_dropped: 17,
       }),
     }));
   });
@@ -1318,7 +1320,7 @@ describe('import-players POST — email sign-off gate', () => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(adminSession);
     mockHasCurrentEmailSignoff.mockResolvedValue(false);
-    mockCurrentSignoffAcceptanceId.mockResolvedValue(null);
+    mockCurrentSignoffAcceptanceId.mockResolvedValue(null as any);
   });
 
   it('strips contact emails when the club has no current sign-off and reports dropped', async () => {

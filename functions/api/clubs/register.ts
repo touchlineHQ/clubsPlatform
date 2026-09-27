@@ -4,9 +4,11 @@ import { type Env, json, nowMs, randomId, requireAuth, isMultiClubMode } from ".
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   parseSignoffTicks,
+  parseSignoffPolicy,
   recordEmailSignoff,
   requestIp,
   SignoffIncompleteError,
+  SignoffPolicyMismatchError,
   EMAIL_SIGNOFF_POLICY_VERSION,
 } from "../../lib/club-email-signoff";
 
@@ -46,8 +48,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   // Three independent liabilities — no bundled accept-all. Required at
   // registration so a new club cannot collect contact emails unsigned (#130).
-  const ticks = parseSignoffTicks(body.emailSignoff);
-  if (!ticks) {
+  const signoff = body.emailSignoff && typeof body.emailSignoff === "object"
+    ? body.emailSignoff as Record<string, unknown>
+    : null;
+  const ticks = parseSignoffTicks(signoff?.liabilities);
+  const policy = parseSignoffPolicy(signoff);
+  if (!ticks || !policy) {
     return json(
       {
         error:
@@ -99,10 +105,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       userId,
       ipAddress: requestIp(context.request),
       ticks,
+      policy,
     });
   } catch (err) {
     if (err instanceof SignoffIncompleteError) {
       return json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof SignoffPolicyMismatchError) {
+      return json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

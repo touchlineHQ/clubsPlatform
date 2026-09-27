@@ -5,10 +5,12 @@ import {
   currentAcceptedLiabilities,
   currentPolicyPayload,
   hasCurrentEmailSignoff,
+  parseSignoffPolicy,
   parseSignoffTicks,
   recordEmailSignoff,
   requestIp,
   SignoffIncompleteError,
+  SignoffPolicyMismatchError,
 } from "../../lib/club-email-signoff";
 
 /** Current sign-off status + the wording the admin must see before ticking. */
@@ -56,10 +58,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const ticks = parseSignoffTicks(
-    body && typeof body === "object" ? (body as { liabilities?: unknown }).liabilities ?? body : null,
-  );
-  if (!ticks) {
+  const bodyObject = body && typeof body === "object" ? body as Record<string, unknown> : null;
+  const ticks = parseSignoffTicks(bodyObject?.liabilities);
+  const policy = parseSignoffPolicy(bodyObject);
+  if (!ticks || !policy) {
     return json(
       {
         error:
@@ -78,6 +80,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       userId,
       ipAddress,
       ticks,
+      policy,
     });
 
     if (!alreadyHeld) {
@@ -100,6 +103,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   } catch (err) {
     if (err instanceof SignoffIncompleteError) {
       return json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof SignoffPolicyMismatchError) {
+      return json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

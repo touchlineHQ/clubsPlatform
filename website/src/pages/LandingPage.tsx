@@ -644,6 +644,7 @@ const AuthCard = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [liabilities, setLiabilities] = useState<EmailSignoffLiability[]>([]);
+  const [policyVersion, setPolicyVersion] = useState<string | null>(null);
   const [signoffTicks, setSignoffTicks] = useState<EmailSignoffTicks>({});
 
   useEffect(() => {
@@ -652,8 +653,9 @@ const AuthCard = () => {
       try {
         const res = await fetch('/api/email-signoff-policy');
         if (!res.ok) return;
-        const data = await res.json() as { liabilities?: EmailSignoffLiability[] };
-        if (!cancelled && data.liabilities) {
+        const data = await res.json() as { policyVersion?: string; liabilities?: EmailSignoffLiability[] };
+        if (!cancelled && data.liabilities && data.policyVersion) {
+          setPolicyVersion(data.policyVersion);
           setLiabilities(data.liabilities);
           const initial: EmailSignoffTicks = {};
           for (const l of data.liabilities) initial[l.id] = false;
@@ -682,13 +684,20 @@ const AuthCard = () => {
         return;
       }
 
-      const emailSignoff: Record<string, boolean> = {};
-      for (const l of liabilities) emailSignoff[l.id] = signoffTicks[l.id] === true;
+      const signoffLiabilities: Record<string, boolean> = {};
+      const wordingHashes: Record<string, string> = {};
+      for (const l of liabilities) {
+        signoffLiabilities[l.id] = signoffTicks[l.id] === true;
+        wordingHashes[l.id] = l.wordingHash;
+      }
 
       const res = await fetch('/api/clubs/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clubName, emailSignoff }),
+        body: JSON.stringify({
+          clubName,
+          emailSignoff: { liabilities: signoffLiabilities, policyVersion, wordingHashes },
+        }),
       });
       const data = await res.json() as { ok?: boolean; slug?: string; error?: string };
       if (!res.ok) {
