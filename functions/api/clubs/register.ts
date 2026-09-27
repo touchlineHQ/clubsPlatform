@@ -5,7 +5,7 @@ import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   parseSignoffTicks,
   parseSignoffPolicy,
-  recordEmailSignoff,
+  prepareEmailSignoff,
   requestIp,
   SignoffIncompleteError,
   SignoffPolicyMismatchError,
@@ -14,7 +14,7 @@ import {
 } from "../../lib/club-email-signoff";
 import {
   parseDpaAcceptance,
-  recordDpaAcceptance,
+  prepareDpaAcceptance,
   DpaPolicyMismatchError,
   DPA_POLICY_VERSION,
   validateDpaSubmission,
@@ -120,46 +120,37 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // published = 0: a brand-new club starts private, visible to the admin who
   // just created it and nobody else, until they go live from the Customise page.
   const id = randomId("club");
-  await context.env.DB
+  const clubInsert = context.env.DB
     .prepare(`INSERT INTO club_config (id, slug, name, active, published, createdAt) VALUES (?, ?, ?, 1, 0, ?)`)
-    .bind(id, slug, clubName, nowMs())
-    .run();
+    .bind(id, slug, clubName, nowMs());
 
   // Grant the signing-up user admin access to this club
-  await context.env.DB
+  const userUpdate = context.env.DB
     .prepare(`UPDATE user SET role = 'admin', clubSlug = ? WHERE id = ?`)
-    .bind(slug, userId)
-    .run();
+    .bind(slug, userId);
 
   const ip = requestIp(context.request);
 
   try {
-    await recordEmailSignoff(context.env.DB, {
+    const signoffStatements = await prepareEmailSignoff(context.env.DB, {
       clubSlug: slug,
       userId,
       ipAddress: ip,
       ticks,
       policy,
     });
-  } catch (err) {
-    if (err instanceof SignoffIncompleteError) {
-      return json({ error: err.message }, { status: 400 });
-    }
-    if (err instanceof SignoffPolicyMismatchError) {
-      return json({ error: err.message }, { status: 409 });
-    }
-    throw err;
-  }
-
-  try {
-    await recordDpaAcceptance(context.env.DB, {
+    const dpaStatement = await prepareDpaAcceptance(context.env.DB, {
       clubSlug: slug,
       userId,
       ipAddress: ip,
       policy: dpa,
     });
+    await context.env.DB.batch([clubInsert, userUpdate, ...signoffStatements, dpaStatement]);
   } catch (err) {
-    if (err instanceof DpaPolicyMismatchError) {
+    if (err instanceof SignoffIncompleteError) {
+      return json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof SignoffPolicyMismatchError || err instanceof DpaPolicyMismatchError) {
       return json({ error: err.message }, { status: 409 });
     }
     throw err;

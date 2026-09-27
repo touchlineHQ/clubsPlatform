@@ -144,6 +144,34 @@ describe('consent_record persistence', () => {
     expect(again.ok).toBe(true);
   });
 
+  it('rolls back withdrawal when the contact mirror update fails', async () => {
+    const db = d1Over(sqlite);
+    const { withdrawToken } = await recordMarketingConsentGrant(db as any, {
+      clubSlug: CLUB, subjectType: 'player_contact', subjectId: 'pc_1',
+      ipAddress: null, policy: await validPolicy(),
+    });
+    sqlite.exec(`CREATE TRIGGER fail_mirror BEFORE UPDATE ON player_contact
+      BEGIN SELECT RAISE(ABORT, 'forced mirror failure'); END`);
+    await expect(withdrawMarketingConsentByToken(db as any, withdrawToken, null)).rejects.toThrow('forced mirror failure');
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM consent_record WHERE state = 'withdrawn'`).get()).toEqual({ n: 0 });
+    expect(sqlite.prepare(`SELECT marketingOptIn FROM player_contact`).get()).toEqual({ marketingOptIn: 1 });
+    sqlite.exec(`DROP TRIGGER fail_mirror`);
+    expect((await withdrawMarketingConsentByToken(db as any, withdrawToken, null)).ok).toBe(true);
+    expect(sqlite.prepare(`SELECT marketingOptIn FROM player_contact`).get()).toEqual({ marketingOptIn: 0 });
+  });
+
+  it('withdraws consent for a user subject without changing player contacts', async () => {
+    const db = d1Over(sqlite);
+    const { withdrawToken } = await recordMarketingConsentGrant(db as any, {
+      clubSlug: CLUB, subjectType: 'user', subjectId: 'u1',
+      ipAddress: null, policy: await validPolicy(),
+    });
+    sqlite.exec(`CREATE TRIGGER fail_mirror BEFORE UPDATE ON player_contact
+      BEGIN SELECT RAISE(ABORT, 'unexpected mirror update'); END`);
+    expect((await withdrawMarketingConsentByToken(db as any, withdrawToken, null)).ok).toBe(true);
+    expect(await hasCurrentMarketingConsent(db as any, CLUB, 'user', 'u1')).toBe(false);
+  });
+
   it('uses an older unsubscribe token to withdraw a newer grant', async () => {
     const db = d1Over(sqlite);
     const policy = await validPolicy();

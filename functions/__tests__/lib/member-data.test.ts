@@ -110,6 +110,51 @@ describe('member data export/delete', () => {
     expect(audit.note).not.toContain('parent@');
   });
 
+  function seedPrivateData() {
+    for (const userId of ['u_member', 'u_admin']) {
+      sqlite.prepare(`INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, userId)
+        VALUES (?, ?, ?, ?, ?, ?)`).run!(userId, NOW + 10000, `token-${userId}`, NOW, NOW, userId);
+      sqlite.prepare(`INSERT INTO account (id, accountId, providerId, userId, password, createdAt, updatedAt)
+        VALUES (?, ?, 'credential', ?, 'stored-hash', ?, ?)`).run!(userId, userId, userId, NOW, NOW);
+    }
+    for (const [id, userId, clubSlug] of [
+      ['local', 'u_member', CLUB], ['unscoped', 'u_member', null],
+      ['other-club', 'u_member', 'other'], ['other-user', 'u_admin', CLUB],
+    ]) {
+      sqlite.prepare(`INSERT INTO booking_request
+        (id, userId, clubSlug, teamName, date, timeStart, timeEnd, format, notes, createdAt, updatedAt)
+        VALUES (?, ?, ?, 'U12', '2026-09-01', '10:00', '11:00', '5v5', 'private notes', ?, ?)`)
+        .run!(id, userId, clubSlug, NOW, NOW);
+    }
+  }
+
+  it('clears scoped and unscoped booking notes and revokes only the deleted user authentication', async () => {
+    seedPrivateData();
+    await deleteMemberData(d1Over(sqlite) as any, { clubSlug: CLUB, userId: 'u_member', adminId: 'u_admin' });
+    expect(sqlite.prepare(`SELECT id, notes FROM booking_request ORDER BY id`).all()).toEqual([
+      { id: 'local', notes: null }, { id: 'other-club', notes: 'private notes' },
+      { id: 'other-user', notes: 'private notes' }, { id: 'unscoped', notes: null },
+    ]);
+    for (const table of ['session', 'account']) {
+      expect(sqlite.prepare(`SELECT userId FROM "${table}"`).all()).toEqual([{ userId: 'u_admin' }]);
+    }
+  });
+
+  it('rolls back notes and credential revocation if anonymization fails', async () => {
+    seedPrivateData();
+    sqlite.exec(`CREATE TRIGGER fail_anonymization BEFORE UPDATE ON user
+      BEGIN SELECT RAISE(ABORT, 'forced anonymization failure'); END`);
+    await expect(deleteMemberData(d1Over(sqlite) as any, {
+      clubSlug: CLUB, userId: 'u_member', adminId: 'u_admin',
+    })).rejects.toThrow('forced anonymization failure');
+    expect(sqlite.prepare(`SELECT DISTINCT notes FROM booking_request`).all()).toEqual([{ notes: 'private notes' }]);
+    for (const table of ['session', 'account']) {
+      expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get()).toEqual({ n: 2 });
+    }
+    expect(sqlite.prepare(`SELECT email FROM user WHERE id = 'u_member'`).get()).toEqual({ email: 'parent@example.com' });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM player_contact`).get()).toEqual({ n: 1 });
+  });
+
   it('refuses to delete the last admin', async () => {
     const db = d1Over(sqlite);
     await expect(deleteMemberData(db as any, {

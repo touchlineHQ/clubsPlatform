@@ -65,8 +65,13 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const userId = new URL(context.request.url).searchParams.get("userId")?.trim() ?? "";
   if (!userId) return json({ error: "userId is required" }, { status: 400 });
 
-  const body = await context.request.json() as { name?: unknown; email?: unknown };
-  if (typeof body.name !== "string" || !body.name.trim()) {
+  let body: { name?: unknown; email?: unknown } | null;
+  try {
+    body = await context.request.json();
+  } catch {
+    return json({ error: "Malformed JSON body" }, { status: 400 });
+  }
+  if (typeof body?.name !== "string" || !body.name.trim()) {
     return json({ error: "name is required" }, { status: 400 });
   }
   if (typeof body.email !== "string" || !body.email.trim()) {

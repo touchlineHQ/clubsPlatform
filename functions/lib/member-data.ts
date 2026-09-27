@@ -295,8 +295,14 @@ export async function deleteMemberData(
     )
     .bind(userId, clubSlug);
 
-  // Anonymise the auth identity at this club rather than hard-deleting — the
-  // user row may still own sessions; FAN links stay for membership continuity.
+  const bookingNotesUpdate = db
+    .prepare(`UPDATE "booking_request" SET notes = NULL
+      WHERE userId = ? AND (clubSlug = ? OR clubSlug IS NULL)`)
+    .bind(userId, clubSlug);
+  const sessionsDelete = db.prepare(`DELETE FROM "session" WHERE userId = ?`).bind(userId);
+  const accountsDelete = db.prepare(`DELETE FROM "account" WHERE userId = ?`).bind(userId);
+
+  // Revoke authentication and anonymise the identity; retain FAN links for membership continuity.
   const tombstoneEmail = `deleted+${userId}@invalid.touchlinehq.local`;
   const userUpdate = db
     .prepare(
@@ -316,7 +322,7 @@ export async function deleteMemberData(
 
   const statements = [consentDelete];
   if (contactDelete) statements.push(contactDelete);
-  statements.push(rolesDelete, userUpdate, audit);
+  statements.push(rolesDelete, bookingNotesUpdate, sessionsDelete, accountsDelete, userUpdate, audit);
   await db.batch(statements);
 
   return {

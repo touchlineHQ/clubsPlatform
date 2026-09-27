@@ -43,19 +43,23 @@ export type PrivacyNotice = {
 const PROCESSOR_NAME = "touchlineHQ";
 
 /** Generate the public notice from the club's controller details. */
-export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice {
+export function buildPrivacyNotice(club: PrivacyNoticeClub): PrivacyNotice | null {
   const addressParts = [
     club.address?.line1,
     club.address?.line2,
     club.address?.postcode,
   ].filter((p): p is string => !!p && p.trim().length > 0);
 
+  const email = club.email?.trim() || null;
+  const address = addressParts.length > 0 ? addressParts.join(", ") : null;
+  if (!email && !address) return null;
+
   return {
     controller: {
       name: club.name,
       clubSlug: club.slug,
-      email: club.email?.trim() ? club.email.trim() : null,
-      address: addressParts.length > 0 ? addressParts.join(", ") : null,
+      email,
+      address,
     },
     processor: {
       name: PROCESSOR_NAME,

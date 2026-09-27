@@ -56,6 +56,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Contact not found" }, { status: 404 });
   }
 
+  if (contact.state !== "confirmed") {
+    return json({ error: "Contact must be confirmed before granting consent" }, { status: 409 });
+  }
+
   // Subject must own the address (email match) or be linked to the player.
   const emailMatch = contact.email.trim().toLowerCase() === userEmail;
   const linked = await context.env.DB

@@ -651,15 +651,13 @@ const AuthCard = () => {
   const [dpaWording, setDpaWording] = useState<string>('');
   const [dpaWordingHash, setDpaWordingHash] = useState<string>('');
   const [dpaIcoNote, setDpaIcoNote] = useState<string>('');
+  const [dpaLoadError, setDpaLoadError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [signoffRes, dpaRes] = await Promise.all([
-          fetch('/api/email-signoff-policy'),
-          fetch('/api/dpa-policy'),
-        ]);
+        const signoffRes = await fetch('/api/email-signoff-policy');
         if (signoffRes.ok) {
           const data = await signoffRes.json() as { policyVersion?: string; liabilities?: EmailSignoffLiability[] };
           if (!cancelled && data.liabilities && data.policyVersion) {
@@ -670,19 +668,30 @@ const AuthCard = () => {
             setSignoffTicks(initial);
           }
         }
-        if (dpaRes.ok) {
-          const data = await dpaRes.json() as {
-            policyVersion?: string; wording?: string; wordingHash?: string; icoFeeNote?: string;
-          };
-          if (!cancelled && data.policyVersion && data.wording && data.wordingHash) {
-            setDpaPolicyVersion(data.policyVersion);
-            setDpaWording(data.wording);
-            setDpaWordingHash(data.wordingHash);
-            setDpaIcoNote(data.icoFeeNote ?? '');
-          }
-        }
+
       } catch {
         // Register will still require the ticks server-side.
+      }
+    })();
+    (async () => {
+      try {
+        const response = await fetch('/api/dpa-policy');
+        if (!response.ok) throw new Error('Policy request failed');
+        const data = await response.json() as Record<string, unknown> | null;
+        if (
+          !data
+          || typeof data.policyVersion !== 'string' || !data.policyVersion.trim()
+          || typeof data.wording !== 'string' || !data.wording.trim()
+          || typeof data.wordingHash !== 'string' || !data.wordingHash.trim()
+        ) throw new Error('Invalid policy response');
+        if (!cancelled) {
+          setDpaPolicyVersion(data.policyVersion);
+          setDpaWording(data.wording);
+          setDpaWordingHash(data.wordingHash);
+          setDpaIcoNote(typeof data.icoFeeNote === 'string' ? data.icoFeeNote : '');
+        }
+      } catch {
+        if (!cancelled) setDpaLoadError(true);
       }
     })();
     return () => { cancelled = true; };
@@ -802,6 +811,11 @@ const AuthCard = () => {
                   disabled={loading}
                 />
               </Stack>
+            )}
+            {dpaLoadError && (
+              <Text role="alert" size="sm" c="red">
+                Unable to load the processor agreement. Reload the page to try again.
+              </Text>
             )}
             {dpaWording && (
               <Stack gap="xs">

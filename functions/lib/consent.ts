@@ -236,7 +236,7 @@ export async function withdrawMarketingConsentByToken(
 
   const effective = latest ?? grant;
   const id = randomId("consent");
-  await db
+  const insert = db
     .prepare(
       `INSERT INTO "consent_record"
          (id, clubSlug, subjectType, subjectId, purpose, channel, state,
@@ -254,17 +254,18 @@ export async function withdrawMarketingConsentByToken(
       effective.policyVersion,
       effective.wordingHash,
       effective.id,
-    )
-    .run();
+    );
 
   if (grant.subjectType === "player_contact") {
-    await db
+    const update = db
       .prepare(
         `UPDATE "player_contact" SET marketingOptIn = 0, withdrawnAt = ?
           WHERE id = ? AND clubSlug = ?`,
       )
-      .bind(nowMs(), grant.subjectId, grant.clubSlug)
-      .run();
+      .bind(nowMs(), grant.subjectId, grant.clubSlug);
+    await db.batch([insert, update]);
+  } else {
+    await insert.run();
   }
 
   return { ok: true, clubSlug: grant.clubSlug, subjectId: grant.subjectId };

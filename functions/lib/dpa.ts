@@ -77,40 +77,22 @@ export async function hasCurrentDpaAcceptance(
   return !!row;
 }
 
-/**
- * Record DPA acceptance under the current policy version.
- * Idempotent when the club already holds the current version.
- */
-export async function recordDpaAcceptance(
+type DpaAcceptanceInput = {
+  clubSlug: string;
+  userId: string;
+  ipAddress: string | null;
+  policy: DpaPolicySubmission;
+};
+
+/** Prepare a validated acceptance for an atomic registration batch. */
+export async function prepareDpaAcceptance(
   db: D1Database,
-  {
-    clubSlug,
-    userId,
-    ipAddress,
-    policy,
-  }: {
-    clubSlug: string;
-    userId: string;
-    ipAddress: string | null;
-    policy: DpaPolicySubmission;
-  },
-): Promise<{ acceptanceId: string; alreadyHeld: boolean }> {
+  { clubSlug, userId, ipAddress, policy }: DpaAcceptanceInput,
+) {
   await validateDpaSubmission(policy);
-
-  if (await hasCurrentDpaAcceptance(db, clubSlug)) {
-    const existing = await db
-      .prepare(
-        `SELECT id FROM "club_dpa_acceptance"
-          WHERE clubSlug = ? AND policyVersion = ?`,
-      )
-      .bind(clubSlug, DPA_POLICY_VERSION)
-      .first<{ id: string }>();
-    return { acceptanceId: existing!.id, alreadyHeld: true };
-  }
-
   const id = randomId("dpa");
   const expected = await currentDpaPolicy();
-  await db
+  return db
     .prepare(
       `INSERT INTO "club_dpa_acceptance"
          (id, clubSlug, userId, acceptedAt, ipAddress, policyVersion, wordingHash)
@@ -125,8 +107,37 @@ export async function recordDpaAcceptance(
       ipAddress,
       expected.policyVersion,
       expected.wordingHash,
-    )
-    .run();
+    );
+}
+
+/**
+ * Record DPA acceptance under the current policy version.
+ * Idempotent when the club already holds the current version.
+ */
+export async function recordDpaAcceptance(
+  db: D1Database,
+  {
+    clubSlug,
+    userId,
+    ipAddress,
+    policy,
+  }: DpaAcceptanceInput,
+): Promise<{ acceptanceId: string; alreadyHeld: boolean }> {
+  await validateDpaSubmission(policy);
+
+  if (await hasCurrentDpaAcceptance(db, clubSlug)) {
+    const existing = await db
+      .prepare(
+        `SELECT id FROM "club_dpa_acceptance"
+          WHERE clubSlug = ? AND policyVersion = ?`,
+      )
+      .bind(clubSlug, DPA_POLICY_VERSION)
+      .first<{ id: string }>();
+    return { acceptanceId: existing!.id, alreadyHeld: true };
+  }
+
+  const statement = await prepareDpaAcceptance(db, { clubSlug, userId, ipAddress, policy });
+  await statement.run();
 
   const held = await db
     .prepare(

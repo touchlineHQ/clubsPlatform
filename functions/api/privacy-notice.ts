@@ -29,21 +29,32 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   let address: { line1?: string; line2?: string; postcode?: string } | null = null;
   if (row.data) {
     try {
-      const parsed = JSON.parse(row.data) as {
-        email?: string;
-        address?: { line1?: string; line2?: string; postcode?: string };
-      };
-      email = typeof parsed.email === "string" ? parsed.email : null;
-      address = parsed.address ?? null;
+      const parsed = JSON.parse(row.data) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const data = parsed as Record<string, unknown>;
+        email = typeof data.email === "string" ? data.email : null;
+        if (data.address && typeof data.address === "object" && !Array.isArray(data.address)) {
+          const raw = data.address as Record<string, unknown>;
+          address = {
+            line1: typeof raw.line1 === "string" ? raw.line1 : undefined,
+            line2: typeof raw.line2 === "string" ? raw.line2 : undefined,
+            postcode: typeof raw.postcode === "string" ? raw.postcode : undefined,
+          };
+        }
+      }
     } catch {
-      // Ignore malformed club data blobs; notice still names the club.
+      // Malformed data cannot supply controller contact details.
     }
   }
 
-  return json(buildPrivacyNotice({
+  const notice = buildPrivacyNotice({
     slug: row.slug,
     name: row.name,
     email,
     address,
-  }));
+  });
+  if (!notice) {
+    return json({ error: "Privacy notice unavailable until the club provides contact details" }, { status: 503 });
+  }
+  return json(notice);
 };

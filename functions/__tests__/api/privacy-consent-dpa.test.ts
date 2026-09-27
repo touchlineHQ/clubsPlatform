@@ -6,6 +6,8 @@ import {
   recordMarketingConsentGrant,
 } from '../../lib/consent';
 import { currentDpaPolicy } from '../../lib/dpa';
+import { currentPolicyPayload } from '../../lib/club-email-signoff';
+import { onRequestPost as registerPost } from '../../api/clubs/register';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -65,6 +67,27 @@ describe('privacy-notice GET', () => {
     expect(body.controller.name).toBe('Test FC');
     expect(body.controller.email).toBe('sec@test.example');
     expect(body.processor.name).toBe('touchlineHQ');
+  });
+
+  it.each([
+    [{ line1: 42, line2: 'Valid Road', postcode: {} }, 'Valid Road'],
+    [[], null], [42, null], ['Road', null], [null, null],
+  ])('filters invalid address fields: %j', async (address, expected) => {
+    sqlite.prepare(`UPDATE club_config SET data = ?`).run!(JSON.stringify({ email: 'sec@test.example', address }));
+    const res = await privacyNoticeGet(makeContext(getReq('/api/privacy-notice', { 'X-Club-Slug': CLUB }), {
+      env: { DB: d1Over(sqlite) as any },
+    }) as any);
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).controller.address).toBe(expected);
+  });
+
+  it.each(['{}', 'null', '{bad', '{"email":" ","address":{"line1":42}}'])('withholds a notice without contact details: %s', async (data) => {
+    sqlite.prepare(`UPDATE club_config SET data = ?`).run!(data);
+    const res = await privacyNoticeGet(makeContext(getReq('/api/privacy-notice', { 'X-Club-Slug': CLUB }), {
+      env: { DB: d1Over(sqlite) as any },
+    }) as any);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: expect.stringContaining('contact details') });
   });
 
   it('returns 400 without club slug', async () => {
@@ -136,6 +159,19 @@ describe('unsubscribe + consent grant', () => {
     expect(optIn.marketingOptIn).toBe(0);
   });
 
+  it.each(['pending', 'withdrawn', 'bounced'])('rejects consent for a %s contact before ownership checks', async (state) => {
+    sqlite.prepare(`UPDATE player_contact SET state = ?`).run!(state);
+    mockGetSession.mockResolvedValue({ ...memberSession, user: { ...memberSession.user, id: 'u1', email: 'parent@example.com' } });
+    const db = d1Over(sqlite);
+    const prepare = vi.spyOn(db, 'prepare');
+    const res = await consentGrantPost(makeContext(postReq('/api/consent/grant', {
+      contactId: 'pc_1', ...await currentMarketingConsentPolicy(),
+    }, { 'X-Club-Slug': CLUB }), { env: { DB: db as any } }) as any);
+    expect(res.status).toBe(409);
+    expect(prepare.mock.calls.some(([sql]) => /FROM "user_player"/.test(sql))).toBe(false);
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM consent_record`).get()).toEqual({ n: 0 });
+  });
+
   it('forbids an unrelated user from granting consent', async () => {
     mockGetSession.mockResolvedValue({
       ...memberSession,
@@ -177,6 +213,15 @@ describe('admin member-data', () => {
 
   afterEach(() => sqlite.close());
 
+  it.each(['{bad', 'null', '{}', '{"name":"Parent","email":false}'])('returns 400 for invalid correction body: %s', async (body) => {
+    const req = new Request('https://example.test/api/admin/member-data?userId=u_member', {
+      method: 'PATCH', headers: { 'X-Club-Slug': CLUB, 'Content-Type': 'application/json' }, body,
+    });
+    const res = await memberDataPatch(makeContext(req, { env: { DB: d1Over(sqlite) as any } }) as any);
+    expect(res.status).toBe(400);
+    expect(sqlite.prepare(`SELECT email FROM user WHERE id = 'u_member'`).get()).toEqual({ email: 'parent@example.com' });
+  });
+
   it('corrects member account data for an admin', async () => {
     const req = patchReq('/api/admin/member-data?userId=u_member', {
       name: 'Corrected Parent', email: 'corrected@example.com',
@@ -207,5 +252,53 @@ describe('admin member-data', () => {
     const body = await delRes.json() as any;
     expect(body.ok).toBe(true);
     expect(body.deletedContacts).toBe(1);
+  });
+});
+
+
+describe('atomic club registration', () => {
+  let sqlite: SqliteDb;
+  beforeEach(() => {
+    sqlite = createSchemaDb();
+    sqlite.exec(`INSERT INTO "user" VALUES ('u1','Parent','parent@example.com',1,NULL,'member',NULL,${NOW},${NOW})`);
+    mockGetSession.mockResolvedValue({ ...memberSession, user: { ...memberSession.user, id: 'u1' } });
+  });
+  afterEach(() => sqlite.close());
+
+  async function register(stale = false) {
+    const policy = await currentPolicyPayload();
+    return registerPost(makeContext(postReq('/api/clubs/register', {
+      clubName: 'New FC',
+      emailSignoff: {
+        liabilities: Object.fromEntries(policy.liabilities.map(l => [l.id, true])),
+        policyVersion: policy.policyVersion,
+        wordingHashes: Object.fromEntries(policy.liabilities.map(l => [l.id, l.wordingHash])),
+      },
+      dpaAcceptance: { ...await currentDpaPolicy(), accepted: true, ...(stale ? { wordingHash: 'stale' } : {}) },
+    }), { env: { DB: d1Over(sqlite) as any, MULTI_CLUB: '1' } }) as any);
+  }
+
+  it('persists the club, admin role and all acceptances', async () => {
+    expect((await register()).status).toBe(201);
+    expect(sqlite.prepare(`SELECT slug, published FROM club_config`).get()).toEqual({ slug: 'new-fc', published: 0 });
+    expect(sqlite.prepare(`SELECT role, clubSlug FROM user`).get()).toEqual({ role: 'admin', clubSlug: 'new-fc' });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_dpa_acceptance`).get()).toEqual({ n: 1 });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_email_signoff`).get()).toEqual({ n: 3 });
+  });
+
+  it.each(['club_config', 'user', 'club_email_signoff', 'club_dpa_acceptance'])('rolls back registration when %s fails', async table => {
+    sqlite.exec(`CREATE TRIGGER fail_registration BEFORE ${table === 'user' ? 'UPDATE' : 'INSERT'} ON "${table}"
+      BEGIN SELECT RAISE(ABORT, 'forced registration failure'); END`);
+    await expect(register()).rejects.toThrow('forced registration failure');
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_config`).get()).toEqual({ n: 0 });
+    expect(sqlite.prepare(`SELECT role, clubSlug FROM user`).get()).toEqual({ role: 'member', clubSlug: null });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_email_signoff`).get()).toEqual({ n: 0 });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_dpa_acceptance`).get()).toEqual({ n: 0 });
+  });
+
+  it('returns 409 for stale DPA wording without writing', async () => {
+    expect((await register(true)).status).toBe(409);
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_config`).get()).toEqual({ n: 0 });
+    expect(sqlite.prepare(`SELECT role FROM user`).get()).toEqual({ role: 'member' });
   });
 });
