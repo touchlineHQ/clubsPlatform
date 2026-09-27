@@ -290,7 +290,7 @@ describe('atomic club registration', () => {
     expect(sqlite.prepare(`SELECT slug, published FROM club_config`).get()).toEqual({ slug: 'new-fc', published: 0 });
     expect(sqlite.prepare(`SELECT role, clubSlug FROM user`).get()).toEqual({ role: 'admin', clubSlug: 'new-fc' });
     expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_dpa_acceptance`).get()).toEqual({ n: 1 });
-    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_email_signoff`).get()).toEqual({ n: 3 });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM club_email_signoff`).get()).toEqual({ n: 2 });
   });
 
   it.each(['club_config', 'user', 'club_email_signoff', 'club_dpa_acceptance'])('rolls back registration when %s fails', async table => {

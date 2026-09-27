@@ -59,7 +59,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "clubName is required" }, { status: 400 });
   }
 
-  // Three independent liabilities — no bundled accept-all. Required at
+  // Independent liabilities — no bundled accept-all. Required at
   // registration so a new club cannot collect contact emails unsigned (#130).
   const signoff = body.emailSignoff && typeof body.emailSignoff === "object"
     ? body.emailSignoff as Record<string, unknown>
@@ -70,7 +70,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json(
       {
         error:
-          "emailSignoff requires parental_consent, operational_split and right_to_object independently true",
+          "emailSignoff requires operational_split and right_to_object independently true",
       },
       { status: 400 },
     );

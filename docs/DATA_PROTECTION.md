@@ -44,8 +44,8 @@ These fields appear on FA export CSVs. The import path must strip them; tests al
 | `club_config` / content JSON | club contact email inside `data` blob | Contract (club’s own details) | Club identity, not parent data. |
 | `player_contact` | `email`, opt-ins, activation token hash | Contract / consent (marketing) | Separated from auth identity (#131). Marketing opt-in is a denormalised mirror of `consent_record`. |
 | `consent_record` | subject, purpose, channel, state, IP, policy version + wording hash | Consent (marketing only) | Append-only. Latest row is current. One-click withdraw via token hash (#75). |
-| `club_dpa_acceptance` | accepting user, version, hash, IP | Contract (club–processor) | Wired for self-serve signup (#75); **parked** while one-club + self-register off (#146). |
-| `club_email_signoff` | liability ticks, version, hash | Contract / accountability | Club certifies lawful basis before contact collection (#130). |
+| `club_dpa_acceptance` | accepting user, version, hash, IP | Contract (future host DPA) | Wired for self-serve signup (#75); **parked** while one-club + self-register off (#146). |
+| `club_email_signoff` | liability ticks, version, hash | Contract / accountability | Club self-certifies operational liabilities before contact collection (#130 / #148). Not a processor agreement. |
 
 ### Current gap (until children of #128 land)
 
@@ -64,15 +64,21 @@ Until those land, treat every imported contact email as Direct PII held without 
 
 Do **not** run `import-players` against a real FA CSV on the live club until contact emails are not auth identities (#131 done for schema; rest of #128 as needed). Prefer FAN-only import or omit email columns. The demo slug must stay fake: no FA CSV, no parent emails, no live GoCardless (same rule as #144).
 
-## Controller and processor
+## Controller (this deployment)
 
-- **Each club is the data controller** of its members’ and contacts’ data.
-- **Operating model (Sep 2026):** this deployment hosts **one real club** (live payments) plus a **fake demo** slug. Self-serve club create is gated (`ALLOW_CLUB_SELF_REGISTER`, see #144). No other club’s members sit in this D1.
-- While that stays true, the maintainer is a volunteer running the club site — not a multi-tenant processor for unrelated clubs. **touchlineHQ does not need an ICO fee or Art. 28 DPAs for other clubs** on this deploy. The live club still needs a short public privacy notice (club-scoped `/privacy`) naming the club as controller.
-- **Revisit when** a second club’s real data would live here, or `ALLOW_CLUB_SELF_REGISTER` is turned on. Then: DPA at signup (`club_dpa_acceptance`, #75), ICO fee for the *host*, and onboarding sign-off become real again. Until then, do **not** treat DPA-at-register as a product gate.
-- When multi-tenant hosting returns: touchlineHQ is the processor, processes data only on the documented instructions of each club, and does not use parent contact data for its own marketing.
+**This deployment is one club.** The live club (plus a fake demo slug) is the data controller of its members’ and contacts’ data. Self-serve club create is gated (`ALLOW_CLUB_SELF_REGISTER`, see #144); no other club’s members sit in this D1.
 
-Sending party is always the club. Every outbound communication (when mail exists) is sent on behalf of a named club. touchlineHQ does not email parents about platform updates.
+The maintainer is a volunteer running the club site — not a separate third-party processor. **touchlineHQ does not need an ICO fee or Art. 28 DPAs for other clubs** on this deploy. The public privacy notice (club-scoped `/privacy`) names the **club** as controller only.
+
+Contact-email sign-off (`club_email_signoff`, #130 / #148) is the club certifying its own operational liabilities before collection — not a club–processor agreement. Existing v1 sign-off rows stay in the DB under the old hash; the club re-accepts under policy version 2 if ticks remain.
+
+Sending party is always the club. Every outbound communication (when mail exists) is sent on behalf of the named club.
+
+### If another club is hosted later
+
+**Revisit when** a second club’s real data would live here, or `ALLOW_CLUB_SELF_REGISTER` is turned on. Then: DPA at signup (`club_dpa_acceptance`, #75), ICO fee for the *host*, and multi-tenant onboarding become real again. Until then, do **not** treat DPA-at-register as a product gate.
+
+If another club is hosted on this stack later, touchlineHQ would act as processor on that club’s documented instructions and would not use parent contact data for its own marketing.
 
 ## Lawful basis per purpose
 

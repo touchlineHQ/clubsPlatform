@@ -2,12 +2,13 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { nowMs, randomId } from "./api-helpers";
 
 /**
- * Three-liability club email sign-off (#130 / epic #128).
+ * Club email sign-off (#130 / epic #128 / #148).
  *
- * The club is the controller; we are the processor. Before any contact address
- * is collected, the club must independently accept each liability below. A
- * bundled "accept all" is not valid evidence — each tick is recorded as its
- * own row with the policy version and a hash of the exact wording shown.
+ * v1: this deployment is the club (controller). Processor language is for a
+ * later hosted-club mode. Before any contact address is collected, the club
+ * must independently accept each liability below. A bundled "accept all" is
+ * not valid evidence — each tick is recorded as its own row with the policy
+ * version and a hash of the exact wording shown.
  *
  * Bump EMAIL_SIGNOFF_POLICY_VERSION when editing any liability's wording.
  * Existing rows keep the version they were accepted under; a club whose
@@ -15,17 +16,9 @@ import { nowMs, randomId } from "./api-helpers";
  * collection until it re-accepts.
  */
 
-export const EMAIL_SIGNOFF_POLICY_VERSION = "1";
+export const EMAIL_SIGNOFF_POLICY_VERSION = "2";
 
 export const EMAIL_SIGNOFF_LIABILITIES = {
-  parental_consent: {
-    id: "parental_consent" as const,
-    title: "Verified parental consent for communication",
-    wording:
-      "I certify that the club has obtained verifiable parental/guardian consent "
-      + "to share each contact address with Touchline HQ as a third-party processor "
-      + "for club administration and communications.",
-  },
   operational_split: {
     id: "operational_split" as const,
     title: "Operational vs marketing split",
@@ -38,8 +31,8 @@ export const EMAIL_SIGNOFF_LIABILITIES = {
     id: "right_to_object" as const,
     title: "Right to object / unsubscribe",
     wording:
-      "I certify that if a parent demands removal of an address, the club will purge "
-      + "it immediately or instruct Touchline HQ to do so.",
+      "I certify that if a parent demands removal of an address, the club will delete "
+      + "the address when asked.",
   },
 } as const;
 
@@ -248,7 +241,7 @@ export async function prepareEmailSignoff(
 
 /**
  * Record an acceptance of every liability under the current policy version.
- * Requires all three ticks — no bundled accept-all shortcut on the server.
+ * Requires every current liability tick — no bundled accept-all shortcut on the server.
  * Idempotent for a club that already holds the current version.
  */
 export async function recordEmailSignoff(
