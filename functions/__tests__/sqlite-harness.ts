@@ -108,10 +108,18 @@ export function d1Over(db: SqliteDb): {
       };
     },
     async batch(statements: unknown[]) {
-      return statements.map((s) => {
-        const bound = s as { __sql: string; __params: unknown[] };
-        return { results: db.prepare(bound.__sql).all(...bound.__params), success: true, meta: {} };
-      });
+      db.exec("BEGIN");
+      try {
+        const results = statements.map((s) => {
+          const bound = s as { __sql: string; __params: unknown[] };
+          return { results: db.prepare(bound.__sql).all(...bound.__params), success: true, meta: {} };
+        });
+        db.exec("COMMIT");
+        return results;
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
     },
   };
 }

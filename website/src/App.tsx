@@ -23,6 +23,7 @@ import { NewsPage } from './pages/NewsPage';
 import { GalleryPage } from './pages/GalleryPage';
 import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
+import { PrivacyNoticePage } from './pages/PrivacyNoticePage';
 import { pageview } from './lib/posthog';
 import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
@@ -185,6 +186,7 @@ function AppRoutes() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/privacy" element={<PrivacyNoticePage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>
@@ -272,6 +274,7 @@ function AppRoutes() {
             {data.visibility['/gallery'] && <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />}
             {data.visibility['/matchday'] && <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />}
             {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
+            <Route path="/privacy" element={<PrivacyNoticePage />} />
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />

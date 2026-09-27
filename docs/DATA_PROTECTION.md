@@ -42,6 +42,10 @@ These fields appear on FA export CSVs. The import path must strip them; tests al
 | `team` | `manager`, `coach`, `contact` | Legitimate interests / contract | Club-published team contacts. |
 | `admin_audit_log` | `adminId`, action, target | Legitimate interests (accountability) | Must not store deleted contact addresses. |
 | `club_config` / content JSON | club contact email inside `data` blob | Contract (club’s own details) | Club identity, not parent data. |
+| `player_contact` | `email`, opt-ins, activation token hash | Contract / consent (marketing) | Separated from auth identity (#131). Marketing opt-in is a denormalised mirror of `consent_record`. |
+| `consent_record` | subject, purpose, channel, state, IP, policy version + wording hash | Consent (marketing only) | Append-only. Latest row is current. One-click withdraw via token hash (#75). |
+| `club_dpa_acceptance` | accepting user, version, hash, IP | Contract (club–processor) | Required at club signup (#75). |
+| `club_email_signoff` | liability ticks, version, hash | Contract / accountability | Club certifies lawful basis before contact collection (#130). |
 
 ### Current gap (until children of #128 land)
 
@@ -60,7 +64,7 @@ Until those land, treat every imported contact email as Direct PII held without 
 - **Each club is the data controller** of its members’ and contacts’ data.
 - **touchlineHQ is the processor.** It processes data only on the documented instructions of the club and does not use parent contact data for its own marketing or platform promotions.
 
-A written processor agreement (UK GDPR Art. 28) is required; see #75. Club signup must eventually record acceptance of a versioned DPA.
+A written processor agreement (UK GDPR Art. 28) is required. Club signup records acceptance of a versioned DPA in `club_dpa_acceptance` (#75).
 
 Sending party is always the club. Every outbound communication (when mail exists) is sent on behalf of a named club. touchlineHQ does not email parents about platform updates.
 
@@ -107,5 +111,5 @@ When a change stores a new personal-data field (or changes how an existing one i
 - #129 — this document
 - #131 — `player_contact` schema
 - #130 — club sign-off gating collection
-- #75 — consent records, privacy notice, processor agreement
+- #75 — consent records, privacy notice, processor agreement (landed: `consent_record`, `club_dpa_acceptance`, privacy notice, admin export/delete)
 - #134 — one-click purge (once contact is separated from auth)

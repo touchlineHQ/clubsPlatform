@@ -117,7 +117,7 @@ async function currentWordingHashes(): Promise<Record<EmailSignoffLiabilityId, s
   return hashes;
 }
 
-async function validatePolicySubmission(
+export async function validatePolicySubmission(
   submission: EmailSignoffPolicySubmission,
 ): Promise<void> {
   const expected = await currentWordingHashes();
@@ -202,6 +202,50 @@ export async function currentAcceptedLiabilities(
     );
 }
 
+type EmailSignoffInput = {
+  clubSlug: string;
+  userId: string;
+  ipAddress: string | null;
+  ticks: EmailSignoffTicks;
+  policy: EmailSignoffPolicySubmission;
+};
+
+/** Prepare validated liability rows for an atomic registration batch. */
+export async function prepareEmailSignoff(
+  db: D1Database,
+  { clubSlug, userId, ipAddress, ticks, policy }: EmailSignoffInput,
+  acceptanceId = randomId("emsign"),
+) {
+  for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
+    if (ticks[id] !== true) throw new SignoffIncompleteError(id);
+  }
+  await validatePolicySubmission(policy);
+  const acceptedAt = nowMs();
+  const policyVersion = EMAIL_SIGNOFF_POLICY_VERSION;
+  const wordingHashes = await currentWordingHashes();
+
+  return EMAIL_SIGNOFF_LIABILITY_IDS.map((id) =>
+    db
+      .prepare(
+        `INSERT INTO "club_email_signoff"
+           (id, acceptanceId, clubSlug, liability, userId, acceptedAt, ipAddress, policyVersion, wordingHash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(clubSlug, liability, policyVersion) DO NOTHING`,
+      )
+      .bind(
+        randomId("emsignrow"),
+        acceptanceId,
+        clubSlug,
+        id,
+        userId,
+        acceptedAt,
+        ipAddress,
+        policyVersion,
+        wordingHashes[id],
+      ),
+  );
+}
+
 /**
  * Record an acceptance of every liability under the current policy version.
  * Requires all three ticks — no bundled accept-all shortcut on the server.
@@ -215,13 +259,7 @@ export async function recordEmailSignoff(
     ipAddress,
     ticks,
     policy,
-  }: {
-    clubSlug: string;
-    userId: string;
-    ipAddress: string | null;
-    ticks: EmailSignoffTicks;
-    policy: EmailSignoffPolicySubmission;
-  },
+  }: EmailSignoffInput,
 ): Promise<{ acceptanceId: string; alreadyHeld: boolean }> {
   for (const id of EMAIL_SIGNOFF_LIABILITY_IDS) {
     if (ticks[id] !== true) {
@@ -242,32 +280,9 @@ export async function recordEmailSignoff(
     throw new Error("Email sign-off rows have inconsistent acceptance IDs");
   }
   const acceptanceId = existingRows[0]?.acceptanceId ?? randomId("emsign");
-  const acceptedAt = nowMs();
-  const policyVersion = EMAIL_SIGNOFF_POLICY_VERSION;
-  const wordingHashes = await currentWordingHashes();
-
-  // D1 batches execute atomically. Keeping all three INSERTs in one batch means
-  // a failed accept cannot leave a partial sign-off behind.
-  await db.batch(EMAIL_SIGNOFF_LIABILITY_IDS.map((id) =>
-    db
-      .prepare(
-        `INSERT INTO "club_email_signoff"
-           (id, acceptanceId, clubSlug, liability, userId, acceptedAt, ipAddress, policyVersion, wordingHash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(clubSlug, liability, policyVersion) DO NOTHING`,
-      )
-      .bind(
-        randomId("emsignrow"),
-        acceptanceId,
-        clubSlug,
-        id,
-        userId,
-        acceptedAt,
-        ipAddress,
-        policyVersion,
-        wordingHashes[id],
-      ),
-  ));
+  await db.batch(await prepareEmailSignoff(db, {
+    clubSlug, userId, ipAddress, ticks, policy,
+  }, acceptanceId));
 
   // A concurrent accept may have won the UNIQUE race with a different
   // acceptanceId. Re-read so callers stamp player_contact with the held one.

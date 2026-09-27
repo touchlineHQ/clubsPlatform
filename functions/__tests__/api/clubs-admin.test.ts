@@ -10,22 +10,40 @@ vi.mock('../../lib/club-email-signoff', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/club-email-signoff')>()),
   recordEmailSignoff: mockRecordEmailSignoff,
 }));
+const mockRecordDpaAcceptance = vi.hoisted(() => vi.fn(async () => ({ acceptanceId: 'dpa_new', alreadyHeld: false })));
+vi.mock('../../lib/dpa', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/dpa')>()),
+  recordDpaAcceptance: mockRecordDpaAcceptance,
+}));
+
+import { currentPolicyPayload } from '../../lib/club-email-signoff';
+import { currentDpaPolicy } from '../../lib/dpa';
 
 
 
-const validEmailSignoff = {
-  liabilities: { parental_consent: true, operational_split: true, right_to_object: true },
-  policyVersion: '1',
-  wordingHashes: {
-    parental_consent: 'parental-hash',
-    operational_split: 'operational-hash',
-    right_to_object: 'object-hash',
-  },
-};
-const partialEmailSignoff = {
-  ...validEmailSignoff,
-  liabilities: { ...validEmailSignoff.liabilities, right_to_object: false },
-};
+async function validEmailSignoff() {
+  const policy = await currentPolicyPayload();
+  return {
+    liabilities: { parental_consent: true, operational_split: true, right_to_object: true },
+    policyVersion: policy.policyVersion,
+    wordingHashes: Object.fromEntries(policy.liabilities.map((l) => [l.id, l.wordingHash])),
+  };
+}
+async function partialEmailSignoff() {
+  const base = await validEmailSignoff();
+  return {
+    ...base,
+    liabilities: { ...base.liabilities, right_to_object: false },
+  };
+}
+async function validDpaAcceptance() {
+  const policy = await currentDpaPolicy();
+  return {
+    accepted: true as const,
+    policyVersion: policy.policyVersion,
+    wordingHash: policy.wordingHash,
+  };
+}
 
 // ─── clubs.ts ─────────────────────────────────────────────────────────────────
 
@@ -321,10 +339,11 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     vi.clearAllMocks();
     mockGetSession.mockResolvedValue(memberSession);
     mockRecordEmailSignoff.mockResolvedValue({ acceptanceId: 'emsign_new', alreadyHeld: false });
+    mockRecordDpaAcceptance.mockResolvedValue({ acceptanceId: 'dpa_new', alreadyHeld: false });
   });
 
   it('registers a new club and returns 201 with slug', async () => {
-    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: validEmailSignoff });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
       env: {
         MULTI_CLUB: '1',
@@ -343,7 +362,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   });
 
   it('appends a numeric suffix when slug is already taken', async () => {
-    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: validEmailSignoff });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
       env: {
         MULTI_CLUB: '1',
@@ -382,10 +401,21 @@ describe('clubs/register POST (user self-registers a new club)', () => {
     expect(body.error).toMatch(/emailSignoff/i);
   });
 
+  it('returns 400 when DPA acceptance is missing', async () => {
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff() });
+    const ctx = makeContext(req, {
+      env: { MULTI_CLUB: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
+    });
+    const res = await registerPost(ctx as any);
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toMatch(/dpaAcceptance/i);
+  });
+
   it('returns 400 when only some liabilities are ticked', async () => {
     const req = postReq('/api/clubs/register', {
       clubName: 'Riverside FC',
-      emailSignoff: partialEmailSignoff,
+      emailSignoff: await partialEmailSignoff(),
     });
     const ctx = makeContext(req, {
       env: { MULTI_CLUB: '1', DB: makeDb({ all: [[{ name: 'published' }], []] }) },
@@ -395,7 +425,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
   });
 
   it('returns 403 when multi-club mode is not enabled', async () => {
-    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: validEmailSignoff });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, { env: { DB: makeDb() } });
     const res = await registerPost(ctx as any);
     expect(res.status).toBe(403);
@@ -405,7 +435,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
 
   it('returns 401 when not authenticated', async () => {
     mockGetSession.mockResolvedValue(null);
-    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: validEmailSignoff });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, {
       env: { MULTI_CLUB: '1', DB: makeDb() },
     });
@@ -415,7 +445,7 @@ describe('clubs/register POST (user self-registers a new club)', () => {
 
   it('returns 503 without registering a club when migration 0021 is not applied', async () => {
     const db = makeDb({ all: [[{ name: 'id' }]] });
-    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: validEmailSignoff });
+    const req = postReq('/api/clubs/register', { clubName: 'Riverside FC', emailSignoff: await validEmailSignoff(), dpaAcceptance: await validDpaAcceptance() });
     const ctx = makeContext(req, { env: { MULTI_CLUB: '1', DB: db } });
 
     const res = await registerPost(ctx as any);

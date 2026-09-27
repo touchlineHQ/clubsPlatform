@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithMantine, mockLoggedOut, mockAdmin, mockPlatformAdmin } from '../test-utils';
 import type { ClubEntry } from '../../types';
@@ -33,6 +33,45 @@ const adminOfTestFc = {
 };
 
 describe('LandingPage', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(['network', 'http', 'json', 'missing', 'invalid', 'blank'])('shows an error when DPA loading fails: %s', async failure => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url !== '/api/dpa-policy') return { ok: true, json: async () => ({}) };
+      if (failure === 'network') throw new Error('offline');
+      return {
+        ok: failure !== 'http',
+        json: async () => {
+          if (failure === 'json') throw new SyntaxError('invalid JSON');
+          if (failure === 'missing') return null;
+          return { policyVersion: '1', wording: failure === 'blank' ? ' ' : {}, wordingHash: 'hash' };
+        },
+      };
+    }));
+    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load the processor agreement');
+    expect(screen.getByRole('button', { name: /Create my club site/ })).toBeDisabled();
+    expect(screen.queryByRole('checkbox', { name: /processor agreement/ })).toBeNull();
+  });
+
+  it('requires explicit DPA acceptance after the wording loads', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () => url === '/api/dpa-policy'
+        ? { policyVersion: '1', wording: 'Current processor agreement wording', wordingHash: 'hash' }
+        : {},
+    })));
+    renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
+    expect(await screen.findByText('Current processor agreement wording')).toBeVisible();
+    const checkbox = screen.getByRole('checkbox', { name: /processor agreement/ });
+    const submit = screen.getByRole('button', { name: /Create my club site/ });
+    expect(checkbox).not.toBeChecked();
+    expect(submit).toBeDisabled();
+    fireEvent.click(checkbox);
+    expect(submit).toBeEnabled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('renders the hero section with a heading', () => {
     renderWithMantine(<LandingPage clubs={clubs} />, { authValue: mockLoggedOut });
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);

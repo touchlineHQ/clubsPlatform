@@ -5,12 +5,20 @@ import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   parseSignoffTicks,
   parseSignoffPolicy,
-  recordEmailSignoff,
+  prepareEmailSignoff,
   requestIp,
   SignoffIncompleteError,
   SignoffPolicyMismatchError,
+  validatePolicySubmission,
   EMAIL_SIGNOFF_POLICY_VERSION,
 } from "../../lib/club-email-signoff";
+import {
+  parseDpaAcceptance,
+  prepareDpaAcceptance,
+  DpaPolicyMismatchError,
+  DPA_POLICY_VERSION,
+  validateDpaSubmission,
+} from "../../lib/dpa";
 
 function slugify(name: string): string {
   return name
@@ -23,6 +31,7 @@ function slugify(name: string): string {
     .slice(0, 60);
 }
 
+/** Create a private club after validating all versioned signup acceptances. */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!isMultiClubMode(context.env)) {
     return json({ error: "Multi-club mode is not enabled" }, { status: 403 });
@@ -39,6 +48,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body = (await context.request.json()) as Partial<{
     clubName: string;
     emailSignoff: unknown;
+    dpaAcceptance: unknown;
   }>;
   const clubName = body.clubName?.trim() ?? "";
 
@@ -61,6 +71,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       },
       { status: 400 },
     );
+  }
+
+  // UK GDPR Art. 28 processor agreement — signup cannot complete without it (#75).
+  const dpa = parseDpaAcceptance(body.dpaAcceptance);
+  if (!dpa) {
+    return json(
+      { error: "dpaAcceptance requires accepted=true with policyVersion and wordingHash" },
+      { status: 400 },
+    );
+  }
+
+  // Validate both versioned policies before any club/user write. A stale form
+  // must not leave behind a private club without the acceptances required by
+  // signup. The recording functions validate again before persisting.
+  try {
+    await validatePolicySubmission(policy);
+    await validateDpaSubmission(dpa);
+  } catch (err) {
+    if (err instanceof SignoffPolicyMismatchError || err instanceof DpaPolicyMismatchError) {
+      return json({ error: err.message }, { status: 409 });
+    }
+    throw err;
   }
 
   let slug = slugify(clubName);
@@ -88,30 +120,37 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // published = 0: a brand-new club starts private, visible to the admin who
   // just created it and nobody else, until they go live from the Customise page.
   const id = randomId("club");
-  await context.env.DB
+  const clubInsert = context.env.DB
     .prepare(`INSERT INTO club_config (id, slug, name, active, published, createdAt) VALUES (?, ?, ?, 1, 0, ?)`)
-    .bind(id, slug, clubName, nowMs())
-    .run();
+    .bind(id, slug, clubName, nowMs());
 
   // Grant the signing-up user admin access to this club
-  await context.env.DB
+  const userUpdate = context.env.DB
     .prepare(`UPDATE user SET role = 'admin', clubSlug = ? WHERE id = ?`)
-    .bind(slug, userId)
-    .run();
+    .bind(slug, userId);
+
+  const ip = requestIp(context.request);
 
   try {
-    await recordEmailSignoff(context.env.DB, {
+    const signoffStatements = await prepareEmailSignoff(context.env.DB, {
       clubSlug: slug,
       userId,
-      ipAddress: requestIp(context.request),
+      ipAddress: ip,
       ticks,
       policy,
     });
+    const dpaStatement = await prepareDpaAcceptance(context.env.DB, {
+      clubSlug: slug,
+      userId,
+      ipAddress: ip,
+      policy: dpa,
+    });
+    await context.env.DB.batch([clubInsert, userUpdate, ...signoffStatements, dpaStatement]);
   } catch (err) {
     if (err instanceof SignoffIncompleteError) {
       return json({ error: err.message }, { status: 400 });
     }
-    if (err instanceof SignoffPolicyMismatchError) {
+    if (err instanceof SignoffPolicyMismatchError || err instanceof DpaPolicyMismatchError) {
       return json({ error: err.message }, { status: 409 });
     }
     throw err;
@@ -132,6 +171,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       properties: {
         club_slug: slug,
         policy_version: EMAIL_SIGNOFF_POLICY_VERSION,
+        source: 'registration',
+      },
+    });
+    await posthog.captureImmediate({
+      distinctId: userId,
+      event: 'dpa accepted',
+      ...clubGroups(slug),
+      properties: {
+        club_slug: slug,
+        policy_version: DPA_POLICY_VERSION,
         source: 'registration',
       },
     });
