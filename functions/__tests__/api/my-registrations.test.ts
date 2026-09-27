@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { makeContext, makeDb, makeEnv, adminSession, memberSession, getReq, deleteReq } from '../test-utils';
+import { makeContext, makeDb, makeEnv, adminSession, platformAdminSession, memberSession, getReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -61,7 +61,7 @@ describe('onRequestGet', () => {
     mockGetSession.mockResolvedValue(memberSession);
     const db = makeDb({ all: [[]] });
     const ctx = makeContext(
-      getReq('/api/my-registrations'),
+      getReq('/api/my-registrations', { 'X-Club-Slug': '' }),
       { env: { DB: db as any } },
     );
     const res = await onRequestGet(ctx as any);
@@ -148,10 +148,10 @@ describe('onRequestDelete', () => {
   });
 
   it('returns 400 when X-Club-Slug header is missing', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const db = makeDb();
     const ctx = makeContext(
-      deleteReq('/api/my-registrations?registrationId=reg_1'),
+      deleteReq('/api/my-registrations?registrationId=reg_1', { 'X-Club-Slug': '' }),
       { env: { DB: db as any } },
     );
     const res = await onRequestDelete(ctx as any);

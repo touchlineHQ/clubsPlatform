@@ -85,6 +85,8 @@ describe('decryptSecret', () => {
 describe('decryptTransport', () => {
   it('decrypts a value that was encrypted with the matching RSA public key', async () => {
     // Generate a fresh RSA-OAEP key pair for this test
+    // workers-types types generateKey/exportKey more loosely than DOM; narrow
+    // at the call so the rest of the test stays honest about CryptoKeyPair.
     const { privateKey, publicKey } = await crypto.subtle.generateKey(
       {
         name: 'RSA-OAEP',
@@ -94,9 +96,9 @@ describe('decryptTransport', () => {
       },
       true,
       ['encrypt', 'decrypt'],
-    );
+    ) as CryptoKeyPair;
 
-    const privKeyDer = await crypto.subtle.exportKey('pkcs8', privateKey);
+    const privKeyDer = await crypto.subtle.exportKey('pkcs8', privateKey) as ArrayBuffer;
     const privKeyB64 = btoa(String.fromCharCode(...new Uint8Array(privKeyDer)));
 
     // Simulate what the browser would do: encrypt with the public key

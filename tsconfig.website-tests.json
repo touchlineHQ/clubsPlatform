@@ -1,0 +1,29 @@
+{
+  // Website *tests* resolve against the root node_modules (where vitest,
+  // @testing-library/* and the Mantine copies the suite runs against live).
+  // Website *source* stays on website/tsconfig.json → website/node_modules.
+  // Kept as its own project: DOM here would clash with workers-types in
+  // functions/tsconfig.tests.json if the two were combined.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Pinned deliberately — same reason as e2e/tsconfig.json. Leaving this
+    // unset auto-includes every @types/* under root node_modules, which pulls
+    // in @cloudflare/workers-types and redeclares DOM globals.
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": [
+    "website/src/**/*.test.ts",
+    "website/src/**/*.test.tsx",
+    "website/src/**/__tests__/**/*.ts",
+    "website/src/**/__tests__/**/*.tsx",
+    "website/src/vite-env.d.ts",
+    "vitest.setup.ts"
+  ]
+}

@@ -88,7 +88,7 @@ import { App } from '../App';
 const minimalClub = {
   slug: 'test-club', name: 'Test FC', tagline: '', founded: 2000,
   email: '', address: { line1: '', line2: '', postcode: '' },
-  what3words: '', socials: {}, about: [], history: [],
+  what3words: '', socials: { facebook: '', instagram: '', twitter: '' }, about: [], history: [],
 };
 
 const appData: AppData = {

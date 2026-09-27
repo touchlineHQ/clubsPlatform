@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { makeContext, makeDb, adminSession, postReq, patchReq, deleteReq } from '../test-utils';
+import { makeContext, makeDb, adminSession, platformAdminSession, postReq, patchReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -460,15 +460,16 @@ describe('club PATCH (update club data)', () => {
     expect(body.ok).toBe(true);
   });
 
-  it('returns 404 when club does not exist', async () => {
+  it('returns 403 when admin club does not match requested club', async () => {
     const req = patchReq('/api/club', { tagline: 'Play Hard' }, { 'X-Club-Slug': 'unknown-club' });
     const ctx = makeContext(req, { env: { DB: makeDb({ first: null }) } });
     const res = await clubPatch(ctx as any);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 
   it('returns 400 when X-Club-Slug header is missing', async () => {
-    const req = patchReq('/api/club', { tagline: 'Play Hard' });
+    mockGetSession.mockResolvedValue(platformAdminSession);
+    const req = patchReq('/api/club', { tagline: 'Play Hard' }, { 'X-Club-Slug': '' });
     const ctx = makeContext(req, { env: { DB: makeDb() } });
     const res = await clubPatch(ctx as any);
     expect(res.status).toBe(400);

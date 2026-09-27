@@ -19,7 +19,7 @@ vi.mock('../../lib/read-cost', async (importOriginal) => ({
 // Null by default, so the writes under test take the same path they do on a
 // deployment with no PostHog configured. One test hands back a client that
 // rejects, to prove analytics cannot fail a write that already committed.
-const getPostHog = vi.hoisted(() => vi.fn<[], unknown>(() => null));
+const getPostHog = vi.hoisted(() => vi.fn<() => unknown>(() => null));
 vi.mock('../../lib/posthog', () => ({
   getPostHog,
   clubGroups: (slug?: string | null) => (slug ? { groups: { club: slug } } : {}),
@@ -145,9 +145,12 @@ describe('merge suggestions', () => {
     expect((await list()).status).toBe(401);
   });
 
-  it('refuses a request with no club header', async () => {
-    const res = await listSuggestions(ctx(getReq(PATH)));
-    expect(res.status).toBe(400);
+  it('rejects an admin request without an X-Club-Slug scope', async () => {
+    // Override the shared admin fixture default: this case must reach the
+    // endpoint without a club scope.
+    const res = await listSuggestions(ctx(getReq(PATH, { 'X-Club-Slug': '' })));
+    // requireAdmin rejects the club-bound session before endpoint validation.
+    expect(res.status).toBe(403);
   });
 
   it('refuses an unknown state rather than silently listing the open ones', async () => {

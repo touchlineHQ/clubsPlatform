@@ -37,7 +37,7 @@ make db-migrate-prod    # Apply migrations to production D1
 ### Checks
 
 ```bash
-npm run typecheck    # tsc over functions/ and website/src
+npm run typecheck    # tsc over functions/, website/src, and their tests
 npm run test         # vitest, both halves
 npm run test:coverage   # same, with the 80% thresholds enforced
 ```
@@ -59,13 +59,24 @@ resolve `hono`, `better-auth` and `posthog-node` from the **root**
 time and never looks in `website/node_modules`. Keeping the config at
 `functions/` makes `tsc` resolve them the same way the real bundle does.
 
-**Test files are not typechecked yet.** Root `package.json` carries
-`@mantine/*`, `react-router-dom` and `@testing-library/*` as devDependencies so
-vitest can run the website's tests from the repo root — so website *source*
-resolves against `website/node_modules` while website *tests* resolve against
-the root one. Covering tests means a third project to reconcile that split.
+**Test files are typechecked too**, but as their own projects —
+`functions/tsconfig.tests.json` and `tsconfig.website-tests.json` — because
+workers-types and the DOM lib redeclare each other, and because website
+*source* resolves against `website/node_modules` while website *tests* resolve
+against the root one (where vitest and `@testing-library/*` live). Root
+`package.json` carries `@mantine/*`, `react-router-dom` and
+`@testing-library/*` as devDependencies so vitest can run the website's tests
+from the repo root.
 
 There is no `npm run lint` yet — no linter is configured in this repo.
+
+### Data protection
+
+The platform treats player identity as a blind asset (`fanId` only). Contact
+emails are Direct PII and must not live in the auth `user` table once the
+boundary work lands. See [docs/DATA_PROTECTION.md](docs/DATA_PROTECTION.md)
+for what is held, what is out of bounds, lawful bases, retention, and the
+current gap around imported parent emails.
 
 ### End-to-end tests
 
@@ -259,7 +270,7 @@ upload failure logs a warning and the build carries on. The wrapper also
 deletes the source maps itself in that case: the plugin only removes them after
 a *successful* upload, so without the cleanup a swallowed error would publish
 our source maps to Cloudflare Pages. If that cleanup ever fails, the build
-fails — shipping is worth more than symbolication, but not worth leaking
+fails — shipping is worth more than attribution, but not worth leaking
 source.
 
 Two more things to know if you touch this:
