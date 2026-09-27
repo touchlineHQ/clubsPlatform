@@ -4,6 +4,7 @@ import {
   nowMs,
   randomId,
   isMultiClubMode,
+  isClubSelfRegisterAllowed,
   isPitchBookingsEnabled,
   getClubSlug,
   requireAdmin,
@@ -130,6 +131,23 @@ describe('isMultiClubMode', () => {
 
   it.each([['0'], ['false'], [undefined]])('returns false for MULTI_CLUB=%s', (v) => {
     expect(isMultiClubMode(makeEnv({ MULTI_CLUB: v }))).toBe(false);
+  });
+});
+
+
+// ─── isClubSelfRegisterAllowed ────────────────────────────────────────────────
+
+describe('isClubSelfRegisterAllowed', () => {
+  it.each([['1'], ['true'], ['yes'], ['on']])('returns true for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
+  });
+
+  it.each([[' TRUE '], ['YES'], ['On']])('normalizes enabled ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
+  });
+
+  it.each([['0'], ['false'], ['FALSE'], ['off'], ['unexpected'], [''], [undefined]])('returns false for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(false);
   });
 });
 

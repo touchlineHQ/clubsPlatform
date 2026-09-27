@@ -232,12 +232,29 @@ async function loadTeamsFromApi(clubSlug: string): Promise<TeamsData | null> {
  * Load the club registry: list of clubs and whether multi-club mode is active.
  * Tries GET /api/clubs first; falls back to static /data/clubs/index.json.
  */
-export async function loadClubRegistry(): Promise<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] }> {
+export type ClubRegistry = {
+  multiClub: boolean;
+  selfRegister: boolean;
+  pitchBookings: boolean;
+  clubs: ClubEntry[];
+};
+
+export async function loadClubRegistry(): Promise<ClubRegistry> {
   try {
     const res = await fetch('/api/clubs');
     if (res.ok) {
-      const data = await res.json() as { multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] };
-      return { multiClub: data.multiClub ?? false, pitchBookings: data.pitchBookings ?? false, clubs: data.clubs ?? [] };
+      const data = await res.json() as {
+        multiClub?: boolean;
+        selfRegister?: boolean;
+        pitchBookings?: boolean;
+        clubs?: ClubEntry[];
+      };
+      return {
+        multiClub: data.multiClub ?? false,
+        selfRegister: data.selfRegister ?? false,
+        pitchBookings: data.pitchBookings ?? false,
+        clubs: data.clubs ?? [],
+      };
     }
   } catch {
     // fall through to static fallback
@@ -247,13 +264,13 @@ export async function loadClubRegistry(): Promise<{ multiClub: boolean; pitchBoo
     const res = await fetch('/data/clubs/index.json');
     if (res.ok) {
       const data = await res.json() as { clubs: ClubEntry[] };
-      return { multiClub: false, pitchBookings: false, clubs: data.clubs ?? [] };
+      return { multiClub: false, selfRegister: false, pitchBookings: false, clubs: data.clubs ?? [] };
     }
   } catch {
     // fall through
   }
 
-  return { multiClub: false, pitchBookings: false, clubs: [] };
+  return { multiClub: false, selfRegister: false, pitchBookings: false, clubs: [] };
 }
 
 export const loadAllData = async (clubSlug: string, multiClub = false): Promise<AppData> => {

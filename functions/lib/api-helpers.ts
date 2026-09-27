@@ -6,6 +6,8 @@ export interface Env {
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
   MULTI_CLUB?: string;
+  /** When truthy with MULTI_CLUB, allows POST /api/clubs/register self-serve signup. */
+  ALLOW_CLUB_SELF_REGISTER?: string;
   PITCH_BOOKINGS?: string;
   GC_ENVIRONMENT?: string;
   SECRETS_ENCRYPTION_KEY: string;
@@ -62,6 +64,12 @@ export function randomId(prefix: string): string {
 export function isMultiClubMode(env: Env): boolean {
   const v = env.MULTI_CLUB;
   return !!(v && v !== "0" && v !== "false");
+}
+
+/** Returns true for supported enabled values of ALLOW_CLUB_SELF_REGISTER. */
+export function isClubSelfRegisterAllowed(env: Env): boolean {
+  const v = env.ALLOW_CLUB_SELF_REGISTER?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */

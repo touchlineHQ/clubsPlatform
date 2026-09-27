@@ -64,7 +64,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
 
 function AppRoutes() {
   const { user, loading: authLoading, isAdmin, isPlatformAdmin } = useAuth();
-  const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
+  const [registry, setRegistry] = useState<{ multiClub: boolean; selfRegister: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
@@ -163,7 +163,7 @@ function AppRoutes() {
   if (registry.multiClub && !clubSlug) {
     return (
       <MantineProvider theme={createLandingTheme()}>
-        <LandingPage clubs={registry.clubs} />
+        <LandingPage clubs={registry.clubs} selfRegister={registry.selfRegister} />
       </MantineProvider>
     );
   }
