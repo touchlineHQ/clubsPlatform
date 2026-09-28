@@ -43,7 +43,7 @@ These fields appear on FA export CSVs. The import path must strip them; tests al
 | `admin_audit_log` | `adminId`, action, target | Legitimate interests (accountability) | Must not store deleted contact addresses. |
 | `club_config` / content JSON | club contact email inside `data` blob | Contract (club’s own details) | Club identity, not parent data. |
 | `player_contact` | `email`, opt-ins, activation token hash | Contract / consent (marketing) | Separated from auth identity (#131). Marketing opt-in is a denormalised mirror of `consent_record`. |
-| `consent_record` | subject, purpose, channel, state, IP, policy version + wording hash | Consent (marketing only) | Append-only. Latest row is current. One-click withdraw via token hash (#75). |
+| `consent_record` | subject, purpose, channel, state, IP, policy version + wording hash | Contract / legitimate interests (operational); explicit consent (marketing) | Append-only evidence of operational agreement and optional marketing consent. Latest row per purpose is current. Operational evidence: membership relationship + **6 years**; marketing evidence: while consent is active + **6 years** after withdrawal (provisional periods below). One-click marketing withdrawal via token hash (#75). |
 | `club_dpa_acceptance` | accepting user, version, hash, IP | Contract (future host DPA) | Wired for self-serve signup (#75); **parked** while one-club + self-register off (#146). |
 | `club_email_signoff` | liability ticks, version, hash | Contract / accountability | Club self-certifies operational liabilities before contact collection (#130 / #148). Not a processor agreement. |
 
@@ -102,6 +102,8 @@ Concrete periods (placeholders pending legal confirmation):
 | Lapsed registration (no active status) | Membership record retained **6 years** from last active season; contact email (once separated) purged or suppressed earlier per below. |
 | Unactivated contact invitation (`pending`) | **30 days**, then one reminder, then purge. A pending address is held without consent and must not sit indefinitely. |
 | Withdrawn / purged contact email | Immediate deletion from active tables; salted hash retained only for re-import suppression (no plaintext). |
+| Operational agreement evidence (`consent_record`, operational) | Life of the membership relationship + **6 years**. Records the wording agreed to; operational processing uses contract / legitimate interests. |
+| Marketing consent evidence (`consent_record`, marketing) | While consent is active + **6 years** after withdrawal, to evidence the grant and withdrawal. Marketing stops on withdrawal. |
 | Session / IP / user-agent | Session lifetime only. |
 | Admin audit log | **2 years**, or longer if required for a live dispute. Must not contain deleted contact addresses. |
 | Club leaving the platform | Export offered; residual contact data purged within **90 days** of offboarding unless a legal hold applies. |
@@ -124,4 +126,5 @@ When a change stores a new personal-data field (or changes how an existing one i
 - #131 — `player_contact` schema
 - #130 — club sign-off gating collection
 - #75 — consent records, privacy notice, processor agreement (landed: `consent_record`, `club_dpa_acceptance`, privacy notice, admin export/delete)
+- #149 — parent-facing contact consent form (activation token on `player_contact`; operational + optional marketing evidence on `consent_record`)
 - #134 — one-click purge (once contact is separated from auth)

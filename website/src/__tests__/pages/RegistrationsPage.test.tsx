@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { renderWithMantine, mockMember, mockAdmin, mockSingleClub } from '../test-utils';
 
 vi.mock('react-router-dom', () => ({
@@ -212,6 +212,41 @@ describe('RegistrationsPage', () => {
     // toolbar instead to know the club table has rendered.
     await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
   }
+
+  it('discards a late contact list for another FAN and preserves the current pending email', async () => {
+    await renderClubTab([
+      sampleRow,
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2' },
+    ]);
+    const route = mockFetch.getMockImplementation()!;
+    let resolveFirst!: (value: unknown) => void;
+    const firstContacts = new Promise(resolve => { resolveFirst = resolve; });
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).startsWith('/api/admin/player-contacts')) {
+        const fanId = new URLSearchParams(String(url).split('?')[1]).get('fanId');
+        return Promise.resolve({
+          ok: true,
+          json: () => fanId === 'fan_1' ? firstContacts : Promise.resolve({
+            contacts: [{ id: 'c2', email: 'current@example.com', state: 'pending' }],
+          }),
+        });
+      }
+      return route(url);
+    });
+    const firstRow = (await screen.findByText('fan_1')).closest('tr')!;
+    const secondRow = screen.getByText('fan_2').closest('tr')!;
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Ask parent' }));
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Ask parent' }));
+    await waitFor(() => expect(screen.getByLabelText(/Parent \/ guardian email/))
+      .toHaveValue('current@example.com'));
+    await act(async () => {
+      resolveFirst({ contacts: [{ id: 'c1', email: 'stale@example.com', state: 'pending' }] });
+      await firstContacts;
+    });
+    expect(screen.getByLabelText(/Parent \/ guardian email/)).toHaveValue('current@example.com');
+    expect(screen.getByText('current@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('stale@example.com')).not.toBeInTheDocument();
+  });
 
   it('renders personal registrations returned by API', async () => {
     mockFetch.mockResolvedValue({
