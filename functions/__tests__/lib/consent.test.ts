@@ -51,6 +51,9 @@ describe('consent_record persistence', () => {
        operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
       VALUES ('pc_1','${CLUB}','p1','parent@example.com','guardian','confirmed',
               1,0,NULL,${NOW})`);
+    sqlite.exec(`INSERT INTO "player_registration"
+      (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt)
+      VALUES ('reg_1','${CLUB}','p1','U12',NULL,NULL,'Active',${NOW},${NOW})`);
   });
 
   afterEach(() => {
