@@ -37,7 +37,7 @@ type FormPayload = {
  */
 export function ParentConsentPage() {
   const { token: rawToken } = useParams<{ token: string }>();
-  const token = rawToken ? decodeURIComponent(rawToken) : '';
+  const token = rawToken ?? '';
   const { clubSlug } = useClub();
 
   const [payload, setPayload] = useState<FormPayload | null>(null);

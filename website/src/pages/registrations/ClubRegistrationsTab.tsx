@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   Alert, Box, Button, Center, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
 } from '@mantine/core';
@@ -65,6 +65,7 @@ export function ClubRegistrationsTab({
 
   // Parent contact consent (#149): secretary mints a copyable link; no mail required.
   const [consentRow, setConsentRow] = useState<RegistrationRow | null>(null);
+  const consentFanIdRef = useRef<string | null>(null);
   const [consentEmail, setConsentEmail] = useState('');
   const [consentRelationship, setConsentRelationship] = useState<'guardian' | 'self'>('guardian');
   const [consentBusy, setConsentBusy] = useState(false);
@@ -418,6 +419,7 @@ export function ClubRegistrationsTab({
 
 
   const openConsentModal = useCallback(async (row: RegistrationRow) => {
+    consentFanIdRef.current = row.fanId;
     setConsentRow(row);
     setConsentEmail('');
     setConsentRelationship('guardian');
@@ -431,6 +433,7 @@ export function ClubRegistrationsTab({
       );
       if (res.ok) {
         const data = await res.json() as { contacts: typeof consentContacts };
+        if (consentFanIdRef.current !== row.fanId) return;
         setConsentContacts(data.contacts ?? []);
         const pending = (data.contacts ?? []).find((c) => c.state === 'pending');
         if (pending) setConsentEmail(pending.email);
@@ -788,7 +791,7 @@ export function ClubRegistrationsTab({
 
       <Modal
         opened={consentRow !== null}
-        onClose={() => { setConsentRow(null); setConsentLink(null); }}
+        onClose={() => { consentFanIdRef.current = null; setConsentRow(null); setConsentLink(null); }}
         title="Ask parent for contact consent"
         size="md"
         centered

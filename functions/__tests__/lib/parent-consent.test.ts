@@ -144,6 +144,106 @@ describe('parent consent helpers', () => {
     expect(await emailForSend(d1, CLUB, created.contactId, 'marketing')).toBeNull();
   });
 
+  async function pendingSubmission() {
+    const d1 = d1Over(sqlite) as any;
+    const created = await askParentForContactConsent(d1, {
+      clubSlug: CLUB, fanId: 'FAN001', email: 'parent@example.com', sourcedBy: 'admin_1',
+    });
+    return {
+      d1, created,
+      input: {
+        token: created.token,
+        email: 'updated@example.com',
+        operationalPolicy: await currentOperationalConsentPolicy(),
+        marketingOptIn: true,
+        marketingPolicy: await currentMarketingConsentPolicy(),
+        ipAddress: '203.0.113.9',
+      },
+    };
+  }
+
+  function snapshot() {
+    return {
+      contacts: sqlite.prepare('SELECT * FROM "player_contact"').all(),
+      records: sqlite.prepare('SELECT * FROM "consent_record" ORDER BY rowid').all(),
+    };
+  }
+
+  it.each(['operational', 'marketing', 'missing marketing'])(
+    'rejects an invalid %s policy without changing contact or consent evidence',
+    async (purpose) => {
+      const { d1, input } = await pendingSubmission();
+      const before = snapshot();
+      const submission = {
+        ...input,
+        operationalPolicy: purpose === 'operational'
+          ? { ...input.operationalPolicy, wordingHash: 'stale' } : input.operationalPolicy,
+        marketingPolicy: purpose === 'missing marketing' ? null
+          : purpose === 'marketing' ? { ...input.marketingPolicy, policyVersion: 'stale' }
+            : input.marketingPolicy,
+      };
+      await expect(submitParentConsentForm(d1, submission))
+        .rejects.toMatchObject({ code: 'policy_mismatch' });
+      expect(snapshot()).toEqual(before);
+    },
+  );
+
+  it.each(['confirmed', 'withdrawn', 'bounced'])(
+    'rejects submission for a %s contact without changing existing evidence',
+    async (state) => {
+      const { d1, created, input } = await pendingSubmission();
+      await submitParentConsentForm(d1, input);
+      sqlite.prepare('UPDATE "player_contact" SET state = ? WHERE id = ?').run!(state, created.contactId);
+      const before = snapshot();
+      await expect(submitParentConsentForm(d1, { ...input, email: 'other@example.com' }))
+        .rejects.toMatchObject({ code: 'invalid_state' });
+      expect(snapshot()).toEqual(before);
+    },
+  );
+
+  it.each(['marketing grant', 'contact update'])(
+    'rolls back confirmation when the %s fails',
+    async (failure) => {
+      const { d1, input } = await pendingSubmission();
+      const before = snapshot();
+      sqlite.exec(failure === 'marketing grant'
+        ? `CREATE TRIGGER fail_write BEFORE INSERT ON consent_record
+           WHEN NEW.purpose = 'marketing' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+        : `CREATE TRIGGER fail_write BEFORE UPDATE ON player_contact
+           BEGIN SELECT RAISE(ABORT, 'forced failure'); END`);
+      await expect(submitParentConsentForm(d1, input)).rejects.toThrow('forced failure');
+      expect(snapshot()).toEqual(before);
+    },
+  );
+
+  it.each(['marketing withdrawal', 'contact update'])(
+    'rolls back withdrawal when the %s fails',
+    async (failure) => {
+      const { d1, created, input } = await pendingSubmission();
+      await submitParentConsentForm(d1, input);
+      const before = snapshot();
+      sqlite.exec(failure === 'marketing withdrawal'
+        ? `CREATE TRIGGER fail_write BEFORE INSERT ON consent_record
+           WHEN NEW.purpose = 'marketing' BEGIN SELECT RAISE(ABORT, 'forced failure'); END`
+        : `CREATE TRIGGER fail_write BEFORE UPDATE ON player_contact
+           BEGIN SELECT RAISE(ABORT, 'forced failure'); END`);
+      await expect(withdrawParentConsentByToken(d1, created.token, null))
+        .rejects.toThrow('forced failure');
+      expect(snapshot()).toEqual(before);
+      sqlite.exec('DROP TRIGGER fail_write');
+      await withdrawParentConsentByToken(d1, created.token, null);
+      for (const purpose of ['operational', 'marketing'] as const) {
+        const latest = await latestConsentRecord(d1, {
+          clubSlug: CLUB, subjectType: 'player_contact', subjectId: created.contactId, purpose,
+        });
+        expect(latest?.state).toBe('withdrawn');
+        expect(latest?.supersedesId).toBeTruthy();
+      }
+      expect(sqlite.prepare('SELECT state, operationalOptIn, marketingOptIn, activationTokenHash FROM player_contact').get())
+        .toEqual({ state: 'withdrawn', operationalOptIn: 0, marketingOptIn: 0, activationTokenHash: null });
+    },
+  );
+
   it('refuses collection without club email sign-off', async () => {
     sqlite.exec(`DELETE FROM "club_email_signoff"`);
     const d1 = d1Over(sqlite) as any;

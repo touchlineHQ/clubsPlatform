@@ -95,7 +95,7 @@ export function parseConsentPolicy(raw: unknown): ConsentPolicySubmission | null
   return { policyVersion: obj.policyVersion, wordingHash: obj.wordingHash };
 }
 
-async function validateConsentPolicy(
+export async function validateConsentPolicy(
   submission: ConsentPolicySubmission,
   purpose: ConsentPurpose = "marketing",
 ): Promise<void> {

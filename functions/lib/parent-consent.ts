@@ -4,9 +4,8 @@ import {
   type ConsentPolicySubmission,
   hashToken,
   randomTokenHex,
-  recordMarketingConsentGrant,
-  recordOperationalConsentGrant,
-  withdrawOperationalConsent,
+  validateConsentPolicy,
+  currentOperationalConsentPolicy,
   latestConsentRecord,
 } from "./consent";
 import {
@@ -355,7 +354,7 @@ export async function submitParentConsentForm(
   if (!contact) {
     throw new ParentConsentError("Consent link not found", "not_found");
   }
-  if (contact.state === "withdrawn" || contact.state === "bounced") {
+  if (contact.state !== "pending") {
     throw new ParentConsentError(
       `This contact is ${contact.state}`,
       "invalid_state",
@@ -373,15 +372,12 @@ export async function submitParentConsentForm(
     );
   }
 
-  // Record operational evidence first, then confirm the row. Marketing grant
-  // (optional) syncs marketingOptIn via recordMarketingConsentGrant.
+  // Validate every requested purpose before preparing any writes.
   try {
-    await recordOperationalConsentGrant(db, {
-      clubSlug: contact.clubSlug,
-      subjectId: contact.id,
-      ipAddress,
-      policy: operationalPolicy,
-    });
+    await validateConsentPolicy(operationalPolicy, "operational");
+    if (marketingOptIn && marketingPolicy) {
+      await validateConsentPolicy(marketingPolicy, "marketing");
+    }
   } catch (err) {
     if (err && typeof err === "object" && (err as Error).name === "ConsentPolicyMismatchError") {
       throw new ParentConsentError((err as Error).message, "policy_mismatch");
@@ -390,49 +386,42 @@ export async function submitParentConsentForm(
   }
 
   const confirmedAt = nowMs();
-  // Keep the activation token so the same link can later withdraw (#149 minimal).
-  // Clear expiry so a confirmed parent is not locked out of withdraw by the
-  // 30-day pending invitation window.
-  await db
+  const grants = [{ purpose: "operational", policy: operationalPolicy, tokenHash: null as string | null }];
+  if (marketingOptIn && marketingPolicy) {
+    grants.push({
+      purpose: "marketing",
+      policy: marketingPolicy,
+      tokenHash: await hashToken(randomTokenHex()),
+    });
+  }
+  const statements = grants.map(({ purpose, policy, tokenHash }) => db
+    .prepare(
+      `INSERT INTO "consent_record"
+         (id, clubSlug, subjectType, subjectId, purpose, channel, state,
+          recordedAt, ipAddress, policyVersion, wordingHash, withdrawTokenHash, supersedesId)
+       VALUES (?, ?, 'player_contact', ?, ?, 'email', 'granted',
+               ?, ?, ?, ?, ?, NULL)`,
+    )
+    .bind(
+      randomId("consent"), contact.clubSlug, contact.id, purpose,
+      confirmedAt, ipAddress, policy.policyVersion, policy.wordingHash, tokenHash,
+    ));
+
+  // Keep the activation token for withdrawal, without the pending expiry.
+  statements.push(db
     .prepare(
       `UPDATE "player_contact"
           SET email = ?,
               state = 'confirmed',
               operationalOptIn = 1,
+              marketingOptIn = ?,
               confirmedAt = ?,
               withdrawnAt = NULL,
               activationExpiresAt = NULL
         WHERE id = ? AND clubSlug = ?`,
     )
-    .bind(email, confirmedAt, contact.id, contact.clubSlug)
-    .run();
-
-  if (marketingOptIn && marketingPolicy) {
-    try {
-      await recordMarketingConsentGrant(db, {
-        clubSlug: contact.clubSlug,
-        subjectType: "player_contact",
-        subjectId: contact.id,
-        ipAddress,
-        policy: marketingPolicy,
-      });
-    } catch (err) {
-      if (err && typeof err === "object" && (err as Error).name === "ConsentPolicyMismatchError") {
-        throw new ParentConsentError((err as Error).message, "policy_mismatch");
-      }
-      throw err;
-    }
-  } else {
-    // Ensure marketing stays off when the parent did not tick it — including
-    // re-submits after a prior grant (re-ask refreshes to pending first).
-    await db
-      .prepare(
-        `UPDATE "player_contact" SET marketingOptIn = 0
-          WHERE id = ? AND clubSlug = ?`,
-      )
-      .bind(contact.id, contact.clubSlug)
-      .run();
-  }
+    .bind(email, marketingOptIn ? 1 : 0, confirmedAt, contact.id, contact.clubSlug));
+  await db.batch(statements);
 
   return { contactId: contact.id, clubSlug: contact.clubSlug, state: "confirmed" };
 }
@@ -475,46 +464,34 @@ export async function withdrawParentConsentByToken(
     );
   }
 
-  await withdrawOperationalConsent(db, {
-    clubSlug: contact.clubSlug,
-    subjectId: contact.id,
-    ipAddress,
-  });
-
-  // If a marketing grant exists, append a withdrawal using its withdraw token
-  // when we have one; otherwise force marketingOptIn off and append via the
-  // latest-record path by minting a synthetic withdrawal through latestConsent.
-  const latestMarketing = await latestConsentRecord(db, {
-    clubSlug: contact.clubSlug,
-    subjectType: "player_contact",
-    subjectId: contact.id,
-    purpose: "marketing",
-  });
-  if (latestMarketing?.state === "granted" && latestMarketing.withdrawTokenHash) {
-    // We do not have the plaintext marketing withdraw token here. Clear the
-    // mirror and append a withdrawn row keyed off the grant id.
-    await db
+  const statements = [];
+  const withdrawnAt = nowMs();
+  for (const purpose of ["operational", "marketing"] as const) {
+    const latest = await latestConsentRecord(db, {
+      clubSlug: contact.clubSlug,
+      subjectType: "player_contact",
+      subjectId: contact.id,
+      purpose,
+    });
+    if (latest?.state === "withdrawn") continue;
+    if (purpose === "marketing" && (latest?.state !== "granted" || !latest.withdrawTokenHash)) continue;
+    const policy = latest ?? await currentOperationalConsentPolicy();
+    statements.push(db
       .prepare(
         `INSERT INTO "consent_record"
            (id, clubSlug, subjectType, subjectId, purpose, channel, state,
             recordedAt, ipAddress, policyVersion, wordingHash, withdrawTokenHash, supersedesId)
-         VALUES (?, ?, 'player_contact', ?, 'marketing', 'email', 'withdrawn',
+         VALUES (?, ?, 'player_contact', ?, ?, 'email', 'withdrawn',
                  ?, ?, ?, ?, NULL, ?)`,
       )
       .bind(
-        randomId("consent"),
-        contact.clubSlug,
-        contact.id,
-        nowMs(),
-        ipAddress,
-        latestMarketing.policyVersion,
-        latestMarketing.wordingHash,
-        latestMarketing.id,
-      )
-      .run();
+        randomId("consent"), contact.clubSlug, contact.id, purpose,
+        withdrawnAt, ipAddress, policy.policyVersion, policy.wordingHash,
+        latest?.id ?? null,
+      ));
   }
 
-  await db
+  statements.push(db
     .prepare(
       `UPDATE "player_contact"
           SET state = 'withdrawn',
@@ -525,8 +502,8 @@ export async function withdrawParentConsentByToken(
               activationExpiresAt = NULL
         WHERE id = ? AND clubSlug = ?`,
     )
-    .bind(nowMs(), contact.id, contact.clubSlug)
-    .run();
+    .bind(withdrawnAt, contact.id, contact.clubSlug));
+  await db.batch(statements);
 
   return { contactId: contact.id, clubSlug: contact.clubSlug };
 }
