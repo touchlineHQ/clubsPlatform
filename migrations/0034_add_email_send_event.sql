@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS "email_send_event" (
                                'lapsed_registration',
                                'no_operational_opt_in',
                                'not_found',
+                               'duplicate_email',
                                'provider_rejected'
                              )),
   "contactState"           TEXT,

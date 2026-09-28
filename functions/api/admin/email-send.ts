@@ -18,6 +18,8 @@ import {
  * Body must name a purpose and an audience (team / club / player / contact id).
  * Recipients are never supplied — no `to`, `emails`, or `recipients` fields.
  * Marketing preference cannot be set here.
+ * Transactional mail (password reset / activation) is not an admin blast —
+ * reject it here; auth flows use the mailer directly when #72 lands.
  */
 
 type SendBody = {
@@ -29,6 +31,17 @@ type SendBody = {
   fromName?: unknown;
   replyTo?: unknown;
 };
+
+/** Escape plain text for use as an HTML body; preserve line breaks. */
+function textAsHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/\r\n|\r|\n/g, "<br>\n");
+}
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
@@ -72,6 +85,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       { status: 400 },
     );
   }
+  if (purpose === "transactional") {
+    return json(
+      {
+        error:
+          "Admin send cannot use transactional purpose; that is for account "
+          + "flows (password reset / activation). Use operational or marketing.",
+        code: "transactional_not_admin",
+      },
+      { status: 403 },
+    );
+  }
 
   const audience = parseSendAudience(body.audience);
   if (!audience) {
@@ -86,10 +110,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const subject = typeof body.subject === "string" ? body.subject.trim() : "";
-  const html = typeof body.html === "string" ? body.html : "";
-  const text = typeof body.text === "string" ? body.text : "";
+  const htmlRaw = typeof body.html === "string" ? body.html : "";
+  const textRaw = typeof body.text === "string" ? body.text : "";
   if (!subject) return json({ error: "subject is required" }, { status: 400 });
-  if (!html && !text) return json({ error: "html or text is required" }, { status: 400 });
+  if (!htmlRaw && !textRaw) return json({ error: "html or text is required" }, { status: 400 });
+
+  const text = textRaw || htmlRaw.replace(/<[^>]+>/g, " ");
+  const html = htmlRaw || textAsHtml(textRaw);
 
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
   const fromName = typeof body.fromName === "string" ? body.fromName : undefined;
@@ -100,48 +127,58 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     purpose,
     audience,
     subject,
-    html: html || text,
-    text: text || html.replace(/<[^>]+>/g, " "),
+    html,
+    text,
     fromName,
     replyTo,
     initiatedBy: adminId,
   });
 
+  // Off the response path: a PostHog failure must not turn a completed send
+  // into HTTP 500 (same pattern as merge-suggestion dismissals).
   const posthog = getPostHog(context.env);
   if (posthog) {
     const sentCount = result.sent.filter((s) => s.outcome === "sent").length;
     const skipped = result.sent.filter((s) => s.outcome === "skipped_unconfigured").length;
     if (sentCount > 0 || skipped > 0) {
-      await posthog.captureImmediate({
-        distinctId: adminId,
-        event: "club email send completed",
-        ...clubGroups(clubSlug),
-        properties: {
-          club_slug: clubSlug,
-          purpose,
-          audience_type: audience.type,
-          sent: sentCount,
-          skipped_unconfigured: skipped,
-          dropped: result.dropped.length,
-          batch_id: result.batchId,
-          mail_configured: result.mailConfigured,
-        },
-      });
+      context.waitUntil(
+        posthog
+          .captureImmediate({
+            distinctId: adminId,
+            event: "club email send completed",
+            ...clubGroups(clubSlug),
+            properties: {
+              club_slug: clubSlug,
+              purpose,
+              audience_type: audience.type,
+              sent: sentCount,
+              skipped_unconfigured: skipped,
+              dropped: result.dropped.length,
+              batch_id: result.batchId,
+              mail_configured: result.mailConfigured,
+            },
+          })
+          .catch((err) => console.error("PostHog capture failed", err)),
+      );
     }
     if (result.dropped.length > 0) {
-      await posthog.captureImmediate({
-        distinctId: adminId,
-        event: "club email recipients dropped",
-        ...clubGroups(clubSlug),
-        properties: {
-          club_slug: clubSlug,
-          purpose,
-          audience_type: audience.type,
-          dropped: result.dropped.length,
-          reasons: result.dropped.map((d) => d.dropReason),
-          batch_id: result.batchId,
-        },
-      });
+      context.waitUntil(
+        posthog
+          .captureImmediate({
+            distinctId: adminId,
+            event: "club email recipients dropped",
+            ...clubGroups(clubSlug),
+            properties: {
+              club_slug: clubSlug,
+              purpose,
+              audience_type: audience.type,
+              dropped: result.dropped.length,
+              reasons: result.dropped.map((d) => d.dropReason),
+              batch_id: result.batchId,
+            },
+          })
+          .catch((err) => console.error("PostHog capture failed", err)),
+      );
     }
   }
 

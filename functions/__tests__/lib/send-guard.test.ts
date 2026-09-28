@@ -249,6 +249,21 @@ describe('send guard eligibility (#133)', () => {
     expect(dropped.marketingConsentState).toBeNull();
   });
 
+  it('dedupes the same parent address across sibling contacts', async () => {
+    seedContact({ id: 'pc_sib1', playerId: 'p1', email: 'Parent@Example.com' });
+    seedContact({ id: 'pc_sib2', playerId: 'p2', email: 'parent@example.com' });
+    seedRegistration('p1', 'Active', 'U12 Blues');
+    seedRegistration('p2', 'Active', 'U12 Blues');
+
+    const d1 = d1Over(sqlite) as any;
+    const resolution = await resolveAudienceRecipients(
+      d1, CLUB, 'operational', { type: 'team', teamName: 'U12 Blues' },
+    );
+    expect(resolution.eligible).toHaveLength(1);
+    expect(resolution.eligible[0].email.toLowerCase()).toBe('parent@example.com');
+    expect(resolution.dropped.some((d) => d.dropReason === 'duplicate_email')).toBe(true);
+  });
+
   it('skips provider when unconfigured but still records eligibility', async () => {
     seedContact({ id: 'pc_skip' });
     seedRegistration('p1', 'Active');

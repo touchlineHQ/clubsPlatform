@@ -33,6 +33,7 @@ export type DropReason =
   | "lapsed_registration"
   | "no_operational_opt_in"
   | "not_found"
+  | "duplicate_email"
   | "provider_rejected";
 
 export type SendOutcome = "sent" | "dropped" | "skipped_unconfigured";
@@ -295,6 +296,10 @@ export async function resolveAudienceRecipients(
 
   const eligible: EligibleRecipient[] = [];
   const dropped: DroppedRecipient[] = [];
+  // One physical inbox gets one message per send, even when a parent has
+  // contacts for two siblings (#133 / CodeRabbit). Every contact still gets an
+  // audit row — duplicates are dropped with reason duplicate_email.
+  const seenEmails = new Set<string>();
 
   for (const candidate of candidates) {
     const result = await evaluateContactForPurpose(
@@ -304,8 +309,21 @@ export async function resolveAudienceRecipients(
       purpose,
       { teamName },
     );
-    if (result.eligible) eligible.push(result);
-    else dropped.push(result);
+    if (!result.eligible) {
+      dropped.push(result);
+      continue;
+    }
+    const key = result.email.trim().toLowerCase();
+    if (seenEmails.has(key)) {
+      dropped.push({
+        ...result,
+        eligible: false,
+        dropReason: "duplicate_email",
+      });
+      continue;
+    }
+    seenEmails.add(key);
+    eligible.push(result);
   }
 
   return { eligible, dropped };
@@ -461,26 +479,10 @@ export async function sendClubEmail(
       replyTo: input.replyTo,
     };
 
+    let providerMessageId: string | null = null;
     try {
       const result = await mailer.send(message);
-      sent.push({ contactId: recipient.contactId, outcome: "sent" });
-      await recordSendEvent(db, {
-        clubSlug: input.clubSlug,
-        batchId,
-        purpose: input.purpose,
-        contactId: recipient.contactId,
-        outcome: "sent",
-        dropReason: null,
-        contactState: recipient.contactState,
-        operationalOptIn: recipient.operationalOptIn,
-        marketingOptIn: recipient.marketingOptIn,
-        marketingConsentState: recipient.marketingConsentState,
-        registrationStatus: recipient.registrationStatus,
-        audienceType: input.audience.type,
-        audienceKey: audKey,
-        initiatedBy: input.initiatedBy ?? null,
-        providerMessageId: result.id ?? null,
-      });
+      providerMessageId = result.id ?? null;
     } catch {
       dropped.push({ contactId: recipient.contactId, dropReason: "provider_rejected" });
       await recordSendEvent(db, {
@@ -500,7 +502,29 @@ export async function sendClubEmail(
         initiatedBy: input.initiatedBy ?? null,
         providerMessageId: null,
       });
+      continue;
     }
+
+    // Audit after a successful provider call — a failed INSERT must not be
+    // recorded as provider_rejected (the message already went out).
+    sent.push({ contactId: recipient.contactId, outcome: "sent" });
+    await recordSendEvent(db, {
+      clubSlug: input.clubSlug,
+      batchId,
+      purpose: input.purpose,
+      contactId: recipient.contactId,
+      outcome: "sent",
+      dropReason: null,
+      contactState: recipient.contactState,
+      operationalOptIn: recipient.operationalOptIn,
+      marketingOptIn: recipient.marketingOptIn,
+      marketingConsentState: recipient.marketingConsentState,
+      registrationStatus: recipient.registrationStatus,
+      audienceType: input.audience.type,
+      audienceKey: audKey,
+      initiatedBy: input.initiatedBy ?? null,
+      providerMessageId,
+    });
   }
 
   return {
@@ -544,7 +568,7 @@ export async function listEmailSendEvents(
     limit?: number;
   } = {},
 ): Promise<EmailSendEventRow[]> {
-  const capped = Math.min(Math.max(limit, 1), 200);
+  const capped = Math.min(Math.max(Math.floor(Number(limit) || 50), 1), 200);
   if (outcome) {
     const res = await db
       .prepare(

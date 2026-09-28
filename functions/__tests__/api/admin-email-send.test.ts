@@ -36,6 +36,22 @@ describe('admin email-send / email-sends (#133)', () => {
 
   afterEach(() => sqlite.close());
 
+  it('rejects transactional purpose on the admin send endpoint', async () => {
+    const d1 = d1Over(sqlite) as any;
+    const res = await sendPost(makeContext(
+      postReq('/api/admin/email-send', {
+        purpose: 'transactional',
+        audience: { type: 'contact', contactId: 'pc_1' },
+        subject: 'Reset',
+        text: 'Reset',
+      }, { 'X-Club-Slug': CLUB }),
+      { env: { DB: d1 } },
+    ) as any);
+    expect(res.status).toBe(403);
+    const body = await res.json() as { code: string };
+    expect(body.code).toBe('transactional_not_admin');
+  });
+
   it('rejects caller-supplied recipients and marketing preference fields', async () => {
     const d1 = d1Over(sqlite) as any;
     for (const field of ['to', 'emails', 'recipients', 'marketingOptIn']) {
