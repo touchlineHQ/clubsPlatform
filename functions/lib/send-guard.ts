@@ -63,20 +63,93 @@ export type AudienceResolution = {
   dropped: DroppedRecipient[];
 };
 
-/** FA statuses that are not a live membership at the club. */
+/**
+ * Confirmed live FA registration statuses for operational mail (#133).
+ *
+ * Fail closed: the importer stores arbitrary status strings, so unknown values
+ * must not pass the send guard. FA Club Player Report uses "Active" for a
+ * current membership; cancelled / transferred / pending / anything else is not
+ * operationally reachable.
+ */
+export const LIVE_REGISTRATION_STATUSES: readonly string[] = [
+  "active",
+];
+
+/** @deprecated Kept for callers/tests that named the denylist; prefer the allowlist. */
 export const LAPSED_REGISTRATION_STATUSES: readonly string[] = [
   "cancelled",
   "transferred",
 ];
 
-/** True when registrationStatus represents a live registration (#133). */
+/** True when registrationStatus is on the live allowlist (case-insensitive). */
 export function isLiveRegistrationStatus(
   registrationStatus: string | null | undefined,
 ): boolean {
   const status = (registrationStatus ?? "").trim().toLowerCase();
   if (!status) return false;
-  return !LAPSED_REGISTRATION_STATUSES.includes(status);
+  return (LIVE_REGISTRATION_STATUSES as readonly string[]).includes(status);
 }
+
+/**
+ * Parse FA / import registrationExpiry text to a UTC end-of-day instant.
+ * Supports ISO `YYYY-MM-DD` and UK `DD/MM/YYYY` (also `-` separators).
+ * Returns null when blank or unparseable — callers treat that as "no expiry".
+ */
+export function parseRegistrationExpiry(
+  registrationExpiry: string | null | undefined,
+): Date | null {
+  const raw = (registrationExpiry ?? "").trim();
+  if (!raw) return null;
+
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]);
+    const d = Number(iso[3]);
+    const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+
+  const uk = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(raw);
+  if (uk) {
+    const d = Number(uk[1]);
+    const m = Number(uk[2]);
+    const y = Number(uk[3]);
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  }
+
+  return null;
+}
+
+/** True when there is no parseable expiry, or the expiry day has not ended yet. */
+export function isRegistrationExpiryCurrent(
+  registrationExpiry: string | null | undefined,
+  nowMsValue: number = Date.now(),
+): boolean {
+  const end = parseRegistrationExpiry(registrationExpiry);
+  if (!end) return true;
+  return end.getTime() >= nowMsValue;
+}
+
+/** Status allowlist + unexpired (or blank/unparseable) expiry. */
+export function isLiveRegistration(
+  registrationStatus: string | null | undefined,
+  registrationExpiry: string | null | undefined,
+  nowMsValue: number = Date.now(),
+): boolean {
+  return (
+    isLiveRegistrationStatus(registrationStatus)
+    && isRegistrationExpiryCurrent(registrationExpiry, nowMsValue)
+  );
+}
+
+export type RegistrationLiveProbe = {
+  registrationStatus: string | null;
+  registrationExpiry: string | null;
+  live: boolean;
+};
 
 type ContactCandidateRow = {
   id: string;
@@ -156,18 +229,19 @@ export async function loadAudienceCandidates(
 }
 
 /**
- * Live registrationStatus for a player at a club, optionally scoped to a team.
- * Returns the first live status found, or the first lapsed/empty row's status
- * when nothing is live (so drops can record what was seen).
+ * Probe live registration for a player at a club (optionally scoped to a team).
+ * Prefers a row that passes status allowlist + expiry; otherwise returns the
+ * most recently updated row so drops can record the status/expiry relied on.
  */
-export async function liveRegistrationStatusForPlayer(
+export async function probeLiveRegistrationForPlayer(
   db: D1Database,
   clubSlug: string,
   playerId: string,
   teamName?: string,
-): Promise<string | null> {
+  nowMsValue: number = Date.now(),
+): Promise<RegistrationLiveProbe> {
   let sql =
-    `SELECT registrationStatus FROM "player_registration"
+    `SELECT registrationStatus, registrationExpiry FROM "player_registration"
       WHERE clubSlug = ? AND playerId = ?`;
   const binds: unknown[] = [clubSlug, playerId];
   if (teamName) {
@@ -176,16 +250,42 @@ export async function liveRegistrationStatusForPlayer(
   }
   sql += ` ORDER BY updatedAt DESC`;
 
-  const res = await db.prepare(sql).bind(...binds).all<{ registrationStatus: string | null }>();
+  const res = await db.prepare(sql).bind(...binds).all<{
+    registrationStatus: string | null;
+    registrationExpiry: string | null;
+  }>();
   const rows = res.results ?? [];
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {
+    return { registrationStatus: null, registrationExpiry: null, live: false };
+  }
 
   for (const row of rows) {
-    if (isLiveRegistrationStatus(row.registrationStatus)) {
-      return row.registrationStatus;
+    if (isLiveRegistration(row.registrationStatus, row.registrationExpiry, nowMsValue)) {
+      return {
+        registrationStatus: row.registrationStatus,
+        registrationExpiry: row.registrationExpiry,
+        live: true,
+      };
     }
   }
-  return rows[0].registrationStatus ?? null;
+
+  const first = rows[0];
+  return {
+    registrationStatus: first.registrationStatus ?? null,
+    registrationExpiry: first.registrationExpiry ?? null,
+    live: false,
+  };
+}
+
+/** @deprecated Prefer probeLiveRegistrationForPlayer — status alone ignores expiry. */
+export async function liveRegistrationStatusForPlayer(
+  db: D1Database,
+  clubSlug: string,
+  playerId: string,
+  teamName?: string,
+): Promise<string | null> {
+  const probe = await probeLiveRegistrationForPlayer(db, clubSlug, playerId, teamName);
+  return probe.live ? probe.registrationStatus : (probe.registrationStatus);
 }
 
 function dropReasonForState(state: string): DropReason {
@@ -245,18 +345,18 @@ export async function evaluateContactForPurpose(
   }
 
   if (purpose === "operational") {
-    const registrationStatus = await liveRegistrationStatusForPlayer(
+    const probe = await probeLiveRegistrationForPlayer(
       db,
       clubSlug,
       contact.playerId,
       opts?.teamName,
     );
-    base.registrationStatus = registrationStatus;
+    base.registrationStatus = probe.registrationStatus;
 
     if (contact.operationalOptIn !== 1) {
       return { ...base, eligible: false, dropReason: "no_operational_opt_in" };
     }
-    if (!isLiveRegistrationStatus(registrationStatus)) {
+    if (!probe.live) {
       return { ...base, eligible: false, dropReason: "lapsed_registration" };
     }
     return { ...base, eligible: true };

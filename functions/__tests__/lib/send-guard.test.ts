@@ -5,8 +5,11 @@ import {
 } from '../../lib/consent';
 import {
   evaluateContactForPurpose,
+  isLiveRegistration,
   isLiveRegistrationStatus,
+  isRegistrationExpiryCurrent,
   listEmailSendEvents,
+  parseRegistrationExpiry,
   resolveAudienceRecipients,
   sendClubEmail,
 } from '../../lib/send-guard';
@@ -16,15 +19,28 @@ import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 const NOW = 1_700_000_000_000;
 const CLUB = 'test-club';
 
-describe('isLiveRegistrationStatus', () => {
-  it('treats cancelled and transferred as lapsed, and blank as not live', () => {
+describe('isLiveRegistrationStatus / expiry', () => {
+  it('allowlists Active only; unknown and blank fail closed', () => {
     expect(isLiveRegistrationStatus('Active')).toBe(true);
     expect(isLiveRegistrationStatus('active')).toBe(true);
-    expect(isLiveRegistrationStatus('Pending')).toBe(true);
+    expect(isLiveRegistrationStatus('Pending')).toBe(false);
+    expect(isLiveRegistrationStatus('Registered')).toBe(false);
     expect(isLiveRegistrationStatus('Cancelled')).toBe(false);
     expect(isLiveRegistrationStatus('transferred')).toBe(false);
     expect(isLiveRegistrationStatus('')).toBe(false);
     expect(isLiveRegistrationStatus(null)).toBe(false);
+  });
+
+  it('parses FA/ISO expiry and rejects past dates', () => {
+    expect(parseRegistrationExpiry('2027-08-01')?.toISOString()).toBe('2027-08-01T23:59:59.999Z');
+    expect(parseRegistrationExpiry('01/08/2027')?.toISOString()).toBe('2027-08-01T23:59:59.999Z');
+    expect(parseRegistrationExpiry('not-a-date')).toBeNull();
+    expect(isRegistrationExpiryCurrent('2020-01-01', Date.UTC(2026, 0, 1))).toBe(false);
+    expect(isRegistrationExpiryCurrent('2030-01-01', Date.UTC(2026, 0, 1))).toBe(true);
+    expect(isRegistrationExpiryCurrent(null)).toBe(true);
+    expect(isLiveRegistration('Active', '2020-01-01', Date.UTC(2026, 0, 1))).toBe(false);
+    expect(isLiveRegistration('Active', '2030-01-01', Date.UTC(2026, 0, 1))).toBe(true);
+    expect(isLiveRegistration('Pending', null)).toBe(false);
   });
 });
 
@@ -66,10 +82,12 @@ describe('send guard eligibility (#133)', () => {
     status: string,
     teamName = 'U12 Blues',
     id = `reg_${playerId}`,
+    expiry: string | null = null,
   ) {
+    const expirySql = expiry == null ? 'NULL' : `'${expiry}'`;
     sqlite.exec(`INSERT INTO "player_registration"
       (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt)
-      VALUES ('${id}','${CLUB}','${playerId}','${teamName}','U12',NULL,'${status}',${NOW},${NOW})`);
+      VALUES ('${id}','${CLUB}','${playerId}','${teamName}','U12',${expirySql},'${status}',${NOW},${NOW})`);
   }
 
   it('lapsed registration blocks operational; live registration allows it', async () => {
@@ -103,6 +121,23 @@ describe('send guard eligibility (#133)', () => {
 
     expect(await emailForSend(d1, CLUB, liveId, 'operational')).toBe('live@example.com');
     expect(await emailForSend(d1, CLUB, lapsedId, 'operational')).toBeNull();
+  });
+
+  it('expired registrationExpiry blocks operational even when status is Active', async () => {
+    const id = seedContact({ id: 'pc_exp', playerId: 'p1', email: 'exp@example.com' });
+    seedRegistration('p1', 'Active', 'U12 Blues', 'reg_exp', '2020-01-01');
+    const d1 = d1Over(sqlite) as any;
+    const result = await evaluateContactForPurpose(
+      d1, CLUB,
+      {
+        id, email: 'exp@example.com', playerId: 'p1',
+        state: 'confirmed', operationalOptIn: 1, marketingOptIn: 0,
+      },
+      'operational',
+    );
+    expect(result.eligible).toBe(false);
+    if (!result.eligible) expect(result.dropReason).toBe('lapsed_registration');
+    expect(await emailForSend(d1, CLUB, id, 'operational')).toBeNull();
   });
 
   it('missing marketing opt-in / consent blocks marketing', async () => {

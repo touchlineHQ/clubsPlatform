@@ -1,8 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { hasCurrentMarketingConsent } from "./consent";
 import {
-  isLiveRegistrationStatus,
-  liveRegistrationStatusForPlayer,
+  probeLiveRegistrationForPlayer,
   type EmailPurpose,
 } from "./send-guard";
 
@@ -50,7 +49,8 @@ export function isContactSendable(
  * the row is missing, belongs to another club, or is not eligible for `purpose`.
  *
  * - transactional: confirmed contact
- * - operational: confirmed + operationalOptIn + live registrationStatus (#133)
+ * - operational: confirmed + operationalOptIn + live Active registration
+ *   that is not past registrationExpiry (#133)
  * - marketing: confirmed + current granted consent_record (#75)
  *
  * Do not SELECT player_contact.email (or fall back to user.email) for outbound
@@ -78,8 +78,8 @@ export async function emailForSend(
 
   if (purpose === "operational") {
     if (row.operationalOptIn !== 1) return null;
-    const status = await liveRegistrationStatusForPlayer(db, clubSlug, row.playerId);
-    if (!isLiveRegistrationStatus(status)) return null;
+    const probe = await probeLiveRegistrationForPlayer(db, clubSlug, row.playerId);
+    if (!probe.live) return null;
     return row.email;
   }
 
