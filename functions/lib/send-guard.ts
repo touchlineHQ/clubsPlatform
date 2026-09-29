@@ -93,7 +93,11 @@ export function isLiveRegistrationStatus(
 /**
  * Parse FA / import registrationExpiry text to a UTC end-of-day instant.
  * Supports ISO `YYYY-MM-DD` and UK `DD/MM/YYYY` (also `-` separators).
- * Returns null when blank or unparseable — callers treat that as "no expiry".
+ * Returns null for blank **or** malformed input — callers must distinguish
+ * blank vs invalid via `isRegistrationExpiryCurrent` (blank OK, invalid not).
+ *
+ * Rejects impossible calendar dates (`2026-02-30`): Date.UTC normalises those,
+ * so we re-check Y/M/D on the constructed instant.
  */
 export function parseRegistrationExpiry(
   registrationExpiry: string | null | undefined,
@@ -101,35 +105,50 @@ export function parseRegistrationExpiry(
   const raw = (registrationExpiry ?? "").trim();
   if (!raw) return null;
 
+  let y: number;
+  let m: number;
+  let d: number;
+
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
   if (iso) {
-    const y = Number(iso[1]);
-    const m = Number(iso[2]);
-    const d = Number(iso[3]);
-    const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
-    return Number.isNaN(dt.getTime()) ? null : dt;
+    y = Number(iso[1]);
+    m = Number(iso[2]);
+    d = Number(iso[3]);
+  } else {
+    const uk = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(raw);
+    if (!uk) return null;
+    d = Number(uk[1]);
+    m = Number(uk[2]);
+    y = Number(uk[3]);
   }
 
-  const uk = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(raw);
-  if (uk) {
-    const d = Number(uk[1]);
-    const m = Number(uk[2]);
-    const y = Number(uk[3]);
-    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
-    const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
-    return Number.isNaN(dt.getTime()) ? null : dt;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+  if (Number.isNaN(dt.getTime())) return null;
+  // Date.UTC rolls over invalid days (Feb 30 → Mar 2); reject those.
+  if (
+    dt.getUTCFullYear() !== y
+    || dt.getUTCMonth() !== m - 1
+    || dt.getUTCDate() !== d
+  ) {
+    return null;
   }
-
-  return null;
+  return dt;
 }
 
-/** True when there is no parseable expiry, or the expiry day has not ended yet. */
+/**
+ * Blank / missing expiry → current (no constraint).
+ * Malformed non-blank expiry → not current (fail closed).
+ * Parsed past end-of-day → not current.
+ */
 export function isRegistrationExpiryCurrent(
   registrationExpiry: string | null | undefined,
   nowMsValue: number = Date.now(),
 ): boolean {
-  const end = parseRegistrationExpiry(registrationExpiry);
-  if (!end) return true;
+  const raw = (registrationExpiry ?? "").trim();
+  if (!raw) return true;
+  const end = parseRegistrationExpiry(raw);
+  if (!end) return false;
   return end.getTime() >= nowMsValue;
 }
 

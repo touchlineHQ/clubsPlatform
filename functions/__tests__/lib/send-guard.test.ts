@@ -31,15 +31,21 @@ describe('isLiveRegistrationStatus / expiry', () => {
     expect(isLiveRegistrationStatus(null)).toBe(false);
   });
 
-  it('parses FA/ISO expiry and rejects past dates', () => {
+  it('parses FA/ISO expiry and rejects past / invalid dates', () => {
     expect(parseRegistrationExpiry('2027-08-01')?.toISOString()).toBe('2027-08-01T23:59:59.999Z');
     expect(parseRegistrationExpiry('01/08/2027')?.toISOString()).toBe('2027-08-01T23:59:59.999Z');
     expect(parseRegistrationExpiry('not-a-date')).toBeNull();
+    expect(parseRegistrationExpiry('2026-02-30')).toBeNull();
     expect(isRegistrationExpiryCurrent('2020-01-01', Date.UTC(2026, 0, 1))).toBe(false);
     expect(isRegistrationExpiryCurrent('2030-01-01', Date.UTC(2026, 0, 1))).toBe(true);
     expect(isRegistrationExpiryCurrent(null)).toBe(true);
+    expect(isRegistrationExpiryCurrent('')).toBe(true);
+    // Malformed non-blank must fail closed (not treated as "no expiry").
+    expect(isRegistrationExpiryCurrent('not-a-date')).toBe(false);
+    expect(isRegistrationExpiryCurrent('2026-02-30')).toBe(false);
     expect(isLiveRegistration('Active', '2020-01-01', Date.UTC(2026, 0, 1))).toBe(false);
     expect(isLiveRegistration('Active', '2030-01-01', Date.UTC(2026, 0, 1))).toBe(true);
+    expect(isLiveRegistration('Active', 'garbage')).toBe(false);
     expect(isLiveRegistration('Pending', null)).toBe(false);
   });
 });
