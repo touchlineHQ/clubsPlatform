@@ -40,6 +40,10 @@ describe('parent consent helpers', () => {
   beforeEach(async () => {
     sqlite = createSchemaDb();
     sqlite.exec(`INSERT INTO "player" VALUES ('p1','FAN001',${NOW},${NOW})`);
+    // Live registration required for operational emailForSend (#133).
+    sqlite.exec(`INSERT INTO "player_registration"
+      (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt)
+      VALUES ('reg_1','${CLUB}','p1','U12 Blues',NULL,NULL,'Active',${NOW},${NOW})`);
     sqlite.exec(`INSERT INTO "club_config" (id, slug, name, active, published, createdAt, data)
       VALUES ('club_1','${CLUB}','Test FC',1,1,${NOW},'{}')`);
     await seedSignoff(sqlite);

@@ -1,19 +1,27 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { hasCurrentMarketingConsent } from "./consent";
+import {
+  probeLiveRegistrationForPlayer,
+  type EmailPurpose,
+} from "./send-guard";
 
 /**
  * Purpose a club may send to a contact address for.
  *
- * Operational and marketing are separate at the schema level (see #128 / #131).
+ * Purposes are separate at the schema / guard level.
  * A send path must name one; there is no "both" / "any" shortcut.
+ *
+ * Prefer sendClubEmail (send-guard) for outbound mail — it derives recipients
+ * and records drops. emailForSend remains for single-id eligibility probes.
  */
-export type ContactPurpose = "operational" | "marketing";
+export type ContactPurpose = EmailPurpose;
 
 export type ContactState = "pending" | "confirmed" | "withdrawn" | "bounced";
 
 export interface PlayerContactForSend {
   id: string;
   email: string;
+  playerId: string;
   state: ContactState;
   operationalOptIn: number;
   marketingOptIn: number;
@@ -22,15 +30,16 @@ export interface PlayerContactForSend {
 /**
  * Whether a contact row's local columns look eligible for `purpose`.
  *
- * For marketing, callers that can hit the DB must use emailForSend (or
- * hasCurrentMarketingConsent) — marketingOptIn is a denormalised mirror of
- * consent_record and is not authoritative on its own (#75).
+ * Operational also needs a live registration (checked in emailForSend).
+ * For marketing, callers that can hit the DB must use emailForSend —
+ * marketingOptIn is a denormalised mirror of consent_record.
  */
 export function isContactSendable(
   contact: Pick<PlayerContactForSend, "state" | "operationalOptIn" | "marketingOptIn">,
   purpose: ContactPurpose,
 ): boolean {
   if (contact.state !== "confirmed") return false;
+  if (purpose === "transactional") return true;
   if (purpose === "operational") return contact.operationalOptIn === 1;
   return contact.marketingOptIn === 1;
 }
@@ -39,10 +48,13 @@ export function isContactSendable(
  * Resolve a contact address for sending within `clubSlug`. Returns null when
  * the row is missing, belongs to another club, or is not eligible for `purpose`.
  *
- * Marketing requires a current granted consent_record (#75) in addition to a
- * confirmed contact. Operational still uses the operationalOptIn column.
+ * - transactional: confirmed contact
+ * - operational: confirmed + operationalOptIn + live Active registration
+ *   that is not past registrationExpiry
+ * - marketing: confirmed + current granted consent_record
+ *
  * Do not SELECT player_contact.email (or fall back to user.email) for outbound
- * mail outside this helper.
+ * mail outside this helper or sendClubEmail.
  */
 export async function emailForSend(
   db: D1Database,
@@ -52,7 +64,7 @@ export async function emailForSend(
 ): Promise<string | null> {
   const row = await db
     .prepare(
-      `SELECT id, email, state, operationalOptIn, marketingOptIn
+      `SELECT id, email, playerId, state, operationalOptIn, marketingOptIn
          FROM "player_contact" WHERE id = ? AND clubSlug = ?`,
     )
     .bind(contactId, clubSlug)
@@ -60,8 +72,14 @@ export async function emailForSend(
 
   if (!row || row.state !== "confirmed") return null;
 
+  if (purpose === "transactional") {
+    return row.email;
+  }
+
   if (purpose === "operational") {
     if (row.operationalOptIn !== 1) return null;
+    const probe = await probeLiveRegistrationForPlayer(db, clubSlug, row.playerId);
+    if (!probe.live) return null;
     return row.email;
   }
 

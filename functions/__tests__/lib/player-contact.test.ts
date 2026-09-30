@@ -186,6 +186,12 @@ describe('emailForSend / isContactSendable', () => {
     return id;
   }
 
+  function seedLiveRegistration(playerId = 'p1', status = 'Active') {
+    db.exec(`INSERT OR REPLACE INTO "player_registration"
+      (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt)
+      VALUES ('reg_${playerId}','${CLUB}','${playerId}','U12',NULL,NULL,'${status}',${NOW},${NOW})`);
+  }
+
   it('rejects pending, withdrawn, bounced, and purpose mismatches', async () => {
     expect(isContactSendable(
       { state: 'pending', operationalOptIn: 1, marketingOptIn: 1 }, 'operational',
@@ -228,6 +234,7 @@ describe('emailForSend / isContactSendable', () => {
 
   it('returns the address only through the helper when eligible', async () => {
     const id = seed({ state: 'confirmed', operational: 1, marketing: 0 });
+    seedLiveRegistration();
     const d1 = d1Over(db);
 
     expect(await emailForSend(d1 as any, CLUB, id, 'operational')).toBe('parent@example.com');
@@ -243,7 +250,14 @@ describe('emailForSend / isContactSendable', () => {
 
   it('does not resolve a contact from another club', async () => {
     const id = seed({ state: 'confirmed', operational: 1, marketing: 0 });
+    seedLiveRegistration();
     expect(await emailForSend(d1Over(db) as any, 'other-club', id, 'operational')).toBeNull();
     expect(await emailForSend(d1Over(db) as any, CLUB, id, 'operational')).toBe('parent@example.com');
+  });
+
+  it('blocks operational when registration has lapsed', async () => {
+    const id = seed({ state: 'confirmed', operational: 1, marketing: 0 });
+    seedLiveRegistration('p1', 'Cancelled');
+    expect(await emailForSend(d1Over(db) as any, CLUB, id, 'operational')).toBeNull();
   });
 });

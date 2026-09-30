@@ -15,6 +15,10 @@ export interface Env {
   SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
+  /** Resend API key — with FROM_EMAIL enables outbound mail. */
+  RESEND_API_KEY?: string;
+  /** Verified from-address for outbound mail. */
+  FROM_EMAIL?: string;
 }
 
 /**
