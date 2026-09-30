@@ -4,7 +4,7 @@ import { latestConsentRecord } from "./consent";
 import { getMailer, type MailEnv, type Mailer, type OutboundMessage } from "./email";
 
 /**
- * Structural email send guard (#133).
+ * Structural email send guard.
  *
  * Purpose decides eligibility. Recipients are derived from purpose + audience;
  * callers never supply an address list. The provider is reached only through
@@ -64,7 +64,7 @@ export type AudienceResolution = {
 };
 
 /**
- * Confirmed live FA registration statuses for operational mail (#133).
+ * Confirmed live FA registration statuses for operational mail.
  *
  * Fail closed: the importer stores arbitrary status strings, so unknown values
  * must not pass the send guard. FA Club Player Report uses "Active" for a
@@ -381,7 +381,7 @@ export async function evaluateContactForPurpose(
     return { ...base, eligible: true };
   }
 
-  // marketing — consent_record is authoritative (#75); marketingOptIn is a mirror.
+  // marketing — consent_record is authoritative; marketingOptIn is a mirror.
   const latest = await latestConsentRecord(db, {
     clubSlug,
     subjectType: "player_contact",
@@ -416,7 +416,7 @@ export async function resolveAudienceRecipients(
   const eligible: EligibleRecipient[] = [];
   const dropped: DroppedRecipient[] = [];
   // One physical inbox gets one message per send, even when a parent has
-  // contacts for two siblings (#133 / CodeRabbit). Every contact still gets an
+  // contacts for two siblings. Every contact still gets an
   // audit row — duplicates are dropped with reason duplicate_email.
   const seenEmails = new Set<string>();
 
@@ -675,7 +675,7 @@ export type EmailSendEventRow = {
   createdAt: number;
 };
 
-/** Recent send/drop events for admin surfacing (#133). */
+/** Recent send/drop events for admin surfacing. */
 export async function listEmailSendEvents(
   db: D1Database,
   clubSlug: string,

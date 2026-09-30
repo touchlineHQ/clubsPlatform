@@ -11,7 +11,7 @@ import {
 } from "../../lib/send-guard";
 
 /**
- * Admin: surface recent email send / drop events (#133).
+ * Admin: surface recent email send / drop events.
  * Query: ?outcome=dropped|sent|skipped_unconfigured&limit=50
  */
 

@@ -13,13 +13,13 @@ import {
 } from "../../lib/send-guard";
 
 /**
- * Admin send through the structural guard (#133).
+ * Admin send through the structural guard.
  *
  * Body must name a purpose and an audience (team / club / player / contact id).
  * Recipients are never supplied — no `to`, `emails`, or `recipients` fields.
  * Marketing preference cannot be set here.
  * Transactional mail (password reset / activation) is not an admin blast —
- * reject it here; auth flows use the mailer directly when #72 lands.
+ * reject it here; auth flows use the mailer directly when transactional mail lands.
  */
 
 type SendBody = {

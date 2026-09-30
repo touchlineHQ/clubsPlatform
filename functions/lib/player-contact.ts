@@ -8,7 +8,7 @@ import {
 /**
  * Purpose a club may send to a contact address for.
  *
- * Purposes are separate at the schema / guard level (see #128 / #131 / #133).
+ * Purposes are separate at the schema / guard level.
  * A send path must name one; there is no "both" / "any" shortcut.
  *
  * Prefer sendClubEmail (send-guard) for outbound mail — it derives recipients
@@ -32,7 +32,7 @@ export interface PlayerContactForSend {
  *
  * Operational also needs a live registration (checked in emailForSend).
  * For marketing, callers that can hit the DB must use emailForSend —
- * marketingOptIn is a denormalised mirror of consent_record (#75).
+ * marketingOptIn is a denormalised mirror of consent_record.
  */
 export function isContactSendable(
   contact: Pick<PlayerContactForSend, "state" | "operationalOptIn" | "marketingOptIn">,
@@ -50,8 +50,8 @@ export function isContactSendable(
  *
  * - transactional: confirmed contact
  * - operational: confirmed + operationalOptIn + live Active registration
- *   that is not past registrationExpiry (#133)
- * - marketing: confirmed + current granted consent_record (#75)
+ *   that is not past registrationExpiry
+ * - marketing: confirmed + current granted consent_record
  *
  * Do not SELECT player_contact.email (or fall back to user.email) for outbound
  * mail outside this helper or sendClubEmail.
