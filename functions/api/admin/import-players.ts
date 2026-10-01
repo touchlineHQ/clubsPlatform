@@ -396,8 +396,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   // Suppression (#134): a purged address must not come back as pending via FA
   // import. Drop those keys from the map before planning / writing contacts.
+  const hashesByEmail = new Map<string, string>();
   if (hasSignoff && contactRelMap.size > 0) {
-    const hashesByEmail = new Map<string, string>();
     const distinctEmails = new Set([...contactRelMap.values()].map((entry) => entry.email));
     for (const email of distinctEmails) {
       if (!normalizeContactEmail(email)) continue;
@@ -747,13 +747,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       continue;
     }
     try {
-      await db
+      const inserted = await db
         .prepare(
           `INSERT INTO "player_contact"
              (id, clubSlug, playerId, email, relationship, state,
               operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
               confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
-           VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+           SELECT ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL
+            WHERE NOT EXISTS (
+              SELECT 1 FROM "contact_email_suppression"
+               WHERE clubSlug = ? AND emailHash = ?
+            )`,
         )
         .bind(
           plan.newContactId,
@@ -764,8 +768,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           adminId,
           nowMs(),
           signoffAcceptanceId,
+          clubSlug,
+          hashesByEmail.get(plan.email) ?? null,
         )
         .run();
+      // A purge may have suppressed the address after the planning read.
+      if (inserted.meta.changes === 0) {
+        importResult.contacts.created--;
+        importResult.contacts.suppressed++;
+      }
     } catch (err) {
       importResult.contacts.created--;
       importResult.errors.push({ fanId: plan.fanId, reason: String(err) });

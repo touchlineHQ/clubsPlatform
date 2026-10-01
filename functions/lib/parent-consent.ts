@@ -13,7 +13,7 @@ import {
   hasCurrentEmailSignoff,
 } from "./club-email-signoff";
 import {
-  clearEmailSuppression,
+  prepareClearEmailSuppression,
   isEmailSuppressed,
 } from "./contact-purge";
 
@@ -197,10 +197,13 @@ export async function askParentForContactConsent(
   const tokenHash = await hashToken(token);
   const expiresAt = nowMs() + ACTIVATION_TOKEN_TTL_MS;
   const sourcedAt = nowMs();
+  const suppressionClear = suppressed && confirmSuppressedReAdd
+    ? await prepareClearEmailSuppression(db, clubSlug, email, { requirePreviousChange: true })
+    : null;
 
   if (existing) {
     // Refresh token on pending / withdrawn so the secretary can re-send.
-    await db
+    const update = db
       .prepare(
         `UPDATE "player_contact"
             SET state = 'pending',
@@ -225,11 +228,12 @@ export async function askParentForContactConsent(
         expiresAt,
         existing.id,
         clubSlug,
-      )
-      .run();
+      );
 
-    if (suppressed && confirmSuppressedReAdd) {
-      await clearEmailSuppression(db, clubSlug, email);
+    if (suppressionClear) {
+      await db.batch([update, suppressionClear]);
+    } else {
+      await update.run();
     }
 
     return {
@@ -244,7 +248,7 @@ export async function askParentForContactConsent(
   }
 
   const contactId = randomId("pcontact");
-  await db
+  const insert = db
     .prepare(
       `INSERT INTO "player_contact"
          (id, clubSlug, playerId, email, relationship, state,
@@ -263,11 +267,12 @@ export async function askParentForContactConsent(
       signoffId,
       tokenHash,
       expiresAt,
-    )
-    .run();
+    );
 
-  if (suppressed && confirmSuppressedReAdd) {
-    await clearEmailSuppression(db, clubSlug, email);
+  if (suppressionClear) {
+    await db.batch([insert, suppressionClear]);
+  } else {
+    await insert.run();
   }
 
   return {

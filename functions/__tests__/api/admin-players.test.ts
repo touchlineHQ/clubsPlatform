@@ -1071,6 +1071,36 @@ describe('import-players POST — player_contact on real SQLite', () => {
     expect(prepare.mock.calls.some(([sql]) => sql.includes('contact_email_suppression'))).toBe(false);
   });
 
+  it.each(['test-club', 'other-club'])(
+    'checks suppression added at write time in %s and reports actual contact counts',
+    async (suppressionClub) => {
+      const email = 'parent@example.com';
+      const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression('test-club', email);
+      const db = d1Over(sqlite);
+      const prepare = db.prepare.bind(db);
+      let injected = false;
+      vi.spyOn(db, 'prepare').mockImplementation((sql) => {
+        if (!injected && sql.includes('INSERT INTO "player_contact"')) {
+          injected = true;
+          // Arrive after planning, immediately before the contact write. Reuse
+          // the target hash in another club to exercise the SQL club predicate.
+          sqlite.prepare(`INSERT INTO contact_email_suppression
+            (id, clubSlug, emailHash, salt, hashVersion, createdAt) VALUES (?, ?, ?, ?, ?, 0)`)
+            .run!('late-suppression', suppressionClub, emailHash, salt, hashVersion);
+        }
+        return prepare(sql);
+      });
+
+      const { body } = await runImport(db, [row({ parentEmails: [email] })], false);
+      const suppressed = suppressionClub === 'test-club';
+      expect(injected).toBe(true);
+      expect(body.errors).toEqual([]);
+      expect(body.contacts).toEqual({ created: suppressed ? 0 : 1, skipped: 0, dropped: 0, suppressed: suppressed ? 1 : 0 });
+      expect(sqlite.prepare('SELECT * FROM player_contact').all()).toHaveLength(suppressed ? 0 : 1);
+      expect(sqlite.prepare('SELECT * FROM player_registration').all()).toHaveLength(1);
+    },
+  );
+
   it('creates pending contacts and no user/account/user_player rows', async () => {
     const { res, body } = await runImport(
       d1Over(sqlite),

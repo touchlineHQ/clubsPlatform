@@ -1,4 +1,4 @@
-import type { D1Database } from "@cloudflare/workers-types";
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { nowMs, randomId } from "./api-helpers";
 import { prepareAuditLog } from "./audit-log";
 import { hashWording } from "./club-email-signoff";
@@ -94,6 +94,23 @@ export async function isEmailSuppressed(
   return !!row;
 }
 
+/** Prepare suppression removal for an atomic, explicitly confirmed re-add. */
+export async function prepareClearEmailSuppression(
+  db: D1Database,
+  clubSlug: string,
+  email: string,
+  { requirePreviousChange = false }: { requirePreviousChange?: boolean } = {},
+): Promise<D1PreparedStatement> {
+  const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+  // When guarded, this must immediately follow the contact write in a batch.
+  return db
+    .prepare(
+      `DELETE FROM "contact_email_suppression"
+        WHERE clubSlug = ? AND emailHash = ?${requirePreviousChange ? " AND changes() > 0" : ""}`,
+    )
+    .bind(clubSlug, emailHash);
+}
+
 /** Remove a suppression so an admin can explicitly re-add the address. */
 export async function clearEmailSuppression(
   db: D1Database,
@@ -102,14 +119,8 @@ export async function clearEmailSuppression(
 ): Promise<boolean> {
   const normalised = normalizeContactEmail(email);
   if (!normalised) return false;
-  const { emailHash } = await hashContactEmailForSuppression(clubSlug, normalised);
-  const result = await db
-    .prepare(
-      `DELETE FROM "contact_email_suppression"
-        WHERE clubSlug = ? AND emailHash = ?`,
-    )
-    .bind(clubSlug, emailHash)
-    .run();
+  const statement = await prepareClearEmailSuppression(db, clubSlug, normalised);
+  const result = await statement.run();
   return (result.meta?.changes ?? 0) > 0;
 }
 
