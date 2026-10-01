@@ -90,6 +90,27 @@ describe('contact purge (#134)', () => {
     ).toBe(0);
   });
 
+  it.each(['not-an-email', '', '   ', `${'x'.repeat(250)}@example.com`])(
+    'purges invalid stored email %j and its consent without adding suppression',
+    async (email) => {
+      sqlite.prepare('UPDATE "player_contact" SET email = ? WHERE id = ?').run!(email, 'pc_1');
+      const db = d1Over(sqlite) as any;
+      const policy = await currentMarketingConsentPolicy();
+      await recordMarketingConsentGrant(db, {
+        clubSlug: CLUB, subjectType: 'player_contact', subjectId: 'pc_1',
+        ipAddress: null, policy,
+      });
+      const purged = await purgeContactsForClub(db, { clubSlug: CLUB, actorId: 'u_admin' });
+      expect(purged).toHaveLength(2);
+      expect(sqlite.prepare('SELECT * FROM "player_contact"').all()).toEqual([]);
+      expect(sqlite.prepare('SELECT * FROM "consent_record"').all()).toEqual([]);
+      // The other, valid contact still gets suppression and both get audits.
+      expect(sqlite.prepare('SELECT * FROM "contact_email_suppression"').all()).toHaveLength(1);
+      expect(await isEmailSuppressed(db, CLUB, 'other@example.com')).toBe(true);
+      expect(sqlite.prepare('SELECT * FROM "admin_audit_log"').all()).toHaveLength(2);
+    },
+  );
+
   it('leaves FAN, registration, payment and parent account intact', async () => {
     const db = d1Over(sqlite);
     await purgePlayerContact(db as any, {

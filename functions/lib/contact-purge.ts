@@ -158,13 +158,6 @@ export async function purgePlayerContact(
     .first<ContactRow>();
   if (!contact) return null;
 
-  const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
-    clubSlug,
-    contact.email,
-  );
-  const suppressionId = randomId("cesup");
-  const createdAt = nowMs();
-
   const consentDelete = db
     .prepare(
       `DELETE FROM "consent_record"
@@ -180,15 +173,23 @@ export async function purgePlayerContact(
     )
     .bind(contact.id, clubSlug);
 
-  // INSERT OR IGNORE: a prior purge of the same address at this club already
-  // holds the unique (clubSlug, emailHash); keep the earlier row.
-  const suppressInsert = db
-    .prepare(
-      `INSERT OR IGNORE INTO "contact_email_suppression"
-         (id, clubSlug, emailHash, salt, hashVersion, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .bind(suppressionId, clubSlug, emailHash, salt, hashVersion, createdAt);
+  // Legacy imports may contain invalid addresses. They must still be deleted,
+  // even though they cannot be hashed by the suppression normalizer.
+  const statements = [consentDelete, contactDelete];
+  if (normalizeContactEmail(contact.email)) {
+    const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
+      clubSlug,
+      contact.email,
+    );
+    // Keep an earlier suppression for the same address at this club.
+    statements.push(db
+      .prepare(
+        `INSERT OR IGNORE INTO "contact_email_suppression"
+           (id, clubSlug, emailHash, salt, hashVersion, createdAt)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(randomId("cesup"), clubSlug, emailHash, salt, hashVersion, nowMs()));
+  }
 
   const audit = prepareAuditLog(db, {
     clubSlug,
@@ -200,7 +201,7 @@ export async function purgePlayerContact(
     note: `playerId=${contact.playerId};source=${actor.source}`,
   });
 
-  await db.batch([consentDelete, contactDelete, suppressInsert, audit]);
+  await db.batch([...statements, audit]);
 
   return {
     contactId: contact.id,

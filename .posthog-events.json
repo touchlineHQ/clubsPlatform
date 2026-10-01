@@ -82,8 +82,7 @@
     "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only \u2014 never the address.",
     "files": [
       "functions/api/admin/contact-purge.ts",
-      "functions/api/me/contact-purge.ts",
-      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
+      "functions/api/me/contact-purge.ts"
     ]
   },
   {

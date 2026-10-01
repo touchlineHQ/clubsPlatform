@@ -18,7 +18,7 @@ import {
 } from '../../lib/consent';
 import { emailForSend } from '../../lib/player-contact';
 import { EMAIL_SIGNOFF_POLICY_VERSION, hashWording, EMAIL_SIGNOFF_LIABILITIES } from '../../lib/club-email-signoff';
-import { purgePlayerContact } from '../../lib/contact-purge';
+import { isEmailSuppressed, purgePlayerContact } from '../../lib/contact-purge';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const NOW = 1_700_000_000_000;
@@ -320,6 +320,42 @@ describe('parent consent helpers', () => {
     })).rejects.toBeInstanceOf(ParentConsentError);
   });
 
+  it.each(['signoff', 'player', 'insert', 'confirmed', 'update'])(
+    'keeps suppression when confirmed re-add fails at %s',
+    async (failure) => {
+      const d1 = d1Over(sqlite) as any;
+      const input = {
+        clubSlug: CLUB, fanId: 'FAN001', email: 'purge-me@example.com', sourcedBy: 'admin_1',
+      };
+      const created = await askParentForContactConsent(d1, input);
+      await purgePlayerContact(d1, {
+        clubSlug: CLUB, contactId: created.contactId,
+        actor: { actorId: 'admin_1', source: 'admin' },
+      });
+      if (failure === 'signoff') sqlite.exec('DELETE FROM "club_email_signoff"');
+      if (failure === 'player') input.fanId = 'MISSING';
+      if (failure === 'insert') {
+        sqlite.exec(`CREATE TRIGGER fail_insert BEFORE INSERT ON player_contact
+          BEGIN SELECT RAISE(ABORT, 'insert failed'); END`);
+      }
+      if (failure === 'confirmed' || failure === 'update') {
+        sqlite.prepare(`INSERT INTO player_contact
+          (id, clubSlug, playerId, email, relationship, state, sourcedAt)
+          VALUES ('existing', ?, 'p1', ?, 'guardian', ?, 0)`)
+          .run!(CLUB, input.email, failure === 'confirmed' ? 'confirmed' : 'pending');
+        if (failure === 'update') {
+          sqlite.exec(`CREATE TRIGGER fail_update BEFORE UPDATE ON player_contact
+            BEGIN SELECT RAISE(ABORT, 'update failed'); END`);
+        }
+      }
+      const before = sqlite.prepare('SELECT * FROM contact_email_suppression').all();
+      await expect(askParentForContactConsent(d1, { ...input, confirmSuppressedReAdd: true }))
+        .rejects.toThrow();
+      expect(sqlite.prepare('SELECT * FROM contact_email_suppression').all()).toEqual(before);
+      expect(await isEmailSuppressed(d1, CLUB, input.email)).toBe(true);
+    },
+  );
+
   it('blocks silent re-add of a purged address until confirmSuppressedReAdd', async () => {
     const d1 = d1Over(sqlite) as any;
     const created = await askParentForContactConsent(d1, {
@@ -350,5 +386,6 @@ describe('parent consent helpers', () => {
     });
     expect(readded.created).toBe(true);
     expect(readded.email).toBe('purge-me@example.com');
+    expect(await isEmailSuppressed(d1, CLUB, readded.email)).toBe(false);
   });
 });

@@ -152,14 +152,14 @@ export async function askParentForContactConsent(
   if (!email) throw new ParentConsentError("email is invalid", "invalid_email");
 
   // Purged addresses stay suppressed until an admin explicitly confirms re-add (#134).
-  if (await isEmailSuppressed(db, clubSlug, email)) {
+  const suppressed = await isEmailSuppressed(db, clubSlug, email);
+  if (suppressed) {
     if (!confirmSuppressedReAdd) {
       throw new ParentConsentError(
         "This address was purged; re-add requires explicit confirmation",
         "suppressed",
       );
     }
-    await clearEmailSuppression(db, clubSlug, email);
   }
 
   if (!(await hasCurrentEmailSignoff(db, clubSlug))) {
@@ -228,6 +228,10 @@ export async function askParentForContactConsent(
       )
       .run();
 
+    if (suppressed && confirmSuppressedReAdd) {
+      await clearEmailSuppression(db, clubSlug, email);
+    }
+
     return {
       contactId: existing.id,
       state: "pending",
@@ -261,6 +265,10 @@ export async function askParentForContactConsent(
       expiresAt,
     )
     .run();
+
+  if (suppressed && confirmSuppressedReAdd) {
+    await clearEmailSuppression(db, clubSlug, email);
+  }
 
   return {
     contactId,

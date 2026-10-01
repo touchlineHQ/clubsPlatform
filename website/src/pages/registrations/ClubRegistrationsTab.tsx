@@ -519,11 +519,6 @@ export function ClubRegistrationsTab({
         setPurgeError(data.error || 'Could not remove contact email');
         return;
       }
-      captureEvent('contact email purged', {
-        club_slug: clubSlug,
-        scope: 'contact',
-        purged_count: 1,
-      });
       setConsentContacts((prev) => prev.filter((c) => c.id !== pendingPurgeContact.id));
       setPendingPurgeContact(null);
     } catch {
@@ -552,11 +547,6 @@ export function ClubRegistrationsTab({
         setBulkPurgeError(data.error || 'Bulk purge failed');
         return;
       }
-      captureEvent('contact email purged', {
-        club_slug: clubSlug,
-        scope: bulkPurge.scope,
-        purged_count: data.purgedCount ?? 0,
-      });
       setBulkPurgeResult(`Removed ${data.purgedCount ?? 0} contact email(s).`);
       setBulkPurge(null);
     } catch {

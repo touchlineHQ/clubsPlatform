@@ -6,7 +6,7 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "../../lib/club-email-signoff";
-import { isEmailSuppressed } from "../../lib/contact-purge";
+import { hashContactEmailForSuppression, normalizeContactEmail } from "../../lib/contact-purge";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -397,8 +397,27 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   // Suppression (#134): a purged address must not come back as pending via FA
   // import. Drop those keys from the map before planning / writing contacts.
   if (hasSignoff && contactRelMap.size > 0) {
-    for (const [key, entry] of [...contactRelMap.entries()]) {
-      if (await isEmailSuppressed(db, clubSlug, entry.email)) {
+    const hashesByEmail = new Map<string, string>();
+    const distinctEmails = new Set([...contactRelMap.values()].map((entry) => entry.email));
+    for (const email of distinctEmails) {
+      if (!normalizeContactEmail(email)) continue;
+      const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+      hashesByEmail.set(email, emailHash);
+    }
+    const suppressedHashes = new Set<string>();
+    for (const slice of inSlices([...hashesByEmail.values()])) {
+      const { results } = await db
+        .prepare(
+          `SELECT emailHash FROM "contact_email_suppression"
+            WHERE clubSlug = ? AND emailHash IN (${slice.map(() => "?").join(",")})`,
+        )
+        .bind(clubSlug, ...slice)
+        .all<{ emailHash: string }>();
+      for (const row of results ?? []) suppressedHashes.add(row.emailHash);
+    }
+    for (const [key, entry] of contactRelMap) {
+      const emailHash = hashesByEmail.get(entry.email);
+      if (emailHash && suppressedHashes.has(emailHash)) {
         contactRelMap.delete(key);
         importResult.contacts.suppressed++;
       }
