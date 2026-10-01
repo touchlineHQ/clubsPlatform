@@ -945,7 +945,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 0, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 0, dropped: 0, suppressed: 0 });
   });
 
   it('still counts a contact that predates the run as already-held', async () => {
@@ -959,7 +959,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
   });
 
   it('counts a shared parent across two players as two contacts', async () => {
@@ -1080,7 +1080,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n).toBe(1);
   });
 
@@ -1100,7 +1100,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
     const contact = sqlite.prepare(
       `SELECT relationship, state FROM "player_contact" WHERE id = 'pc_1'`,
     ).get() as { relationship: string; state: string };
@@ -1137,7 +1137,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 3, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 3, dropped: 0, suppressed: 0 });
     const rows = sqlite.prepare(
       `SELECT id, relationship, state FROM "player_contact" ORDER BY id`,
     ).all() as { id: string; relationship: string; state: string }[];

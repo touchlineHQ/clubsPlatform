@@ -46,6 +46,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     fanId?: unknown;
     email?: unknown;
     relationship?: unknown;
+    confirmSuppressedReAdd?: unknown;
   };
   try {
     body = await context.request.json();
@@ -56,6 +57,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const fanId = typeof body.fanId === "string" ? body.fanId.trim() : "";
   const email = typeof body.email === "string" ? body.email : "";
   const relationship = body.relationship === "self" ? "self" as const : "guardian" as const;
+  const confirmSuppressedReAdd = body.confirmSuppressedReAdd === true;
   if (!fanId) return json({ error: "fanId is required" }, { status: 400 });
   if (!email.trim()) return json({ error: "email is required" }, { status: 400 });
 
@@ -80,6 +82,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       email,
       relationship,
       sourcedBy: adminId,
+      confirmSuppressedReAdd,
     });
 
     const origin = new URL(context.request.url).origin;
@@ -121,9 +124,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       const status =
         err.code === "not_found" || err.code === "player_not_found" ? 404
           : err.code === "no_signoff" ? 409
-            : err.code === "invalid_email" ? 400
-              : err.code === "invalid_state" ? 409
-                : 400;
+            : err.code === "suppressed" ? 409
+              : err.code === "invalid_email" ? 400
+                : err.code === "invalid_state" ? 409
+                  : 400;
       return json({ error: err.message, code: err.code }, { status });
     }
     throw err;

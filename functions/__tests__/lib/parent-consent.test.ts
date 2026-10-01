@@ -18,6 +18,7 @@ import {
 } from '../../lib/consent';
 import { emailForSend } from '../../lib/player-contact';
 import { EMAIL_SIGNOFF_POLICY_VERSION, hashWording, EMAIL_SIGNOFF_LIABILITIES } from '../../lib/club-email-signoff';
+import { purgePlayerContact } from '../../lib/contact-purge';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const NOW = 1_700_000_000_000;
@@ -317,5 +318,37 @@ describe('parent consent helpers', () => {
       marketingPolicy: null,
       ipAddress: null,
     })).rejects.toBeInstanceOf(ParentConsentError);
+  });
+
+  it('blocks silent re-add of a purged address until confirmSuppressedReAdd', async () => {
+    const d1 = d1Over(sqlite) as any;
+    const created = await askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+    });
+    await purgePlayerContact(d1, {
+      clubSlug: CLUB,
+      contactId: created.contactId,
+      actor: { actorId: 'admin_1', source: 'admin' },
+    });
+
+    await expect(askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+    })).rejects.toMatchObject({ code: 'suppressed' });
+
+    const readded = await askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+      confirmSuppressedReAdd: true,
+    });
+    expect(readded.created).toBe(true);
+    expect(readded.email).toBe('purge-me@example.com');
   });
 });

@@ -12,6 +12,10 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "./club-email-signoff";
+import {
+  clearEmailSuppression,
+  isEmailSuppressed,
+} from "./contact-purge";
 
 /**
  * Parent-facing contact consent form (#149).
@@ -51,7 +55,8 @@ export class ParentConsentError extends Error {
       | "no_signoff"
       | "player_not_found"
       | "invalid_email"
-      | "policy_mismatch",
+      | "policy_mismatch"
+      | "suppressed",
   ) {
     super(message);
     this.name = "ParentConsentError";
@@ -124,12 +129,15 @@ export async function askParentForContactConsent(
     email: rawEmail,
     relationship = "guardian",
     sourcedBy,
+    confirmSuppressedReAdd = false,
   }: {
     clubSlug: string;
     fanId: string;
     email: string;
     relationship?: "self" | "guardian";
     sourcedBy: string;
+    /** Explicit admin confirmation required to re-add a previously purged address. */
+    confirmSuppressedReAdd?: boolean;
   },
 ): Promise<{
   contactId: string;
@@ -142,6 +150,17 @@ export async function askParentForContactConsent(
 }> {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new ParentConsentError("email is invalid", "invalid_email");
+
+  // Purged addresses stay suppressed until an admin explicitly confirms re-add (#134).
+  if (await isEmailSuppressed(db, clubSlug, email)) {
+    if (!confirmSuppressedReAdd) {
+      throw new ParentConsentError(
+        "This address was purged; re-add requires explicit confirmation",
+        "suppressed",
+      );
+    }
+    await clearEmailSuppression(db, clubSlug, email);
+  }
 
   if (!(await hasCurrentEmailSignoff(db, clubSlug))) {
     throw new ParentConsentError(

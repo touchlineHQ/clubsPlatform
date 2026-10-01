@@ -6,6 +6,7 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "../../lib/club-email-signoff";
+import { isEmailSuppressed } from "../../lib/contact-purge";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -31,7 +32,7 @@ interface ImportResult {
   /** Player identity rows inserted. A returning player counts in neither field. */
   players: { created: number };
   registrations: { created: number; updated: number };
-  contacts: { created: number; skipped: number; dropped: number };
+  contacts: { created: number; skipped: number; dropped: number; suppressed: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -336,7 +337,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0 },
     registrations: { created: 0, updated: 0 },
-    contacts: { created: 0, skipped: 0, dropped: 0 },
+    contacts: { created: 0, skipped: 0, dropped: 0, suppressed: 0 },
     errors: [],
     stale: { count: 0, rows: [] },
   };
@@ -391,6 +392,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (!hasSignoff && addressesInFile > 0) {
     importResult.contacts.dropped = addressesInFile;
+  }
+
+  // Suppression (#134): a purged address must not come back as pending via FA
+  // import. Drop those keys from the map before planning / writing contacts.
+  if (hasSignoff && contactRelMap.size > 0) {
+    for (const [key, entry] of [...contactRelMap.entries()]) {
+      if (await isEmailSuppressed(db, clubSlug, entry.email)) {
+        contactRelMap.delete(key);
+        importResult.contacts.suppressed++;
+      }
+    }
   }
 
   // ── 2. Read what the club already holds ──────────────────────────────────
@@ -608,6 +620,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             contacts_dropped: importResult.contacts.dropped,
             dry_run: true,
             reason: 'club_email_signoff_missing',
+          },
+        });
+      }
+      if (importResult.contacts.suppressed > 0) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'import contact emails suppressed',
+          ...clubGroups(clubSlug),
+          properties: {
+            club_slug: clubSlug,
+            contacts_suppressed: importResult.contacts.suppressed,
+            dry_run: true,
           },
         });
       }
@@ -838,6 +862,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         contacts_dropped: contactsDropped,
         dry_run: false,
         reason: 'club_email_signoff_missing',
+      },
+    });
+  }
+
+  // Per-request: each chunk filters its own addresses; do not wait for the
+  // final part or a suppressed address in an earlier chunk is invisible.
+  if (posthog && importResult.contacts.suppressed > 0) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'import contact emails suppressed',
+      ...clubGroups(clubSlug),
+      properties: {
+        club_slug: clubSlug,
+        contacts_suppressed: importResult.contacts.suppressed,
+        dry_run: false,
       },
     });
   }

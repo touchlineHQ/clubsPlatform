@@ -1,9 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Alert, Box, Button, Center, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
+  Alert, Box, Button, Center, Checkbox, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
 } from '@mantine/core';
 import {
-  IconArrowsJoin, IconClipboardList, IconFileSpreadsheet, IconFileUpload,
+  IconArrowsJoin, IconClipboardList, IconFileSpreadsheet, IconFileUpload, IconMailOff,
 } from '@tabler/icons-react';
 import { captureEvent } from '../../lib/posthog';
 import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
@@ -75,6 +75,16 @@ export function ClubRegistrationsTab({
     id: string; email: string; state: string; relationship: string;
     marketingOptIn: number; operationalOptIn: number;
   }>>([]);
+  const [confirmSuppressedReAdd, setConfirmSuppressedReAdd] = useState(false);
+  const [pendingPurgeContact, setPendingPurgeContact] = useState<{
+    id: string; email: string;
+  } | null>(null);
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const [purgeError, setPurgeError] = useState('');
+  const [bulkPurge, setBulkPurge] = useState<null | { scope: 'team' | 'club'; teamName?: string }>(null);
+  const [bulkPurgeBusy, setBulkPurgeBusy] = useState(false);
+  const [bulkPurgeError, setBulkPurgeError] = useState('');
+  const [bulkPurgeResult, setBulkPurgeResult] = useState<string>('');
 
   /**
    * The rows picked for merging, held whole rather than by id.
@@ -426,6 +436,8 @@ export function ClubRegistrationsTab({
     setConsentError('');
     setConsentLink(null);
     setConsentContacts([]);
+    setConfirmSuppressedReAdd(false);
+    setPurgeError('');
     try {
       const res = await fetch(
         `/api/admin/player-contacts?fanId=${encodeURIComponent(row.fanId)}`,
@@ -456,15 +468,24 @@ export function ClubRegistrationsTab({
           fanId: consentRow.fanId,
           email: consentEmail,
           relationship: consentRelationship,
+          confirmSuppressedReAdd,
         }),
       });
       const data = await res.json() as {
-        error?: string; consentUrl?: string; contacts?: unknown;
+        error?: string; code?: string; consentUrl?: string; contacts?: unknown;
       };
       if (!res.ok) {
+        if (data.code === 'suppressed') {
+          setConsentError(
+            data.error
+              || 'This address was purged. Tick confirm re-add to restore it.',
+          );
+          return;
+        }
         setConsentError(data.error || 'Could not create consent link');
         return;
       }
+      setConfirmSuppressedReAdd(false);
       setConsentLink(data.consentUrl ?? null);
       // Refresh status list
       const list = await fetch(
@@ -480,8 +501,70 @@ export function ClubRegistrationsTab({
     } finally {
       setConsentBusy(false);
     }
-  }, [consentRow, consentEmail, consentRelationship, clubSlug]);
+  }, [consentRow, consentEmail, consentRelationship, clubSlug, confirmSuppressedReAdd]);
 
+
+  const confirmPurgeContact = useCallback(async () => {
+    if (!pendingPurgeContact || !consentRow) return;
+    setPurgeBusy(true);
+    setPurgeError('');
+    try {
+      const res = await fetch('/api/admin/contact-purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({ contactId: pendingPurgeContact.id }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) {
+        setPurgeError(data.error || 'Could not remove contact email');
+        return;
+      }
+      captureEvent('contact email purged', {
+        club_slug: clubSlug,
+        scope: 'contact',
+        purged_count: 1,
+      });
+      setConsentContacts((prev) => prev.filter((c) => c.id !== pendingPurgeContact.id));
+      setPendingPurgeContact(null);
+    } catch {
+      setPurgeError('Could not remove contact email');
+    } finally {
+      setPurgeBusy(false);
+    }
+  }, [pendingPurgeContact, consentRow, clubSlug]);
+
+  const confirmBulkPurge = useCallback(async () => {
+    if (!bulkPurge) return;
+    setBulkPurgeBusy(true);
+    setBulkPurgeError('');
+    setBulkPurgeResult('');
+    try {
+      const body = bulkPurge.scope === 'team'
+        ? { teamName: bulkPurge.teamName }
+        : { entireClub: true };
+      const res = await fetch('/api/admin/contact-purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json() as { error?: string; purgedCount?: number };
+      if (!res.ok) {
+        setBulkPurgeError(data.error || 'Bulk purge failed');
+        return;
+      }
+      captureEvent('contact email purged', {
+        club_slug: clubSlug,
+        scope: bulkPurge.scope,
+        purged_count: data.purgedCount ?? 0,
+      });
+      setBulkPurgeResult(`Removed ${data.purgedCount ?? 0} contact email(s).`);
+      setBulkPurge(null);
+    } catch {
+      setBulkPurgeError('Bulk purge failed');
+    } finally {
+      setBulkPurgeBusy(false);
+    }
+  }, [bulkPurge, clubSlug]);
 
   return (
     <Stack gap="sm">
@@ -525,10 +608,42 @@ export function ClubRegistrationsTab({
                 page counter would mean nothing to the person watching. */}
             {exporting ? `Exporting ${exportProgress}…` : 'Export to Excel'}
           </Button>
+          {club.filters.team !== ALL && (
+            <Button
+              leftSection={<IconMailOff size={16} />}
+              onClick={() => {
+                setBulkPurgeResult('');
+                setBulkPurgeError('');
+                setBulkPurge({ scope: 'team', teamName: club.filters.team });
+              }}
+              radius="xl"
+              variant="light"
+              color="red"
+              size="xs"
+            >
+              Purge team contacts
+            </Button>
+          )}
+          <Button
+            leftSection={<IconMailOff size={16} />}
+            onClick={() => {
+              setBulkPurgeResult('');
+              setBulkPurgeError('');
+              setBulkPurge({ scope: 'club' });
+            }}
+            radius="xl"
+            variant="subtle"
+            color="red"
+            size="xs"
+          >
+            Purge all club contacts
+          </Button>
         </Group>
       </Group>
 
       {exportError && <Alert color="red" variant="light">{exportError}</Alert>}
+      {bulkPurgeResult && <Alert color="teal" variant="light">{bulkPurgeResult}</Alert>}
+      {bulkPurgeError && !bulkPurge && <Alert color="red" variant="light">{bulkPurgeError}</Alert>}
 
       {selectedForMerge.size > 0 && (
         <Group
@@ -792,7 +907,7 @@ export function ClubRegistrationsTab({
       <Modal
         opened={consentRow !== null}
         onClose={() => { consentFanIdRef.current = null; setConsentRow(null); setConsentLink(null); }}
-        title="Ask parent for contact consent"
+        title="Parent contact email"
         size="md"
         centered
       >
@@ -807,18 +922,32 @@ export function ClubRegistrationsTab({
               <Stack gap={6}>
                 <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Existing contacts</Text>
                 {consentContacts.map((c) => (
-                  <Group key={c.id} gap="xs">
-                    <Text size="sm" ff="monospace">{c.email}</Text>
-                    <Badge size="xs" variant="light" color={
-                      c.state === 'confirmed' ? 'green'
-                        : c.state === 'pending' ? 'yellow'
-                          : c.state === 'withdrawn' ? 'orange' : 'gray'
-                    }>
-                      {c.state}
-                    </Badge>
-                    {c.marketingOptIn === 1 && (
-                      <Badge size="xs" variant="outline" color="grape">marketing</Badge>
-                    )}
+                  <Group key={c.id} gap="xs" justify="space-between" wrap="nowrap">
+                    <Group gap="xs" wrap="wrap">
+                      <Text size="sm" ff="monospace">{c.email}</Text>
+                      <Badge size="xs" variant="light" color={
+                        c.state === 'confirmed' ? 'green'
+                          : c.state === 'pending' ? 'yellow'
+                            : c.state === 'withdrawn' ? 'orange' : 'gray'
+                      }>
+                        {c.state}
+                      </Badge>
+                      {c.marketingOptIn === 1 && (
+                        <Badge size="xs" variant="outline" color="grape">marketing</Badge>
+                      )}
+                    </Group>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconMailOff size={14} />}
+                      onClick={() => {
+                        setPurgeError('');
+                        setPendingPurgeContact({ id: c.id, email: c.email });
+                      }}
+                    >
+                      Remove email
+                    </Button>
                   </Group>
                 ))}
               </Stack>
@@ -842,6 +971,12 @@ export function ClubRegistrationsTab({
             <Text size="xs" c="dimmed">
               You cannot opt the parent into marketing — only they can, on the form.
             </Text>
+            <Checkbox
+              label="Confirm re-add of a previously purged address"
+              checked={confirmSuppressedReAdd}
+              onChange={(e) => setConfirmSuppressedReAdd(e.currentTarget.checked)}
+            />
+            {purgeError && <Alert color="red" variant="light">{purgeError}</Alert>}
             <Button
               radius="xl"
               loading={consentBusy}
@@ -865,6 +1000,83 @@ export function ClubRegistrationsTab({
             )}
           </Stack>
         )}
+      </Modal>
+
+      <Modal
+        opened={pendingPurgeContact !== null}
+        onClose={() => { if (!purgeBusy) setPendingPurgeContact(null); }}
+        title="Remove contact email"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            Permanently remove <strong>{pendingPurgeContact?.email}</strong> from this player.
+            FAN, registration and payment history stay. A later import will not
+            silently re-add this address.
+          </Text>
+          {purgeError && <Alert color="red" variant="light">{purgeError}</Alert>}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              disabled={purgeBusy}
+              onClick={() => setPendingPurgeContact(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              radius="xl"
+              loading={purgeBusy}
+              onClick={() => void confirmPurgeContact()}
+            >
+              Remove email
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={bulkPurge !== null}
+        onClose={() => { if (!bulkPurgeBusy) setBulkPurge(null); }}
+        title={bulkPurge?.scope === 'team' ? 'Purge team contact emails' : 'Purge all club contact emails'}
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            {bulkPurge?.scope === 'team' ? (
+              <>
+                Remove every contact email for players registered on{' '}
+                <strong>{bulkPurge.teamName}</strong>. One audit entry per contact.
+                Addresses are suppressed so import cannot silently re-add them.
+              </>
+            ) : (
+              <>
+                Remove <strong>every</strong> contact email at this club. One audit
+                entry per contact. FAN, registration and payment history stay.
+              </>
+            )}
+          </Text>
+          {bulkPurgeError && <Alert color="red" variant="light">{bulkPurgeError}</Alert>}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              disabled={bulkPurgeBusy}
+              onClick={() => setBulkPurge(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              radius="xl"
+              loading={bulkPurgeBusy}
+              onClick={() => void confirmBulkPurge()}
+            >
+              {bulkPurge?.scope === 'team' ? 'Purge team contacts' : 'Purge all club contacts'}
+            </Button>
+          </Group>
+        </Stack>
       </Modal>
     </Stack>
   );
