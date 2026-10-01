@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach, type Mock } from 'vitest';
 import { makeContext, makeDb, adminSession, getReq, postReq, patchReq } from '../test-utils';
+import { hashContactEmailForSuppression } from '../../lib/contact-purge';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -921,12 +922,12 @@ describe('import-players POST — chunked writes', () => {
   });
 
   /**
-   * A later part: claim the run, then held regs (so FAN001 → player_1), then
-   * existing contacts. `contacts` is what the player_contact email IN (…)
+   * A later part: claim the run, then suppression, held regs (FAN001 → player_1),
+   * and existing contacts. `contacts` is what the player_contact email IN (…)
    * lookup returns.
    */
   const laterPartDb = (contacts: unknown[], runStartedAt = 1000) => makeDb({
-    all: [[heldRow()], contacts],
+    all: [[], [heldRow()], contacts],
     first: [{ createdAt: runStartedAt }, null],
     run: { meta: { changes: 1 } },
   });
@@ -945,7 +946,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 0, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 0, dropped: 0, suppressed: 0 });
   });
 
   it('still counts a contact that predates the run as already-held', async () => {
@@ -959,7 +960,7 @@ describe('import-players POST — chunked writes', () => {
       part(1, 3, 'imprun_test'),
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
   });
 
   it('counts a shared parent across two players as two contacts', async () => {
@@ -985,7 +986,7 @@ describe('import-players POST — chunked writes', () => {
 
   it('does not insert when the contact already exists', async () => {
     const db = makeDb({
-      all: [[heldRow()], [{
+      all: [[], [heldRow()], [{
         id: 'pc_1', playerId: 'player_1', email: 'parent@example.com', sourcedAt: 500,
         state: 'pending', relationship: 'guardian',
       }]],
@@ -1037,6 +1038,69 @@ describe('import-players POST — player_contact on real SQLite', () => {
     sqlite.close();
   });
 
+  it('batches distinct suppression hashes within D1 limits and counts each removed contact', async () => {
+    const emails = Array.from({ length: 91 }, (_, i) => `parent${i}@example.com`);
+    for (const [index, email] of [emails[0], emails[90], 'other-club@example.com'].entries()) {
+      const club = index === 2 ? 'other-club' : 'test-club';
+      const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(club, email);
+      sqlite.prepare(`INSERT INTO contact_email_suppression
+        (id, clubSlug, emailHash, salt, hashVersion, createdAt) VALUES (?, ?, ?, ?, ?, 0)`)
+        .run!(`suppression${index}`, club, emailHash, salt, hashVersion);
+    }
+    const db = d1Over(sqlite);
+    const prepare = vi.spyOn(db, 'prepare');
+    const { body } = await runImport(db, [
+      ...emails.map((email, i) => row({ fanId: `FAN${i}`, parentEmails: [email, emails[0]] })),
+      row({ fanId: 'OTHER', parentEmails: ['other-club@example.com', 'legacy-invalid'] }),
+    ], true);
+    expect(body.contacts.suppressed).toBe(92);
+    expect(body.contacts.created).toBe(91);
+    const queries = prepare.mock.calls.map(([sql]) => sql)
+      .filter((sql) => sql.includes('FROM "contact_email_suppression"'));
+    expect(queries).toHaveLength(2);
+    expect(queries.every((sql) => sql.includes('emailHash IN ('))).toBe(true);
+    expect(queries.map((sql) => (sql.match(/\?/g) ?? []).length)).toEqual([91, 3]);
+  });
+
+  it.each([false, true])('does not query suppression with signoff=%s and no eligible contacts', async (signoff) => {
+    mockHasCurrentEmailSignoff.mockResolvedValue(signoff);
+    const db = d1Over(sqlite);
+    const prepare = vi.spyOn(db, 'prepare');
+    const { body } = await runImport(db, [row({ parentEmails: signoff ? [] : ['p@example.com'] })], true);
+    expect(body.contacts.suppressed).toBe(0);
+    expect(prepare.mock.calls.some(([sql]) => sql.includes('contact_email_suppression'))).toBe(false);
+  });
+
+  it.each(['test-club', 'other-club'])(
+    'checks suppression added at write time in %s and reports actual contact counts',
+    async (suppressionClub) => {
+      const email = 'parent@example.com';
+      const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression('test-club', email);
+      const db = d1Over(sqlite);
+      const prepare = db.prepare.bind(db);
+      let injected = false;
+      vi.spyOn(db, 'prepare').mockImplementation((sql) => {
+        if (!injected && sql.includes('INSERT INTO "player_contact"')) {
+          injected = true;
+          // Arrive after planning, immediately before the contact write. Reuse
+          // the target hash in another club to exercise the SQL club predicate.
+          sqlite.prepare(`INSERT INTO contact_email_suppression
+            (id, clubSlug, emailHash, salt, hashVersion, createdAt) VALUES (?, ?, ?, ?, ?, 0)`)
+            .run!('late-suppression', suppressionClub, emailHash, salt, hashVersion);
+        }
+        return prepare(sql);
+      });
+
+      const { body } = await runImport(db, [row({ parentEmails: [email] })], false);
+      const suppressed = suppressionClub === 'test-club';
+      expect(injected).toBe(true);
+      expect(body.errors).toEqual([]);
+      expect(body.contacts).toEqual({ created: suppressed ? 0 : 1, skipped: 0, dropped: 0, suppressed: suppressed ? 1 : 0 });
+      expect(sqlite.prepare('SELECT * FROM player_contact').all()).toHaveLength(suppressed ? 0 : 1);
+      expect(sqlite.prepare('SELECT * FROM player_registration').all()).toHaveLength(1);
+    },
+  );
+
   it('creates pending contacts and no user/account/user_player rows', async () => {
     const { res, body } = await runImport(
       d1Over(sqlite),
@@ -1080,7 +1144,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
     expect((sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n).toBe(1);
   });
 
@@ -1100,7 +1164,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 1, dropped: 0, suppressed: 0 });
     const contact = sqlite.prepare(
       `SELECT relationship, state FROM "player_contact" WHERE id = 'pc_1'`,
     ).get() as { relationship: string; state: string };
@@ -1137,7 +1201,7 @@ describe('import-players POST — player_contact on real SQLite', () => {
       false,
     );
 
-    expect(body.contacts).toEqual({ created: 0, skipped: 3, dropped: 0 });
+    expect(body.contacts).toEqual({ created: 0, skipped: 3, dropped: 0, suppressed: 0 });
     const rows = sqlite.prepare(
       `SELECT id, relationship, state FROM "player_contact" ORDER BY id`,
     ).all() as { id: string; relationship: string; state: string }[];

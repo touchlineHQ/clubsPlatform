@@ -156,7 +156,7 @@ describe('admin player-contacts + parent consent form', () => {
       resolve(__dirname, '../../api/admin/import-players.ts'),
       'utf8',
     );
-    expect(src).toMatch(/VALUES \(\?, \?, \?, \?, \?, 'pending', 0, 0/);
+    expect(src).toMatch(/SELECT \?, \?, \?, \?, \?, 'pending', 0, 0/);
     expect(src).not.toMatch(/SET state\s*=\s*'confirmed'/);
     expect(src).not.toMatch(/state = 'confirmed'/);
 

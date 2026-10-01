@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACTIVATION_TOKEN_TTL_MS,
   askParentForContactConsent,
@@ -18,6 +18,7 @@ import {
 } from '../../lib/consent';
 import { emailForSend } from '../../lib/player-contact';
 import { EMAIL_SIGNOFF_POLICY_VERSION, hashWording, EMAIL_SIGNOFF_LIABILITIES } from '../../lib/club-email-signoff';
+import { isEmailSuppressed, purgePlayerContact } from '../../lib/contact-purge';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const NOW = 1_700_000_000_000;
@@ -317,5 +318,132 @@ describe('parent consent helpers', () => {
       marketingPolicy: null,
       ipAddress: null,
     })).rejects.toBeInstanceOf(ParentConsentError);
+  });
+
+  it.each(['signoff', 'player', 'insert', 'confirmed', 'update'])(
+    'keeps suppression when confirmed re-add fails at %s',
+    async (failure) => {
+      const d1 = d1Over(sqlite) as any;
+      const input = {
+        clubSlug: CLUB, fanId: 'FAN001', email: 'purge-me@example.com', sourcedBy: 'admin_1',
+      };
+      const created = await askParentForContactConsent(d1, input);
+      await purgePlayerContact(d1, {
+        clubSlug: CLUB, contactId: created.contactId,
+        actor: { actorId: 'admin_1', source: 'admin' },
+      });
+      if (failure === 'signoff') sqlite.exec('DELETE FROM "club_email_signoff"');
+      if (failure === 'player') input.fanId = 'MISSING';
+      if (failure === 'insert') {
+        sqlite.exec(`CREATE TRIGGER fail_insert BEFORE INSERT ON player_contact
+          BEGIN SELECT RAISE(ABORT, 'insert failed'); END`);
+      }
+      if (failure === 'confirmed' || failure === 'update') {
+        sqlite.prepare(`INSERT INTO player_contact
+          (id, clubSlug, playerId, email, relationship, state, sourcedAt)
+          VALUES ('existing', ?, 'p1', ?, 'guardian', ?, 0)`)
+          .run!(CLUB, input.email, failure === 'confirmed' ? 'confirmed' : 'pending');
+        if (failure === 'update') {
+          sqlite.exec(`CREATE TRIGGER fail_update BEFORE UPDATE ON player_contact
+            BEGIN SELECT RAISE(ABORT, 'update failed'); END`);
+        }
+      }
+      const before = sqlite.prepare('SELECT * FROM contact_email_suppression').all();
+      await expect(askParentForContactConsent(d1, { ...input, confirmSuppressedReAdd: true }))
+        .rejects.toThrow();
+      expect(sqlite.prepare('SELECT * FROM contact_email_suppression').all()).toEqual(before);
+      expect(await isEmailSuppressed(d1, CLUB, input.email)).toBe(true);
+    },
+  );
+
+  async function suppressedReAdd(existing: boolean) {
+    const d1 = d1Over(sqlite);
+    const input = {
+      clubSlug: CLUB, fanId: 'FAN001', email: 'purge-me@example.com', sourcedBy: 'admin_1',
+      confirmSuppressedReAdd: true,
+    };
+    const created = await askParentForContactConsent(d1 as any, input);
+    await purgePlayerContact(d1 as any, {
+      clubSlug: CLUB, contactId: created.contactId,
+      actor: { actorId: 'admin_1', source: 'admin' },
+    });
+    if (existing) {
+      sqlite.prepare(`INSERT INTO player_contact
+        (id, clubSlug, playerId, email, relationship, state, sourcedAt)
+        VALUES ('existing', ?, 'p1', ?, 'guardian', 'withdrawn', 0)`)
+        .run!(CLUB, input.email);
+    }
+    return { d1, input };
+  }
+
+  it.each([false, true])('rolls back the re-add when suppression removal fails (existing=%s)', async (existing) => {
+    const { d1, input } = await suppressedReAdd(existing);
+    const contactsBefore = sqlite.prepare('SELECT * FROM player_contact').all();
+    const suppressionBefore = sqlite.prepare('SELECT * FROM contact_email_suppression').all();
+    sqlite.exec(`CREATE TRIGGER fail_suppression_clear BEFORE DELETE ON contact_email_suppression
+      BEGIN SELECT RAISE(ABORT, 'suppression clear failed'); END`);
+
+    await expect(askParentForContactConsent(d1 as any, input)).rejects.toThrow('suppression clear failed');
+    expect(sqlite.prepare('SELECT * FROM player_contact').all()).toEqual(contactsBefore);
+    expect(sqlite.prepare('SELECT * FROM contact_email_suppression').all()).toEqual(suppressionBefore);
+  });
+
+  it('clears suppression when an existing contact is successfully refreshed', async () => {
+    const { d1, input } = await suppressedReAdd(true);
+    const result = await askParentForContactConsent(d1 as any, input);
+    expect(result).toMatchObject({ contactId: 'existing', created: false, state: 'pending' });
+    expect((await findContactByActivationToken(d1 as any, result.token))?.id).toBe('existing');
+    expect(await isEmailSuppressed(d1 as any, CLUB, input.email)).toBe(false);
+  });
+
+  it('keeps suppression if the contact disappears before the refresh write', async () => {
+    const { d1, input } = await suppressedReAdd(true);
+    const prepare = d1.prepare.bind(d1);
+    let deleted = false;
+    vi.spyOn(d1, 'prepare').mockImplementation((sql) => {
+      if (sql.includes('UPDATE "player_contact"')) {
+        deleted = true;
+        sqlite.exec("DELETE FROM player_contact WHERE id = 'existing'");
+      }
+      return prepare(sql);
+    });
+
+    await askParentForContactConsent(d1 as any, input);
+    expect(deleted).toBe(true);
+    expect(sqlite.prepare('SELECT * FROM player_contact').all()).toEqual([]);
+    expect(await isEmailSuppressed(d1 as any, CLUB, input.email)).toBe(true);
+  });
+
+  it('blocks silent re-add of a purged address until confirmSuppressedReAdd', async () => {
+    const d1 = d1Over(sqlite) as any;
+    const created = await askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+    });
+    await purgePlayerContact(d1, {
+      clubSlug: CLUB,
+      contactId: created.contactId,
+      actor: { actorId: 'admin_1', source: 'admin' },
+    });
+
+    await expect(askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+    })).rejects.toMatchObject({ code: 'suppressed' });
+
+    const readded = await askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email: 'purge-me@example.com',
+      sourcedBy: 'admin_1',
+      confirmSuppressedReAdd: true,
+    });
+    expect(readded.created).toBe(true);
+    expect(readded.email).toBe('purge-me@example.com');
+    expect(await isEmailSuppressed(d1, CLUB, readded.email)).toBe(false);
   });
 });

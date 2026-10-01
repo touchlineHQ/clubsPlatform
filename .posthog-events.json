@@ -78,6 +78,14 @@
     ]
   },
   {
+    "event": "contact email purged",
+    "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only \u2014 never the address.",
+    "files": [
+      "functions/api/admin/contact-purge.ts",
+      "functions/api/me/contact-purge.ts"
+    ]
+  },
+  {
     "event": "customisation save failed",
     "description": "A save from the Site Admin page failed. Paired with a $exception carrying the cause.",
     "files": [
@@ -129,6 +137,13 @@
   {
     "event": "import contact emails dropped",
     "description": "An FA player import carried contact emails but the club has no current email sign-off, so addresses were stripped while registration work continued.",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
+    "event": "import contact emails suppressed",
+    "description": "FA import skipped one or more addresses that were previously purged at this club (salted-hash suppression).",
     "files": [
       "functions/api/admin/import-players.ts"
     ]

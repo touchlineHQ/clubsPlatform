@@ -12,6 +12,10 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "./club-email-signoff";
+import {
+  prepareClearEmailSuppression,
+  isEmailSuppressed,
+} from "./contact-purge";
 
 /**
  * Parent-facing contact consent form (#149).
@@ -51,7 +55,8 @@ export class ParentConsentError extends Error {
       | "no_signoff"
       | "player_not_found"
       | "invalid_email"
-      | "policy_mismatch",
+      | "policy_mismatch"
+      | "suppressed",
   ) {
     super(message);
     this.name = "ParentConsentError";
@@ -124,12 +129,15 @@ export async function askParentForContactConsent(
     email: rawEmail,
     relationship = "guardian",
     sourcedBy,
+    confirmSuppressedReAdd = false,
   }: {
     clubSlug: string;
     fanId: string;
     email: string;
     relationship?: "self" | "guardian";
     sourcedBy: string;
+    /** Explicit admin confirmation required to re-add a previously purged address. */
+    confirmSuppressedReAdd?: boolean;
   },
 ): Promise<{
   contactId: string;
@@ -142,6 +150,17 @@ export async function askParentForContactConsent(
 }> {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new ParentConsentError("email is invalid", "invalid_email");
+
+  // Purged addresses stay suppressed until an admin explicitly confirms re-add (#134).
+  const suppressed = await isEmailSuppressed(db, clubSlug, email);
+  if (suppressed) {
+    if (!confirmSuppressedReAdd) {
+      throw new ParentConsentError(
+        "This address was purged; re-add requires explicit confirmation",
+        "suppressed",
+      );
+    }
+  }
 
   if (!(await hasCurrentEmailSignoff(db, clubSlug))) {
     throw new ParentConsentError(
@@ -178,10 +197,13 @@ export async function askParentForContactConsent(
   const tokenHash = await hashToken(token);
   const expiresAt = nowMs() + ACTIVATION_TOKEN_TTL_MS;
   const sourcedAt = nowMs();
+  const suppressionClear = suppressed && confirmSuppressedReAdd
+    ? await prepareClearEmailSuppression(db, clubSlug, email, { requirePreviousChange: true })
+    : null;
 
   if (existing) {
     // Refresh token on pending / withdrawn so the secretary can re-send.
-    await db
+    const update = db
       .prepare(
         `UPDATE "player_contact"
             SET state = 'pending',
@@ -206,8 +228,13 @@ export async function askParentForContactConsent(
         expiresAt,
         existing.id,
         clubSlug,
-      )
-      .run();
+      );
+
+    if (suppressionClear) {
+      await db.batch([update, suppressionClear]);
+    } else {
+      await update.run();
+    }
 
     return {
       contactId: existing.id,
@@ -221,7 +248,7 @@ export async function askParentForContactConsent(
   }
 
   const contactId = randomId("pcontact");
-  await db
+  const insert = db
     .prepare(
       `INSERT INTO "player_contact"
          (id, clubSlug, playerId, email, relationship, state,
@@ -240,8 +267,13 @@ export async function askParentForContactConsent(
       signoffId,
       tokenHash,
       expiresAt,
-    )
-    .run();
+    );
+
+  if (suppressionClear) {
+    await db.batch([insert, suppressionClear]);
+  } else {
+    await insert.run();
+  }
 
   return {
     contactId,

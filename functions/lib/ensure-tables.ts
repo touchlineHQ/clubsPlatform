@@ -124,6 +124,9 @@ export const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_email_send_event_club_outcome" ON "email_send_event" ("clubSlug", "outcome", "createdAt")`,
   `CREATE INDEX IF NOT EXISTS "idx_email_send_event_batchId" ON "email_send_event" ("batchId")`,
   `CREATE INDEX IF NOT EXISTS "idx_email_send_event_contactId" ON "email_send_event" ("contactId")`,
+  // Contact email suppression (#134): salted hash only — never plaintext.
+  `CREATE TABLE IF NOT EXISTS "contact_email_suppression" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "emailHash" TEXT NOT NULL, "salt" TEXT NOT NULL, "hashVersion" INTEGER NOT NULL DEFAULT 1, "createdAt" INTEGER NOT NULL, UNIQUE("clubSlug", "emailHash"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_contact_email_suppression_clubSlug" ON "contact_email_suppression" ("clubSlug")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [
