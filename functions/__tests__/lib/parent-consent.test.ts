@@ -18,7 +18,7 @@ import {
 } from '../../lib/consent';
 import { emailForSend } from '../../lib/player-contact';
 import { EMAIL_SIGNOFF_POLICY_VERSION, hashWording, EMAIL_SIGNOFF_LIABILITIES } from '../../lib/club-email-signoff';
-import { isEmailSuppressed, purgePlayerContact } from '../../lib/contact-purge';
+import { hashContactEmailForSuppression, isEmailSuppressed, purgePlayerContact } from '../../lib/contact-purge';
 import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 
 const NOW = 1_700_000_000_000;
@@ -445,5 +445,58 @@ describe('parent consent helpers', () => {
     expect(readded.created).toBe(true);
     expect(readded.email).toBe('purge-me@example.com');
     expect(await isEmailSuppressed(d1, CLUB, readded.email)).toBe(false);
+  });
+
+  async function landSuppressionAtInsert(d1: { prepare: (sql: string) => unknown }, email: string) {
+    const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(CLUB, email);
+    const prepare = d1.prepare.bind(d1);
+    vi.spyOn(d1, 'prepare').mockImplementation((sql: string) => {
+      if (sql.includes('INSERT INTO "player_contact"')) {
+        sqlite.prepare(
+          `INSERT INTO "contact_email_suppression"
+             (id, clubSlug, emailHash, salt, hashVersion, createdAt)
+           VALUES ('cesup_race', ?, ?, ?, ?, ?)`,
+        ).run!(CLUB, emailHash, salt, hashVersion, NOW);
+      }
+      return prepare(sql);
+    });
+  }
+
+  it('does not recreate a contact when suppression lands at insert time without confirm', async () => {
+    const d1 = d1Over(sqlite) as any;
+    const email = 'race@example.com';
+    await landSuppressionAtInsert(d1, email);
+
+    await expect(askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email,
+      sourcedBy: 'admin_1',
+    })).rejects.toMatchObject({
+      code: 'suppressed',
+      message: 'This address was purged; re-add requires explicit confirmation',
+    });
+    expect(sqlite.prepare('SELECT id FROM "player_contact"').all()).toEqual([]);
+    expect(await isEmailSuppressed(d1, CLUB, email)).toBe(true);
+  });
+
+  it('writes the contact and clears suppression when confirm races the purge', async () => {
+    const d1 = d1Over(sqlite) as any;
+    const email = 'race@example.com';
+    await landSuppressionAtInsert(d1, email);
+
+    const created = await askParentForContactConsent(d1, {
+      clubSlug: CLUB,
+      fanId: 'FAN001',
+      email,
+      sourcedBy: 'admin_1',
+      confirmSuppressedReAdd: true,
+    });
+    expect(created.created).toBe(true);
+    expect(created.email).toBe(email);
+    const rows = sqlite.prepare('SELECT email FROM "player_contact"').all() as Array<{ email: string }>;
+    expect(rows).toEqual([{ email }]);
+    expect(await isEmailSuppressed(d1, CLUB, email)).toBe(false);
+    expect(sqlite.prepare('SELECT id FROM "contact_email_suppression"').all()).toEqual([]);
   });
 });

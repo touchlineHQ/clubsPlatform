@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   CONTACT_SUPPRESSION_SALT_V1,
+  D1_FREE_QUERIES_PER_INVOCATION,
+  D1_MAX_STATEMENTS_PER_BATCH,
   clearEmailSuppression,
+  contactPurgeWriteStatements,
   hashContactEmailForSuppression,
   isEmailSuppressed,
+  planBulkPurgeChunk,
   purgeContactsForClub,
   purgeContactsForTeam,
   purgeContactsMatchingEmail,
@@ -100,7 +104,7 @@ describe('contact purge (#134)', () => {
         clubSlug: CLUB, subjectType: 'player_contact', subjectId: 'pc_1',
         ipAddress: null, policy,
       });
-      const purged = await purgeContactsForClub(db, { clubSlug: CLUB, actorId: 'u_admin' });
+      const purged = (await purgeContactsForClub(db, { clubSlug: CLUB, actorId: 'u_admin' })).purged;
       expect(purged).toHaveLength(2);
       expect(sqlite.prepare('SELECT * FROM "player_contact"').all()).toEqual([]);
       expect(sqlite.prepare('SELECT * FROM "consent_record"').all()).toEqual([]);
@@ -201,11 +205,14 @@ describe('contact purge (#134)', () => {
       VALUES ('pc_1b','${CLUB}','p1','sibling@example.com','guardian','pending',0,0,NULL,${NOW})`);
 
     const db = d1Over(sqlite);
-    const purged = await purgeContactsForTeam(db as any, {
+    const page = await purgeContactsForTeam(db as any, {
       clubSlug: CLUB,
       teamName: 'U12 Blues',
       actorId: 'u_admin',
     });
+    expect(page.remaining).toBe(0);
+    expect(page.cursor).toBeNull();
+    const purged = page.purged;
     expect(purged.map((p) => p.contactId).sort()).toEqual(['pc_1', 'pc_1b']);
     // Other team's contact survives.
     expect(
@@ -222,10 +229,10 @@ describe('contact purge (#134)', () => {
 
   it('bulk purges by club', async () => {
     const db = d1Over(sqlite);
-    const purged = await purgeContactsForClub(db as any, {
+    const purged = (await purgeContactsForClub(db as any, {
       clubSlug: CLUB,
       actorId: 'u_admin',
-    });
+    })).purged;
     expect(purged).toHaveLength(2);
     expect(
       (sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n,
@@ -273,5 +280,139 @@ describe('contact purge (#134)', () => {
     expect(await isEmailSuppressed(db as any, CLUB, EMAIL)).toBe(true);
     expect(await clearEmailSuppression(db as any, CLUB, EMAIL)).toBe(true);
     expect(await isEmailSuppressed(db as any, CLUB, EMAIL)).toBe(false);
+  });
+
+  it('caps a bulk chunk under the Free D1 query budget and continues', async () => {
+    const emails = Array.from({ length: 30 }, (_, i) => ({
+      email: i === 10 ? 'not-an-email' : `parent${String(i).padStart(2, '0')}@example.com`,
+    }));
+    const planned = planBulkPurgeChunk(emails);
+    expect(planned.chunk.length).toBeGreaterThan(0);
+    expect(planned.chunk.length).toBeLessThan(emails.length);
+    expect(planned.statements).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+    expect(1 + planned.statements).toBeLessThan(D1_FREE_QUERIES_PER_INVOCATION);
+    expect(planned.statements).toBe(
+      planned.chunk.reduce((n, row) => n + contactPurgeWriteStatements(row.email), 0),
+    );
+
+    sqlite.exec(`DELETE FROM "player_contact"`);
+    for (const [i, row] of emails.entries()) {
+      const id = `pc_${String(i).padStart(2, '0')}`;
+      sqlite.prepare(`INSERT INTO "player_contact"
+        (id, clubSlug, playerId, email, relationship, state,
+         operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+        VALUES (?, ?, 'p1', ?, 'guardian', 'pending', 0, 0, NULL, ?)`).run!(id, CLUB, row.email, NOW);
+    }
+
+    const raw = d1Over(sqlite);
+    let executed = 0;
+    let batchCalls = 0;
+    let maxBatch = 0;
+    const countExec = <T extends { all: Function; first: Function; run: Function }>(bound: T) => ({
+      ...bound,
+      all: async (...args: unknown[]) => { executed += 1; return bound.all(...args); },
+      first: async (...args: unknown[]) => { executed += 1; return bound.first(...args); },
+      run: async (...args: unknown[]) => { executed += 1; return bound.run(...args); },
+    });
+    const db = {
+      prepare(sql: string) {
+        const stmt = raw.prepare(sql) as { bind: (...params: unknown[]) => { all: Function; first: Function; run: Function } };
+        return {
+          bind: (...params: unknown[]) => countExec(stmt.bind(...params)),
+        };
+      },
+      async batch(statements: unknown[]) {
+        batchCalls += 1;
+        maxBatch = Math.max(maxBatch, statements.length);
+        executed += statements.length;
+        return raw.batch(statements);
+      },
+    };
+
+    const first = await purgeContactsForClub(db as any, { clubSlug: CLUB, actorId: 'u_admin' });
+    expect(batchCalls).toBe(1);
+    expect(maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+    expect(executed).toBeLessThan(D1_FREE_QUERIES_PER_INVOCATION);
+    expect(first.purged.map((row) => row.contactId)).toEqual(
+      planned.chunk.map((_, i) => `pc_${String(i).padStart(2, '0')}`),
+    );
+    expect(first.remaining).toBe(emails.length - planned.chunk.length);
+    expect(first.cursor).toBe(first.purged[first.purged.length - 1].contactId);
+    // A committed chunk is reported even though more contacts remain.
+    expect(first.purged.length).toBeGreaterThan(0);
+
+    executed = 0;
+    batchCalls = 0;
+    maxBatch = 0;
+    const seen = new Set(first.purged.map((row) => row.contactId));
+    let cursor = first.cursor;
+    let remaining = first.remaining;
+    while (remaining > 0) {
+      const next = await purgeContactsForClub(db as any, {
+        clubSlug: CLUB,
+        actorId: 'u_admin',
+        cursor,
+      });
+      expect(next.purged.length).toBeGreaterThan(0);
+      expect(batchCalls).toBeGreaterThan(0);
+      expect(maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+      for (const row of next.purged) seen.add(row.contactId);
+      remaining = next.remaining;
+      cursor = next.cursor;
+    }
+    expect(cursor).toBeNull();
+    expect(seen.size).toBe(emails.length);
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n,
+    ).toBe(0);
+  });
+
+  it('team purge continues from the cursor without repeating a committed chunk', async () => {
+    sqlite.exec(`DELETE FROM "player_contact"`);
+    const total = 20;
+    for (let i = 0; i < total; i += 1) {
+      sqlite.prepare(`INSERT INTO "player_contact"
+        (id, clubSlug, playerId, email, relationship, state,
+         operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+        VALUES (?, ?, 'p1', ?, 'guardian', 'pending', 0, 0, NULL, ?)`).run!(
+        `tm_${String(i).padStart(2, '0')}`,
+        CLUB,
+        `team${i}@example.com`,
+        NOW,
+      );
+    }
+    const db = d1Over(sqlite) as any;
+    const first = await purgeContactsForTeam(db, {
+      clubSlug: CLUB,
+      teamName: 'U12 Blues',
+      actorId: 'u_admin',
+    });
+    expect(first.remaining).toBeGreaterThan(0);
+    expect(first.cursor).toBeTruthy();
+    const second = await purgeContactsForTeam(db, {
+      clubSlug: CLUB,
+      teamName: 'u12 blues',
+      actorId: 'u_admin',
+      cursor: first.cursor,
+    });
+    const ids = [...first.purged, ...second.purged].map((row) => row.contactId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(second.purged[0].contactId > first.cursor!).toBe(true);
+    let cursor = second.cursor;
+    let remaining = second.remaining;
+    const seen = new Set(ids);
+    while (remaining > 0 && cursor) {
+      const next = await purgeContactsForTeam(db, {
+        clubSlug: CLUB, teamName: 'U12 Blues', actorId: 'u_admin', cursor,
+      });
+      for (const row of next.purged) seen.add(row.contactId);
+      remaining = next.remaining;
+      cursor = next.cursor;
+    }
+    expect(remaining).toBe(0);
+    expect(seen.size).toBe(total);
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n,
+    ).toBe(0);
   });
 });

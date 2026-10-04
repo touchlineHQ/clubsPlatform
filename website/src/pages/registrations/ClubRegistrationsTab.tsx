@@ -533,24 +533,60 @@ export function ClubRegistrationsTab({
     setBulkPurgeBusy(true);
     setBulkPurgeError('');
     setBulkPurgeResult('');
+    let removed = 0;
     try {
-      const body = bulkPurge.scope === 'team'
+      const base = bulkPurge.scope === 'team'
         ? { teamName: bulkPurge.teamName }
-        : { entireClub: true };
-      const res = await fetch('/api/admin/contact-purge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json() as { error?: string; purgedCount?: number };
-      if (!res.ok) {
-        setBulkPurgeError(data.error || 'Bulk purge failed');
-        return;
+        : { entireClub: true as const };
+      let cursor: string | null = null;
+      // Each request is one D1-sized chunk. Keep going until the server reports
+      // nothing left, and say what already committed if a later request fails.
+      for (let request = 0; request < 500; request += 1) {
+        const res = await fetch('/api/admin/contact-purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+          body: JSON.stringify(cursor ? { ...base, cursor } : base),
+        });
+        const data = await res.json() as {
+          error?: string;
+          purgedCount?: number;
+          remaining?: number;
+          cursor?: string | null;
+        };
+        if (!res.ok) {
+          const left = typeof data.remaining === 'number' ? data.remaining : null;
+          setBulkPurgeError(
+            removed > 0
+              ? `${data.error || 'Bulk purge failed'} Removed ${removed} contact email(s)${left !== null ? `; ${left} still remaining` : '; some may still remain'}.`
+              : (data.error || 'Bulk purge failed'),
+          );
+          return;
+        }
+        const purgedCount = data.purgedCount ?? 0;
+        removed += purgedCount;
+        const remaining = data.remaining ?? 0;
+        cursor = data.cursor ?? null;
+        if (remaining === 0) {
+          setBulkPurgeResult(`Removed ${removed} contact email(s).`);
+          setBulkPurge(null);
+          return;
+        }
+        if (purgedCount === 0 || !cursor) {
+          setBulkPurgeError(
+            `Purge stopped early. Removed ${removed} contact email(s); ${remaining} still remaining.`,
+          );
+          return;
+        }
       }
-      setBulkPurgeResult(`Removed ${data.purgedCount ?? 0} contact email(s).`);
-      setBulkPurge(null);
+      setBulkPurgeError(
+        `Purge stopped early. Removed ${removed} contact email(s); some may still remain.`,
+      );
     } catch {
-      setBulkPurgeError('Bulk purge failed');
+      setBulkPurgeError(
+        removed > 0
+          ? `Bulk purge failed. Removed ${removed} contact email(s); some may still remain.`
+          : 'Bulk purge failed',
+      );
     } finally {
       setBulkPurgeBusy(false);
     }

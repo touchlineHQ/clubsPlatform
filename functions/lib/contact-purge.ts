@@ -131,6 +131,50 @@ type ContactRow = {
   email: string;
 };
 
+/**
+ * Workers Free D1 queries per invocation. Paid is 1000; this repo does not pin a plan.
+ * Each statement inside db.batch() counts, and another batch does not reset the budget.
+ */
+export const D1_FREE_QUERIES_PER_INVOCATION = 50;
+
+/** Scope SELECT + write statements for one bulk-purge request. Under the Free cap. */
+export const BULK_PURGE_MAX_QUERIES = 45;
+
+/**
+ * One write batch per invocation. Stops one short of the invocation budget
+ * because the scope SELECT is a separate query. Also the ceiling for db.batch()
+ * itself so a chunk cannot exceed D1's per-batch statement count on Free.
+ */
+export const D1_MAX_STATEMENTS_PER_BATCH = BULK_PURGE_MAX_QUERIES - 1;
+
+export type BulkContactPurgeResult = {
+  purged: ContactPurgeResult[];
+  /** Still matching this scope after the chunk that just committed. */
+  remaining: number;
+  /** Pass back as `cursor` to continue. Null when nothing remains. */
+  cursor: string | null;
+};
+
+/** Consent delete, contact delete, audit, plus suppression when the address hashes. */
+export function contactPurgeWriteStatements(email: string): number {
+  return normalizeContactEmail(email) ? 4 : 3;
+}
+
+/** Prefix of `contacts` whose write statements fit in one batch under the Free cap. */
+export function planBulkPurgeChunk<T extends { email: string }>(
+  contacts: readonly T[],
+): { chunk: T[]; statements: number } {
+  const chunk: T[] = [];
+  let statements = 0;
+  for (const contact of contacts) {
+    const cost = contactPurgeWriteStatements(contact.email);
+    if (statements + cost > D1_MAX_STATEMENTS_PER_BATCH) break;
+    chunk.push(contact);
+    statements += cost;
+  }
+  return { chunk, statements };
+}
+
 function auditActionFor(source: ContactPurgeActor["source"]): string {
   switch (source) {
     case "parent":
@@ -142,6 +186,61 @@ function auditActionFor(source: ContactPurgeActor["source"]): string {
     default:
       return "contact_purged";
   }
+}
+
+/**
+ * Writes for one already-loaded contact. No D1 round trip — the caller batches these.
+ * Invalid stored addresses are still deleted; they just cannot be suppressed.
+ */
+async function preparePurgeStatements(
+  db: D1Database,
+  clubSlug: string,
+  contact: ContactRow,
+  actor: ContactPurgeActor,
+): Promise<D1PreparedStatement[]> {
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `DELETE FROM "consent_record"
+          WHERE clubSlug = ?
+            AND subjectType = 'player_contact'
+            AND subjectId = ?`,
+      )
+      .bind(clubSlug, contact.id),
+    db
+      .prepare(`DELETE FROM "player_contact" WHERE id = ? AND clubSlug = ?`)
+      .bind(contact.id, clubSlug),
+  ];
+
+  if (normalizeContactEmail(contact.email)) {
+    const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
+      clubSlug,
+      contact.email,
+    );
+    // Keep an earlier suppression for the same address at this club.
+    statements.push(
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO "contact_email_suppression"
+             (id, clubSlug, emailHash, salt, hashVersion, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(randomId("cesup"), clubSlug, emailHash, salt, hashVersion, nowMs()),
+    );
+  }
+
+  statements.push(
+    prepareAuditLog(db, {
+      clubSlug,
+      adminId: actor.actorId,
+      action: auditActionFor(actor.source),
+      targetTable: "player_contact",
+      targetId: contact.id,
+      // Player id only — never the deleted address.
+      note: `playerId=${contact.playerId};source=${actor.source}`,
+    }),
+  );
+  return statements;
 }
 
 /**
@@ -169,50 +268,7 @@ export async function purgePlayerContact(
     .first<ContactRow>();
   if (!contact) return null;
 
-  const consentDelete = db
-    .prepare(
-      `DELETE FROM "consent_record"
-        WHERE clubSlug = ?
-          AND subjectType = 'player_contact'
-          AND subjectId = ?`,
-    )
-    .bind(clubSlug, contact.id);
-
-  const contactDelete = db
-    .prepare(
-      `DELETE FROM "player_contact" WHERE id = ? AND clubSlug = ?`,
-    )
-    .bind(contact.id, clubSlug);
-
-  // Legacy imports may contain invalid addresses. They must still be deleted,
-  // even though they cannot be hashed by the suppression normalizer.
-  const statements = [consentDelete, contactDelete];
-  if (normalizeContactEmail(contact.email)) {
-    const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
-      clubSlug,
-      contact.email,
-    );
-    // Keep an earlier suppression for the same address at this club.
-    statements.push(db
-      .prepare(
-        `INSERT OR IGNORE INTO "contact_email_suppression"
-           (id, clubSlug, emailHash, salt, hashVersion, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(randomId("cesup"), clubSlug, emailHash, salt, hashVersion, nowMs()));
-  }
-
-  const audit = prepareAuditLog(db, {
-    clubSlug,
-    adminId: actor.actorId,
-    action: auditActionFor(actor.source),
-    targetTable: "player_contact",
-    targetId: contact.id,
-    // Player id only — never the deleted address.
-    note: `playerId=${contact.playerId};source=${actor.source}`,
-  });
-
-  await db.batch([...statements, audit]);
+  await db.batch(await preparePurgeStatements(db, clubSlug, contact, actor));
 
   return {
     contactId: contact.id,
@@ -221,74 +277,123 @@ export async function purgePlayerContact(
   };
 }
 
-/** Purge every contact attached to players registered on a team at this club. */
+function continuationCursor(cursor: string | null | undefined): string | null {
+  const trimmed = cursor?.trim() ?? "";
+  return trimmed ? trimmed : null;
+}
+
+async function loadPurgeCandidates(
+  db: D1Database,
+  sql: string,
+  binds: unknown[],
+): Promise<ContactRow[]> {
+  const loaded = await db.prepare(sql).bind(...binds).all<ContactRow>();
+  return loaded.results ?? [];
+}
+
+/**
+ * One invocation: one scope read, then a single batch small enough that
+ * scope + writes stay under the Free D1 query cap. Earlier rows in the batch
+ * commit together; the caller continues with `cursor` while `remaining` > 0.
+ */
+async function purgeContactChunk(
+  db: D1Database,
+  clubSlug: string,
+  contacts: ContactRow[],
+  actor: ContactPurgeActor,
+): Promise<BulkContactPurgeResult> {
+  const { chunk } = planBulkPurgeChunk(contacts);
+  if (chunk.length === 0) {
+    return { purged: [], remaining: contacts.length, cursor: null };
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  for (const contact of chunk) {
+    statements.push(...(await preparePurgeStatements(db, clubSlug, contact, actor)));
+  }
+  await db.batch(statements);
+
+  const remaining = contacts.length - chunk.length;
+  return {
+    purged: chunk.map((contact) => ({
+      contactId: contact.id,
+      playerId: contact.playerId,
+      clubSlug,
+    })),
+    remaining,
+    cursor: remaining > 0 ? chunk[chunk.length - 1].id : null,
+  };
+}
+
+/**
+ * Purge contacts for players registered on a team at this club.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
+ */
 export async function purgeContactsForTeam(
   db: D1Database,
   {
     clubSlug,
     teamName,
     actorId,
+    cursor,
   }: {
     clubSlug: string;
     teamName: string;
     actorId: string;
+    cursor?: string | null;
   },
-): Promise<ContactPurgeResult[]> {
+): Promise<BulkContactPurgeResult> {
   const trimmed = teamName.trim();
-  if (!trimmed) return [];
+  if (!trimmed) return { purged: [], remaining: 0, cursor: null };
 
-  const contacts = (await db
-    .prepare(
-      `SELECT DISTINCT pc.id AS id
-         FROM "player_contact" pc
-         JOIN "player_registration" pr
-           ON pr.playerId = pc.playerId AND pr.clubSlug = pc.clubSlug
-        WHERE pc.clubSlug = ?
-          AND pr.teamName = ? COLLATE NOCASE`,
-    )
-    .bind(clubSlug, trimmed)
-    .all<{ id: string }>()).results ?? [];
-
-  const purged: ContactPurgeResult[] = [];
-  for (const row of contacts) {
-    const result = await purgePlayerContact(db, {
-      clubSlug,
-      contactId: row.id,
-      actor: { actorId, source: "admin_bulk_team" },
-    });
-    if (result) purged.push(result);
-  }
-  return purged;
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT DISTINCT pc.id AS id, pc.clubSlug AS clubSlug, pc.playerId AS playerId, pc.email AS email
+       FROM "player_contact" pc
+       JOIN "player_registration" pr
+         ON pr.playerId = pc.playerId AND pr.clubSlug = pc.clubSlug
+      WHERE pc.clubSlug = ?
+        AND pr.teamName = ? COLLATE NOCASE
+        AND (? IS NULL OR pc.id > ?)
+      ORDER BY pc.id`,
+    [clubSlug, trimmed, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, {
+    actorId,
+    source: "admin_bulk_team",
+  });
 }
 
-/** Purge every player_contact row at this club. */
+/**
+ * Purge player_contact rows at this club.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
+ */
 export async function purgeContactsForClub(
   db: D1Database,
   {
     clubSlug,
     actorId,
+    cursor,
   }: {
     clubSlug: string;
     actorId: string;
+    cursor?: string | null;
   },
-): Promise<ContactPurgeResult[]> {
-  const contacts = (await db
-    .prepare(
-      `SELECT id FROM "player_contact" WHERE clubSlug = ?`,
-    )
-    .bind(clubSlug)
-    .all<{ id: string }>()).results ?? [];
-
-  const purged: ContactPurgeResult[] = [];
-  for (const row of contacts) {
-    const result = await purgePlayerContact(db, {
-      clubSlug,
-      contactId: row.id,
-      actor: { actorId, source: "admin_bulk_club" },
-    });
-    if (result) purged.push(result);
-  }
-  return purged;
+): Promise<BulkContactPurgeResult> {
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT id, clubSlug, playerId, email FROM "player_contact"
+      WHERE clubSlug = ?
+        AND (? IS NULL OR id > ?)
+      ORDER BY id`,
+    [clubSlug, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, {
+    actorId,
+    source: "admin_bulk_club",
+  });
 }
 
 /**

@@ -18,8 +18,12 @@ import {
  *
  * POST body shapes:
  * - { contactId } — single contact on a player's row
- * - { teamName } — every contact for players registered on that team
- * - { entireClub: true } — every contact at the club
+ * - { teamName, cursor? } — one chunk of contacts for that team
+ * - { entireClub: true, cursor? } — one chunk of contacts at the club
+ *
+ * Team and club purges stay inside the Workers Free D1 query cap and return
+ * `remaining` plus `cursor`. Call again with that cursor until remaining is 0.
+ * A chunk that commits is included in the response even when more contacts remain.
  *
  * Hard-deletes player_contact + related consent; suppresses a salted hash;
  * leaves FAN / registration / payment / user login alone. Audit never stores
@@ -30,6 +34,8 @@ type PurgeBody = {
   contactId?: unknown;
   teamName?: unknown;
   entireClub?: unknown;
+  /** Continue a team/club purge after a previous chunk. */
+  cursor?: unknown;
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
@@ -51,6 +57,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const contactId = typeof body.contactId === "string" ? body.contactId.trim() : "";
   const teamName = typeof body.teamName === "string" ? body.teamName.trim() : "";
   const entireClub = body.entireClub === true;
+  const cursor = typeof body.cursor === "string" ? body.cursor.trim() : "";
 
   const modes = [contactId ? 1 : 0, teamName ? 1 : 0, entireClub ? 1 : 0];
   if (modes.reduce((a, b) => a + b, 0) !== 1) {
@@ -62,6 +69,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   try {
     let purged;
+    let remaining = 0;
+    let nextCursor: string | null = null;
     let scope: "contact" | "team" | "club";
 
     if (contactId) {
@@ -74,17 +83,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       purged = [one];
       scope = "contact";
     } else if (teamName) {
-      purged = await purgeContactsForTeam(context.env.DB, {
+      const page = await purgeContactsForTeam(context.env.DB, {
         clubSlug,
         teamName,
         actorId: adminId,
+        cursor: cursor || null,
       });
+      purged = page.purged;
+      remaining = page.remaining;
+      nextCursor = page.cursor;
       scope = "team";
     } else {
-      purged = await purgeContactsForClub(context.env.DB, {
+      const page = await purgeContactsForClub(context.env.DB, {
         clubSlug,
         actorId: adminId,
+        cursor: cursor || null,
       });
+      purged = page.purged;
+      remaining = page.remaining;
+      nextCursor = page.cursor;
       scope = "club";
     }
 
@@ -98,6 +115,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           club_slug: clubSlug,
           scope,
           purged_count: purged.length,
+          remaining,
           // Never include emails.
           contact_ids: purged.map((p) => p.contactId),
         },
@@ -108,6 +126,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       ok: true,
       scope,
       purgedCount: purged.length,
+      remaining,
+      cursor: nextCursor,
       purged: purged.map((p) => ({
         contactId: p.contactId,
         playerId: p.playerId,
