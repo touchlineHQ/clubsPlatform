@@ -397,8 +397,9 @@ export async function purgeContactsForClub(
 }
 
 /**
- * Parent self-purge: hard-delete every contact at the club whose email matches
- * the parent's login email. Does not delete the user / account.
+ * Parent self-purge: hard-delete contacts at the club whose email matches the
+ * parent's login email. Does not delete the user / account.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
  */
 export async function purgeContactsMatchingEmail(
   db: D1Database,
@@ -407,34 +408,29 @@ export async function purgeContactsMatchingEmail(
     email,
     actorId,
     source = "parent",
+    cursor,
   }: {
     clubSlug: string;
     email: string;
     actorId: string;
     source?: ContactPurgeActor["source"];
+    cursor?: string | null;
   },
-): Promise<ContactPurgeResult[]> {
+): Promise<BulkContactPurgeResult> {
   const normalised = normalizeContactEmail(email);
   if (!normalised) {
     throw new ContactPurgeError("email is invalid", "invalid_email");
   }
 
-  const contacts = (await db
-    .prepare(
-      `SELECT id FROM "player_contact"
-        WHERE clubSlug = ? AND lower(email) = ?`,
-    )
-    .bind(clubSlug, normalised)
-    .all<{ id: string }>()).results ?? [];
-
-  const purged: ContactPurgeResult[] = [];
-  for (const row of contacts) {
-    const result = await purgePlayerContact(db, {
-      clubSlug,
-      contactId: row.id,
-      actor: { actorId, source },
-    });
-    if (result) purged.push(result);
-  }
-  return purged;
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT id, clubSlug, playerId, email FROM "player_contact"
+      WHERE clubSlug = ?
+        AND lower(email) = ?
+        AND (? IS NULL OR id > ?)
+      ORDER BY id`,
+    [clubSlug, normalised, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, { actorId, source });
 }

@@ -50,6 +50,33 @@ function seedBase(sqlite: SqliteDb) {
     VALUES ('pay1','${CLUB}','reg1','ref1','man1','active',${NOW},${NOW})`);
 }
 
+/** Wraps a d1Over db and counts every D1 query (including each batch statement). */
+function countingDb(raw: ReturnType<typeof d1Over>) {
+  const stats = { executed: 0, batchCalls: 0, maxBatch: 0 };
+  const countExec = <T extends { all: Function; first: Function; run: Function }>(bound: T) => ({
+    ...bound,
+    all: async (...args: unknown[]) => { stats.executed += 1; return bound.all(...args); },
+    first: async (...args: unknown[]) => { stats.executed += 1; return bound.first(...args); },
+    run: async (...args: unknown[]) => { stats.executed += 1; return bound.run(...args); },
+  });
+  const db = {
+    prepare(sql: string) {
+      const stmt = raw.prepare(sql) as { bind: (...params: unknown[]) => { all: Function; first: Function; run: Function } };
+      return {
+        bind: (...params: unknown[]) => countExec(stmt.bind(...params)),
+      };
+    },
+    async batch(statements: unknown[]) {
+      stats.batchCalls += 1;
+      stats.maxBatch = Math.max(stats.maxBatch, statements.length);
+      stats.executed += statements.length;
+      return raw.batch(statements);
+    },
+  };
+  const reset = () => { stats.executed = 0; stats.batchCalls = 0; stats.maxBatch = 0; };
+  return { db, stats, reset };
+}
+
 describe('contact purge (#134)', () => {
   let sqlite: SqliteDb;
 
@@ -245,12 +272,15 @@ describe('contact purge (#134)', () => {
 
   it('parent self-purge removes matching contacts without destroying login', async () => {
     const db = d1Over(sqlite);
-    const purged = await purgeContactsMatchingEmail(db as any, {
+    const page = await purgeContactsMatchingEmail(db as any, {
       clubSlug: CLUB,
       email: EMAIL,
       actorId: 'u_parent',
       source: 'parent',
     });
+    const purged = page.purged;
+    expect(page.remaining).toBe(0);
+    expect(page.cursor).toBeNull();
     expect(purged).toHaveLength(1);
     expect(purged[0].contactId).toBe('pc_1');
     // Unrelated address remains.
@@ -304,35 +334,12 @@ describe('contact purge (#134)', () => {
         VALUES (?, ?, 'p1', ?, 'guardian', 'pending', 0, 0, NULL, ?)`).run!(id, CLUB, row.email, NOW);
     }
 
-    const raw = d1Over(sqlite);
-    let executed = 0;
-    let batchCalls = 0;
-    let maxBatch = 0;
-    const countExec = <T extends { all: Function; first: Function; run: Function }>(bound: T) => ({
-      ...bound,
-      all: async (...args: unknown[]) => { executed += 1; return bound.all(...args); },
-      first: async (...args: unknown[]) => { executed += 1; return bound.first(...args); },
-      run: async (...args: unknown[]) => { executed += 1; return bound.run(...args); },
-    });
-    const db = {
-      prepare(sql: string) {
-        const stmt = raw.prepare(sql) as { bind: (...params: unknown[]) => { all: Function; first: Function; run: Function } };
-        return {
-          bind: (...params: unknown[]) => countExec(stmt.bind(...params)),
-        };
-      },
-      async batch(statements: unknown[]) {
-        batchCalls += 1;
-        maxBatch = Math.max(maxBatch, statements.length);
-        executed += statements.length;
-        return raw.batch(statements);
-      },
-    };
+    const { db, stats, reset } = countingDb(d1Over(sqlite));
 
     const first = await purgeContactsForClub(db as any, { clubSlug: CLUB, actorId: 'u_admin' });
-    expect(batchCalls).toBe(1);
-    expect(maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
-    expect(executed).toBeLessThan(D1_FREE_QUERIES_PER_INVOCATION);
+    expect(stats.batchCalls).toBe(1);
+    expect(stats.maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+    expect(stats.executed).toBeLessThan(D1_FREE_QUERIES_PER_INVOCATION);
     expect(first.purged.map((row) => row.contactId)).toEqual(
       planned.chunk.map((_, i) => `pc_${String(i).padStart(2, '0')}`),
     );
@@ -341,9 +348,7 @@ describe('contact purge (#134)', () => {
     // A committed chunk is reported even though more contacts remain.
     expect(first.purged.length).toBeGreaterThan(0);
 
-    executed = 0;
-    batchCalls = 0;
-    maxBatch = 0;
+    reset();
     const seen = new Set(first.purged.map((row) => row.contactId));
     let cursor = first.cursor;
     let remaining = first.remaining;
@@ -354,8 +359,8 @@ describe('contact purge (#134)', () => {
         cursor,
       });
       expect(next.purged.length).toBeGreaterThan(0);
-      expect(batchCalls).toBeGreaterThan(0);
-      expect(maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+      expect(stats.batchCalls).toBeGreaterThan(0);
+      expect(stats.maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
       for (const row of next.purged) seen.add(row.contactId);
       remaining = next.remaining;
       cursor = next.cursor;
@@ -414,5 +419,77 @@ describe('contact purge (#134)', () => {
     expect(
       (sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact"`).get() as { n: number }).n,
     ).toBe(0);
+  });
+
+  it('parent self-purge continues across calls under the Free D1 query budget', async () => {
+    const total = 30;
+    for (let i = 0; i < total; i += 1) {
+      const n = String(i).padStart(2, '0');
+      sqlite.prepare(`INSERT INTO "player" VALUES (?, ?, ?, ?)`).run!(`pp_${n}`, `FANP${n}`, NOW, NOW);
+      sqlite.prepare(`INSERT INTO "player_contact"
+        (id, clubSlug, playerId, email, relationship, state,
+         operationalOptIn, marketingOptIn, sourcedBy, sourcedAt)
+        VALUES (?, ?, ?, ?, 'guardian', 'pending', 0, 0, NULL, ?)`).run!(
+        `pcm_${n}`,
+        CLUB,
+        `pp_${n}`,
+        // Stored case varies; matching is case-insensitive.
+        i % 2 === 0 ? EMAIL : EMAIL.toUpperCase(),
+        NOW,
+      );
+    }
+    const matching = total + 1; // plus seeded pc_1
+    expect(planBulkPurgeChunk(Array.from({ length: matching }, () => ({ email: EMAIL }))).chunk.length)
+      .toBeLessThan(matching);
+
+    const { db, stats, reset } = countingDb(d1Over(sqlite));
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    let calls = 0;
+    let remaining = Infinity;
+    while (remaining > 0) {
+      reset();
+      const page = await purgeContactsMatchingEmail(db as any, {
+        clubSlug: CLUB,
+        email: EMAIL,
+        actorId: 'u_parent',
+        source: 'parent',
+        cursor,
+      });
+      calls += 1;
+      expect(page.purged.length).toBeGreaterThan(0);
+      expect(stats.batchCalls).toBe(1);
+      expect(stats.maxBatch).toBeLessThanOrEqual(D1_MAX_STATEMENTS_PER_BATCH);
+      expect(stats.executed).toBeLessThan(D1_FREE_QUERIES_PER_INVOCATION);
+      for (const row of page.purged) {
+        expect(seen.has(row.contactId)).toBe(false);
+        seen.add(row.contactId);
+      }
+      if (page.remaining > 0) expect(page.cursor).toBe(page.purged[page.purged.length - 1].contactId);
+      else expect(page.cursor).toBeNull();
+      remaining = page.remaining;
+      cursor = page.cursor;
+      expect(calls).toBeLessThan(10);
+    }
+    expect(calls).toBeGreaterThan(1);
+    expect(seen.size).toBe(matching);
+    expect(
+      (sqlite.prepare(
+        `SELECT COUNT(*) AS n FROM "player_contact" WHERE lower(email) = ?`,
+      ).get(EMAIL) as { n: number }).n,
+    ).toBe(0);
+    // Unrelated contact, login, and account survive.
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS n FROM "player_contact" WHERE id = 'pc_2'`).get() as { n: number }).n,
+    ).toBe(1);
+    expect(
+      (sqlite.prepare(`SELECT COUNT(*) AS n FROM "account" WHERE userId = 'u_parent'`).get() as { n: number }).n,
+    ).toBe(1);
+    expect(await isEmailSuppressed(d1Over(sqlite) as any, CLUB, EMAIL)).toBe(true);
+    const audits = sqlite.prepare(
+      `SELECT note FROM "admin_audit_log" WHERE action = 'contact_purged_by_parent'`,
+    ).all() as { note: string }[];
+    expect(audits).toHaveLength(matching);
+    for (const { note } of audits) expect(note.toLowerCase()).not.toContain(EMAIL);
   });
 });

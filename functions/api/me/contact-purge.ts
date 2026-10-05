@@ -12,7 +12,16 @@ import {
  * Authenticated parent deletes every player_contact whose address matches their
  * login email. Shared purge helper: hard-delete + suppression + audit, no
  * cascade onto the user/account. Minimal preference hook until #135 polish.
+ *
+ * Optional JSON body: { cursor? }. Each call commits one chunk sized under the
+ * Workers Free D1 query cap and returns `remaining` plus `cursor`. Call again
+ * with that cursor until remaining is 0. A committed chunk is always reported.
  */
+
+type PurgeBody = {
+  /** Continue a self-purge after a previous chunk. */
+  cursor?: unknown;
+};
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
@@ -34,13 +43,28 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Account has no email" }, { status: 400 });
   }
 
+  // Body is optional: an empty POST starts a purge from the beginning.
+  let body: PurgeBody = {};
+  const raw = await context.request.text();
+  if (raw.trim()) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") body = parsed as PurgeBody;
+    } catch {
+      return json({ error: "Malformed JSON body" }, { status: 400 });
+    }
+  }
+  const cursor = typeof body.cursor === "string" ? body.cursor.trim() : "";
+
   try {
-    const purged = await purgeContactsMatchingEmail(context.env.DB, {
+    const page = await purgeContactsMatchingEmail(context.env.DB, {
       clubSlug,
       email,
       actorId: userId,
       source: "parent",
+      cursor: cursor || null,
     });
+    const purged = page.purged;
 
     const posthog = getPostHog(context.env);
     if (posthog) {
@@ -52,6 +76,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           club_slug: clubSlug,
           scope: "parent_self",
           purged_count: purged.length,
+          remaining: page.remaining,
           contact_ids: purged.map((p) => p.contactId),
         },
       });
@@ -60,6 +85,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({
       ok: true,
       purgedCount: purged.length,
+      remaining: page.remaining,
+      cursor: page.cursor,
       purged: purged.map((p) => ({
         contactId: p.contactId,
         playerId: p.playerId,
