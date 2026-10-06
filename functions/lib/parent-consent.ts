@@ -12,6 +12,11 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "./club-email-signoff";
+import {
+  hashContactEmailForSuppression,
+  prepareClearEmailSuppression,
+  isEmailSuppressed,
+} from "./contact-purge";
 
 /**
  * Parent-facing contact consent form (#149).
@@ -51,7 +56,8 @@ export class ParentConsentError extends Error {
       | "no_signoff"
       | "player_not_found"
       | "invalid_email"
-      | "policy_mismatch",
+      | "policy_mismatch"
+      | "suppressed",
   ) {
     super(message);
     this.name = "ParentConsentError";
@@ -124,12 +130,15 @@ export async function askParentForContactConsent(
     email: rawEmail,
     relationship = "guardian",
     sourcedBy,
+    confirmSuppressedReAdd = false,
   }: {
     clubSlug: string;
     fanId: string;
     email: string;
     relationship?: "self" | "guardian";
     sourcedBy: string;
+    /** Explicit admin confirmation required to re-add a previously purged address. */
+    confirmSuppressedReAdd?: boolean;
   },
 ): Promise<{
   contactId: string;
@@ -142,6 +151,17 @@ export async function askParentForContactConsent(
 }> {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new ParentConsentError("email is invalid", "invalid_email");
+
+  // Purged addresses stay suppressed until an admin explicitly confirms re-add (#134).
+  const suppressed = await isEmailSuppressed(db, clubSlug, email);
+  if (suppressed) {
+    if (!confirmSuppressedReAdd) {
+      throw new ParentConsentError(
+        "This address was purged; re-add requires explicit confirmation",
+        "suppressed",
+      );
+    }
+  }
 
   if (!(await hasCurrentEmailSignoff(db, clubSlug))) {
     throw new ParentConsentError(
@@ -178,10 +198,16 @@ export async function askParentForContactConsent(
   const tokenHash = await hashToken(token);
   const expiresAt = nowMs() + ACTIVATION_TOKEN_TTL_MS;
   const sourcedAt = nowMs();
+  // Confirm clears suppression even if the pre-check missed a row that a purge
+  // committed during the lookups above. The delete is a no-op unless the
+  // contact write itself changed a row.
+  const suppressionClear = confirmSuppressedReAdd
+    ? await prepareClearEmailSuppression(db, clubSlug, email, { requirePreviousChange: true })
+    : null;
 
   if (existing) {
     // Refresh token on pending / withdrawn so the secretary can re-send.
-    await db
+    const update = db
       .prepare(
         `UPDATE "player_contact"
             SET state = 'pending',
@@ -206,8 +232,13 @@ export async function askParentForContactConsent(
         expiresAt,
         existing.id,
         clubSlug,
-      )
-      .run();
+      );
+
+    if (suppressionClear) {
+      await db.batch([update, suppressionClear]);
+    } else {
+      await update.run();
+    }
 
     return {
       contactId: existing.id,
@@ -221,13 +252,21 @@ export async function askParentForContactConsent(
   }
 
   const contactId = randomId("pcontact");
-  await db
+  // Same statement as the write: a purge that lands after the pre-check cannot
+  // recreate a pending contact unless the caller confirmed re-add.
+  const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+  const insert = db
     .prepare(
       `INSERT INTO "player_contact"
          (id, clubSlug, playerId, email, relationship, state,
           operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
           confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
-       VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, ?, ?)`,
+       SELECT ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, ?, ?
+        WHERE ? = 1
+           OR NOT EXISTS (
+             SELECT 1 FROM "contact_email_suppression"
+              WHERE clubSlug = ? AND emailHash = ?
+           )`,
     )
     .bind(
       contactId,
@@ -240,8 +279,22 @@ export async function askParentForContactConsent(
       signoffId,
       tokenHash,
       expiresAt,
-    )
-    .run();
+      confirmSuppressedReAdd ? 1 : 0,
+      clubSlug,
+      emailHash,
+    );
+
+  if (suppressionClear) {
+    await db.batch([insert, suppressionClear]);
+  } else {
+    const result = await insert.run();
+    if ((result.meta?.changes ?? 0) === 0) {
+      throw new ParentConsentError(
+        "This address was purged; re-add requires explicit confirmation",
+        "suppressed",
+      );
+    }
+  }
 
   return {
     contactId,

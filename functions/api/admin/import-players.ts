@@ -6,6 +6,7 @@ import {
   currentSignoffAcceptanceId,
   hasCurrentEmailSignoff,
 } from "../../lib/club-email-signoff";
+import { hashContactEmailForSuppression, normalizeContactEmail } from "../../lib/contact-purge";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -31,7 +32,7 @@ interface ImportResult {
   /** Player identity rows inserted. A returning player counts in neither field. */
   players: { created: number };
   registrations: { created: number; updated: number };
-  contacts: { created: number; skipped: number; dropped: number };
+  contacts: { created: number; skipped: number; dropped: number; suppressed: number };
   errors: { fanId: string; reason: string }[];
   stale: { count: number; rows: StaleRegistration[] };
 }
@@ -336,7 +337,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     ok: true,
     players: { created: 0 },
     registrations: { created: 0, updated: 0 },
-    contacts: { created: 0, skipped: 0, dropped: 0 },
+    contacts: { created: 0, skipped: 0, dropped: 0, suppressed: 0 },
     errors: [],
     stale: { count: 0, rows: [] },
   };
@@ -391,6 +392,36 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   if (!hasSignoff && addressesInFile > 0) {
     importResult.contacts.dropped = addressesInFile;
+  }
+
+  // Suppression (#134): a purged address must not come back as pending via FA
+  // import. Drop those keys from the map before planning / writing contacts.
+  const hashesByEmail = new Map<string, string>();
+  if (hasSignoff && contactRelMap.size > 0) {
+    const distinctEmails = new Set([...contactRelMap.values()].map((entry) => entry.email));
+    for (const email of distinctEmails) {
+      if (!normalizeContactEmail(email)) continue;
+      const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+      hashesByEmail.set(email, emailHash);
+    }
+    const suppressedHashes = new Set<string>();
+    for (const slice of inSlices([...hashesByEmail.values()])) {
+      const { results } = await db
+        .prepare(
+          `SELECT emailHash FROM "contact_email_suppression"
+            WHERE clubSlug = ? AND emailHash IN (${slice.map(() => "?").join(",")})`,
+        )
+        .bind(clubSlug, ...slice)
+        .all<{ emailHash: string }>();
+      for (const row of results ?? []) suppressedHashes.add(row.emailHash);
+    }
+    for (const [key, entry] of contactRelMap) {
+      const emailHash = hashesByEmail.get(entry.email);
+      if (emailHash && suppressedHashes.has(emailHash)) {
+        contactRelMap.delete(key);
+        importResult.contacts.suppressed++;
+      }
+    }
   }
 
   // ── 2. Read what the club already holds ──────────────────────────────────
@@ -611,6 +642,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           },
         });
       }
+      if (importResult.contacts.suppressed > 0) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'import contact emails suppressed',
+          ...clubGroups(clubSlug),
+          properties: {
+            club_slug: clubSlug,
+            contacts_suppressed: importResult.contacts.suppressed,
+            dry_run: true,
+          },
+        });
+      }
     }
     return json(importResult);
   }
@@ -704,13 +747,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       continue;
     }
     try {
-      await db
+      const inserted = await db
         .prepare(
           `INSERT INTO "player_contact"
              (id, clubSlug, playerId, email, relationship, state,
               operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
               confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
-           VALUES (?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+           SELECT ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL
+            WHERE NOT EXISTS (
+              SELECT 1 FROM "contact_email_suppression"
+               WHERE clubSlug = ? AND emailHash = ?
+            )`,
         )
         .bind(
           plan.newContactId,
@@ -721,8 +768,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           adminId,
           nowMs(),
           signoffAcceptanceId,
+          clubSlug,
+          hashesByEmail.get(plan.email) ?? null,
         )
         .run();
+      // A purge may have suppressed the address after the planning read.
+      if (inserted.meta.changes === 0) {
+        importResult.contacts.created--;
+        importResult.contacts.suppressed++;
+      }
     } catch (err) {
       importResult.contacts.created--;
       importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
@@ -838,6 +892,21 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         contacts_dropped: contactsDropped,
         dry_run: false,
         reason: 'club_email_signoff_missing',
+      },
+    });
+  }
+
+  // Per-request: each chunk filters its own addresses; do not wait for the
+  // final part or a suppressed address in an earlier chunk is invisible.
+  if (posthog && importResult.contacts.suppressed > 0) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'import contact emails suppressed',
+      ...clubGroups(clubSlug),
+      properties: {
+        club_slug: clubSlug,
+        contacts_suppressed: importResult.contacts.suppressed,
+        dry_run: false,
       },
     });
   }
