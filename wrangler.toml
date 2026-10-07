@@ -3,6 +3,13 @@ compatibility_date = "2024-09-23"
 pages_build_output_dir = "website/dist"
 compatibility_flags = [ "nodejs_compat" ]
 
+# Workers Logs for Pages Functions. Without this, Cloudflare Observability
+# ingests nothing for clubsplatform (Signal Issues Cloudflare passes stay empty).
+# Mirrored under [env.production] / [env.preview] so Pages deploys do not drop it.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 # ---------------------------------------------------------------------------
 # Default vars (used by `wrangler pages dev` without --env, and inherited
 # only where not overridden in an env block below). For Cloudflare Pages
@@ -43,6 +50,10 @@ POSTHOG_HOST = "https://p.touchlinehq.co.uk"
 # ---------------------------------------------------------------------------
 [env.production]
 
+[env.production.observability]
+enabled = true
+head_sampling_rate = 1
+
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "clubsplatform-auth"
@@ -68,6 +79,10 @@ POSTHOG_HOST = "https://p.touchlinehq.co.uk"
 # (PR previews, branch previews). Bind the dedicated preview D1.
 # ---------------------------------------------------------------------------
 [env.preview]
+
+[env.preview.observability]
+enabled = true
+head_sampling_rate = 1
 
 [[env.preview.d1_databases]]
 binding = "DB"
