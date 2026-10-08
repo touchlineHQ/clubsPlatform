@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "better-auth": "^1.5.6",
-    "hono": "^4.7.0",
+    "hono": "^4.13.13",
     "posthog-node": "^5.55.0"
   },
   "devDependencies": {
