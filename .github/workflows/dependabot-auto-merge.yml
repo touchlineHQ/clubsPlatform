@@ -1,14 +1,30 @@
 name: Dependabot auto-merge
 
-# Queues GitHub's native auto-merge on Dependabot's patch and minor updates, so
-# each one squash-merges by itself once the required checks on main pass (the
-# "main: required CI checks" ruleset: Tests with coverage, E2E against a local
-# preview build, Analyze (javascript-typescript)). Major updates are left open
+# Squash-merges Dependabot's patch and minor updates once CI has passed on them.
+# It only ever touches pull requests opened by dependabot[bot]. No ruleset or
+# branch protection is involved, so nobody else's pull requests or pushes are
+# gated by anything here. Major updates are never labelled, so they stay open
 # for a manual review.
 #
-# pull_request_target, not pull_request, so the token can write even though the
-# PR comes from Dependabot. That is only safe because nothing here checks out or
-# runs the PR's code — keep it that way.
+# Two jobs:
+#
+#   label  (pull_request_target) reads the update type with
+#          dependabot/fetch-metadata and adds the `automerge:ok` label to patch
+#          and minor updates, removing it again if a later push makes the PR a
+#          major. For grouped PRs update-type is the largest bump in the group,
+#          so one major anywhere keeps the whole group manual.
+#
+#   merge  (workflow_run, after Test, E2E or CodeQL completes for a PR) merges
+#          only when the PR is still open, authored by dependabot[bot], carries
+#          `automerge:ok`, its head is still the commit CI ran against, and the
+#          latest "Tests with coverage", "E2E against a local preview build" and
+#          "Analyze (javascript-typescript)" check runs on that commit all
+#          concluded success. Anything else exits quietly. Whichever of the three
+#          workflows finishes last does the merge.
+#
+# Neither job checks out or runs the PR's code; that is what makes the
+# pull_request_target and workflow_run triggers (which carry a write token) safe
+# here. Keep it that way.
 #
 # Caveat: a merge performed with GITHUB_TOKEN does not trigger further workflow
 # runs, so the push-to-main deploy in main.yml does NOT run for these merges. The
@@ -16,16 +32,22 @@ name: Dependabot auto-merge
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+  workflow_run:
+    workflows: ["Test", "E2E", "CodeQL"]
+    types: [completed]
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
-  auto-merge:
-    name: Enable auto-merge for patch/minor updates
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+  label:
+    name: Label patch/minor updates
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -33,13 +55,96 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # For grouped PRs update-type is the largest bump in the group, so one major
-      # anywhere keeps the whole group manual.
-      - name: Enable auto-merge (squash)
+      - name: Add automerge:ok
         if: >-
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f 'labels[]=automerge:ok' --silent
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Remove automerge:ok
+        if: >-
+          contains(github.event.pull_request.labels.*.name, 'automerge:ok') &&
+          steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
+          steps.metadata.outputs.update-type != 'version-update:semver-minor'
+        run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/automerge%3Aok" --silent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+  merge:
+    name: Merge once CI has passed
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    # The three CI workflows finish at different times; never evaluate the same
+    # commit twice at once.
+    concurrency:
+      group: dependabot-merge-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Merge if every required check passed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # The open Dependabot PR (from this repo) whose head is still this commit.
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '
+            [ .[]
+              | select(.state == "open"
+                  and .user.login == "dependabot[bot]"
+                  and .head.sha == env.HEAD_SHA
+                  and .head.repo.full_name == env.REPO
+                  and .base.repo.full_name == env.REPO)
+            ] | first | .number // empty')
+          if [ -z "$pr" ]; then
+            echo "No open Dependabot PR has $HEAD_SHA as its head; nothing to do."
+            exit 0
+          fi
+
+          # Re-read the PR itself rather than trusting the list above.
+          labelled=$(gh api "repos/$REPO/pulls/$pr" --jq '
+            .state == "open"
+            and .user.login == "dependabot[bot]"
+            and .head.sha == env.HEAD_SHA
+            and ([.labels[].name] | index("automerge:ok") != null)')
+          if [ "$labelled" != "true" ]; then
+            echo "PR #$pr is not an open, automerge:ok-labelled Dependabot PR at $HEAD_SHA; leaving it."
+            exit 0
+          fi
+
+          # Latest run of each required check on this commit, from GitHub Actions
+          # only (app id 15368), so no other app can satisfy a check by name.
+          runs=$(gh api --paginate \
+            "repos/$REPO/commits/$HEAD_SHA/check-runs?app_id=15368&per_page=100" \
+            --jq '.check_runs[] | [.id, .name, .status, (.conclusion // "none")] | @tsv')
+
+          for check in "Tests with coverage" "E2E against a local preview build" "Analyze (javascript-typescript)"; do
+            latest=$(printf '%s\n' "$runs" \
+              | awk -F'\t' -v name="$check" '$2 == name' \
+              | sort -t "$(printf '\t')" -k1,1n | tail -n 1)
+            status=$(printf '%s' "$latest" | cut -f3)
+            conclusion=$(printf '%s' "$latest" | cut -f4)
+            if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+              echo "\"$check\" is ${status:-missing}/${conclusion:-none} on $HEAD_SHA; not merging PR #$pr yet."
+              exit 0
+            fi
+          done
+
+          echo "All required checks passed on $HEAD_SHA; squash-merging PR #$pr."
+          gh pr merge "$pr" --repo "$REPO" --squash --match-head-commit "$HEAD_SHA"
