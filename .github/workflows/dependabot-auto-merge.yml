@@ -1,0 +1,45 @@
+name: Dependabot auto-merge
+
+# Queues GitHub's native auto-merge on Dependabot's patch and minor updates, so
+# each one squash-merges by itself once the required checks on main pass (the
+# "main: required CI checks" ruleset: Tests with coverage, E2E against a local
+# preview build, Analyze (javascript-typescript)). Major updates are left open
+# for a manual review.
+#
+# pull_request_target, not pull_request, so the token can write even though the
+# PR comes from Dependabot. That is only safe because nothing here checks out or
+# runs the PR's code — keep it that way.
+#
+# Caveat: a merge performed with GITHUB_TOKEN does not trigger further workflow
+# runs, so the push-to-main deploy in main.yml does NOT run for these merges. The
+# change ships with the next push to main, or via a manual run of that workflow.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge for patch/minor updates
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # For grouped PRs update-type is the largest bump in the group, so one major
+      # anywhere keeps the whole group manual.
+      - name: Enable auto-merge (squash)
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
