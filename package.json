@@ -23,8 +23,8 @@
     "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
-    "better-auth": "^1.5.6",
-    "hono": "^4.7.0",
+    "better-auth": "^1.6.22",
+    "hono": "^4.13.7",
     "posthog-node": "^5.55.0"
   },
   "devDependencies": {
@@ -38,13 +38,13 @@
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.5.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "@vitest/coverage-v8": "^2.0.0",
+    "@vitest/coverage-v8": "^5.0.3",
     "dayjs": "^1.11.20",
     "jsdom": "^25.0.0",
     "react-router-dom": "^7.18.4",
     "typescript": "^5.4.0",
-    "vitest": "^2.0.0",
-    "wrangler": "^4.147.0",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.149.0",
     "xlsx": "^0.18.5"
   }
 }
