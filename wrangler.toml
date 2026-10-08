@@ -3,6 +3,15 @@ compatibility_date = "2024-09-23"
 pages_build_output_dir = "website/dist"
 compatibility_flags = [ "nodejs_compat" ]
 
+# NO [observability] block here, on purpose. Cloudflare Pages rejects the key in
+# every form (top-level or [env.*]) and fails the build with:
+#   Configuration file for Pages projects does not support "observability"
+# Pages Functions only get real-time logs, which are not persisted: dashboard →
+# Workers & Pages → clubsplatform → deployment → View details → Functions →
+# Real-time logs, or
+#   npx wrangler pages deployment tail --project-name clubsplatform --environment production
+# Persisted Workers Logs means moving to Workers + static assets (see #138).
+
 # ---------------------------------------------------------------------------
 # Default vars (used by `wrangler pages dev` without --env, and inherited
 # only where not overridden in an env block below). For Cloudflare Pages
