@@ -32,9 +32,14 @@ name: Dependabot auto-merge
 # pull_request_target and workflow_run triggers (which carry a write token) safe
 # here. Keep it that way.
 #
-# Caveat: a merge performed with GITHUB_TOKEN does not trigger further workflow
-# runs, so the push-to-main deploy in main.yml does NOT run for these merges. The
-# change ships with the next push to main, or via a manual run of that workflow.
+# Deploying: a merge made with GITHUB_TOKEN does not fire main.yml's push
+# trigger, so after a successful merge the merge job dispatches main.yml
+# ("Deploy to Cloudflare Pages") on main itself. GITHUB_TOKEN is allowed to start
+# workflow_dispatch runs, and a dispatched run is the same pipeline as a push:
+# tests, then E2E against a Cloudflare preview, then the production deploy.
+# main.yml's "cloudflare-pages" concurrency group keeps near-simultaneous
+# dispatches from racing; each run deploys main as it stands when dispatched.
+# A failed dispatch is only a warning, since the merge itself has happened.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -97,6 +102,7 @@ jobs:
       contents: write
       pull-requests: write
       checks: read
+      actions: write
     # The three CI workflows finish at different times; never evaluate the same
     # commit twice at once.
     concurrency:
@@ -166,4 +172,13 @@ jobs:
           echo "All required checks passed on $HEAD_SHA; squash-merging PR #$pr."
           if ! gh pr merge "$pr" --repo "$REPO" --squash --match-head-commit "$HEAD_SHA"; then
             echo "::warning::Could not merge PR #$pr at $HEAD_SHA (conflict, or the branch is stale after another merge). Leaving it for Dependabot to rebase."
+            exit 0
+          fi
+
+          # The merge's push does not trigger main.yml (it was made with
+          # GITHUB_TOKEN), so start the production deploy explicitly.
+          if gh workflow run main.yml --repo "$REPO" --ref main; then
+            echo "Dispatched \"Deploy to Cloudflare Pages\" on main after merging PR #$pr."
+          else
+            echo "::warning::Merged PR #$pr but could not dispatch main.yml; run \"Deploy to Cloudflare Pages\" on main manually to ship it."
           fi
