@@ -12,15 +12,21 @@ name: Dependabot auto-merge
 #          dependabot/fetch-metadata and adds the `automerge:ok` label to patch
 #          and minor updates, removing it again if a later push makes the PR a
 #          major. For grouped PRs update-type is the largest bump in the group,
-#          so one major anywhere keeps the whole group manual.
+#          so one major anywhere keeps the whole group manual. GitHub Actions
+#          bumps (package-ecosystem github_actions) are never labelled and stay
+#          manual too: they edit .github/workflows/, and GITHUB_TOKEN cannot be
+#          granted the `workflows` permission needed to merge such a change.
 #
 #   merge  (workflow_run, after Test, E2E or CodeQL completes for a PR) merges
 #          only when the PR is still open, authored by dependabot[bot], carries
 #          `automerge:ok`, its head is still the commit CI ran against, and the
 #          latest "Tests with coverage", "E2E against a local preview build" and
 #          "Analyze (javascript-typescript)" check runs on that commit all
-#          concluded success. Anything else exits quietly. Whichever of the three
-#          workflows finishes last does the merge.
+#          concluded success, and nothing under .github/workflows/ is changed.
+#          Anything else exits quietly. Whichever of the three workflows
+#          finishes last does the merge; a merge GitHub refuses (a conflict, or
+#          a stale branch after a sibling merged) is reported as a warning and
+#          left for Dependabot to rebase.
 #
 # Neither job checks out or runs the PR's code; that is what makes the
 # pull_request_target and workflow_run triggers (which carry a write token) safe
@@ -57,8 +63,9 @@ jobs:
 
       - name: Add automerge:ok
         if: >-
-          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+          steps.metadata.outputs.package-ecosystem != 'github_actions' &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor')
         run: gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f 'labels[]=automerge:ok' --silent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -68,8 +75,9 @@ jobs:
       - name: Remove automerge:ok
         if: >-
           contains(github.event.pull_request.labels.*.name, 'automerge:ok') &&
-          steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
-          steps.metadata.outputs.update-type != 'version-update:semver-minor'
+          (steps.metadata.outputs.package-ecosystem == 'github_actions' ||
+           (steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
+            steps.metadata.outputs.update-type != 'version-update:semver-minor'))
         run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/automerge%3Aok" --silent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -146,5 +154,16 @@ jobs:
             fi
           done
 
+          # GITHUB_TOKEN cannot merge changes to workflow files, so leave any
+          # such PR (normally a GitHub Actions bump) for a manual merge.
+          workflow_files=$(gh api --paginate "repos/$REPO/pulls/$pr/files?per_page=100" \
+            --jq '.[] | select(.filename | startswith(".github/workflows/")) | .filename')
+          if [ -n "$workflow_files" ]; then
+            echo "::notice::PR #$pr changes .github/workflows/ ($(echo "$workflow_files" | paste -sd, -)); GITHUB_TOKEN cannot merge workflow changes, leaving it for a manual merge."
+            exit 0
+          fi
+
           echo "All required checks passed on $HEAD_SHA; squash-merging PR #$pr."
-          gh pr merge "$pr" --repo "$REPO" --squash --match-head-commit "$HEAD_SHA"
+          if ! gh pr merge "$pr" --repo "$REPO" --squash --match-head-commit "$HEAD_SHA"; then
+            echo "::warning::Could not merge PR #$pr at $HEAD_SHA (conflict, or the branch is stale after another merge). Leaving it for Dependabot to rebase."
+          fi
