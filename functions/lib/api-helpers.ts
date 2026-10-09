@@ -6,6 +6,8 @@ export interface Env {
   BETTER_AUTH_SECRET: string;
   BETTER_AUTH_URL?: string;
   MULTI_CLUB?: string;
+  /** When truthy with MULTI_CLUB, allows POST /api/clubs/register self-serve signup. */
+  ALLOW_CLUB_SELF_REGISTER?: string;
   PITCH_BOOKINGS?: string;
   GC_ENVIRONMENT?: string;
   SECRETS_ENCRYPTION_KEY: string;
@@ -13,9 +15,36 @@ export interface Env {
   SECRETS_TRANSPORT_PUBLIC_KEY: string; // base64 SPKI DER — plain env var
   POSTHOG_API_KEY?: string;
   POSTHOG_HOST?: string;
-  RESEND_API_KEY?: string; // Cloudflare secret — transactional mail is disabled without it
+  /** Resend API key — with FROM_EMAIL enables outbound mail. */
+  RESEND_API_KEY?: string;
+  /** Verified from-address for outbound mail. */
   FROM_EMAIL?: string;
 }
+
+/**
+ * The session better-auth hands back once a request is authenticated.
+ *
+ * Derived from createAuth rather than written out by hand so it keeps tracking
+ * better-auth's own shape across upgrades.
+ */
+type Session = NonNullable<
+  Awaited<ReturnType<ReturnType<typeof createAuth>["api"]["getSession"]>>
+>;
+
+/**
+ * What an auth guard returns: either a ready-to-send error Response, or the
+ * success payload the caller asked for.
+ *
+ * This union has to be written out rather than inferred. Left to inference,
+ * TypeScript normalises the two return shapes into
+ * `{ error: Response; session?: undefined } | { session: Session; error?: undefined }`
+ * — every arm carries an `error` key, so `if ("error" in result)` stops
+ * discriminating, `result.error` widens to `Response | undefined`, and every
+ * handler that returns it infers `Promise<Response | undefined>` and no longer
+ * satisfies `PagesFunction`. That was 54 of the 56 errors the first typecheck
+ * of functions/ reported, across 30 route files.
+ */
+export type Guard<T> = { error: Response } | T;
 
 /** Create a JSON Response with the appropriate Content-Type header. */
 export function json(res: unknown, init?: ResponseInit): Response {
@@ -41,6 +70,12 @@ export function isMultiClubMode(env: Env): boolean {
   return !!(v && v !== "0" && v !== "false");
 }
 
+/** Returns true for supported enabled values of ALLOW_CLUB_SELF_REGISTER. */
+export function isClubSelfRegisterAllowed(env: Env): boolean {
+  const v = env.ALLOW_CLUB_SELF_REGISTER?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
 /** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */
 export function isPitchBookingsEnabled(env: Env): boolean {
   const v = env.PITCH_BOOKINGS;
@@ -55,11 +90,11 @@ export function getClubSlug(request: Request): string | null {
 /**
  * Verify the request has admin authentication and return the session.
  * Returns an error response for unauthenticated or non-admin users.
- * In multi-club mode, also enforces that the admin's club matches the request club.
+ * Always enforces that a club-bound admin's club matches the request club.
  */
 export async function requireAdmin(
   context: EventContext<Env, string, unknown>,
-) {
+): Promise<Guard<{ session: Session }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
@@ -79,16 +114,14 @@ export async function requireAdmin(
     } as const;
   }
 
-  // In multi-club mode, verify the admin's club matches the request's club.
+  // Enforce club scope regardless of MULTI_CLUB: multi-club rows can exist with the flag off.
   // A user with clubSlug = null is a platform superadmin and may access any club.
-  if (isMultiClubMode(context.env)) {
-    const userClubSlug = (user.clubSlug as string | null) ?? null;
-    const requestClubSlug = getClubSlug(context.request);
-    if (userClubSlug !== null && userClubSlug !== requestClubSlug) {
-      return {
-        error: json({ error: "Access denied: club mismatch" }, { status: 403 }),
-      } as const;
-    }
+  const userClubSlug = (user.clubSlug as string | null) ?? null;
+  const requestClubSlug = getClubSlug(context.request);
+  if (userClubSlug !== null && userClubSlug !== requestClubSlug) {
+    return {
+      error: json({ error: "Access denied: club mismatch" }, { status: 403 }),
+    } as const;
   }
 
   return { session } as const;
@@ -101,7 +134,7 @@ export async function requireAdmin(
  */
 export async function requireManagerOrAdmin(
   context: EventContext<Env, string, unknown>,
-) {
+): Promise<Guard<{ session: Session; role: string }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
@@ -138,7 +171,9 @@ export async function requireManagerOrAdmin(
 }
 
 /** Verify the request has valid authentication and return the session. Returns an error response for unauthenticated users. */
-export async function requireAuth(context: EventContext<Env, string, unknown>) {
+export async function requireAuth(
+  context: EventContext<Env, string, unknown>,
+): Promise<Guard<{ session: Session; role: string }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });

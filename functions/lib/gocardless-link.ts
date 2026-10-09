@@ -1,6 +1,9 @@
 import type { Env } from '../api/gocardless/_types';
 import type { GCBillingRequest, GCBillingRequestFlow, GCMandate } from '../api/gocardless/_types';
 import { getSecret } from './secrets';
+import { buildLogicalReference } from './payment-reference';
+import { billingRegistrationJoinSql } from './registration-merge';
+import { gcMetadata } from './gc-metadata';
 
 export interface CreateLinkInput {
   env: Env;
@@ -105,6 +108,15 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     return { ok: false, status: 400, error: 'Missing or invalid required fields' };
   }
 
+  // The type is the reference's last hyphen segment, and confirm.ts reads it
+  // back out that way. A hyphen or a space in the type would make the rebuilt
+  // reference differ from the minted one, so the existing-subscription match
+  // would miss and the player would be collected from twice.
+  const normalisedPaymentType = paymentType.trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,20}$/.test(normalisedPaymentType)) {
+    return { ok: false, status: 400, error: 'Invalid payment type' };
+  }
+
   let totalCount: number | null = null;
   if (input.count !== undefined && input.count !== null) {
     const n = Number(input.count);
@@ -123,22 +135,42 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     };
   }
 
+  // Resolves through any merge, so no caller can mint a link against a secondary.
   const reg = await db
     .prepare(
-      `SELECT pr.id, pr.teamName, p.fanId
-         FROM player_registration pr
+      `SELECT src.id AS sourceRegistrationId,
+              pr.id, pr.teamName, p.fanId,
+              COALESCE(rps.generation, 0) AS paymentGeneration
+         FROM player_registration src
+         ${billingRegistrationJoinSql('src', 'pr')}
          JOIN player p ON p.id = pr.playerId
-        WHERE pr.id = ? AND pr.clubSlug = ?`
+         LEFT JOIN registration_payment_state rps ON rps.registrationId = src.id
+        WHERE src.id = ?
+          AND (? IS NULL OR src.clubSlug = ?)
+          AND pr.clubSlug = src.clubSlug`
     )
-    .bind(registrationId, clubSlug)
-    .first<{ id: string; teamName: string; fanId: string }>();
+    .bind(registrationId, clubSlug, clubSlug)
+    .first<{
+      sourceRegistrationId: string;
+      id: string;
+      teamName: string;
+      fanId: string;
+      paymentGeneration: number;
+    }>();
 
   if (!reg) {
     return { ok: false, status: 404, error: 'Registration not found' };
   }
 
-  const { fanId, teamName } = reg;
-  const reference = `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
+  const {
+    sourceRegistrationId,
+    id: billingRegistrationId,
+    fanId,
+    teamName,
+    paymentGeneration = 0,
+  } = reg;
+  // The primary's team name is the group's stable billing identity; see buildLogicalReference.
+  const reference = buildLogicalReference(teamName, fanId, normalisedPaymentType);
   const baseDescription = input.description ?? `${teamName} — FAN ${fanId}`;
 
   const pounds = (amountInPence / 100).toLocaleString('en-GB', {
@@ -171,11 +203,16 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
           scheme: 'bacs',
           description: hostedDescription,
         },
-        metadata: {
-          reference,
-          registration_id: registrationId,
-          tracking_info: `team:${teamName}|fan:${fanId}|type:${paymentType}|${amountInPence}p-${intervalUnit}${totalCount ? `-x${totalCount}` : ''}`,
-        },
+        // Three keys is GoCardless's hard cap; a fourth 422s the request and the
+        // payer never reaches the hosted page. payment_type is deliberately not
+        // stamped — confirm.ts recovers it from the reference's last segment —
+        // and neither is tracking_info, since the same facts are in the
+        // description above. Adding a key means repacking or dropping one.
+        metadata: gcMetadata(
+          ['reference', reference],
+          ['registration_id', sourceRegistrationId ?? registrationId],
+          ['registration_generation', String(paymentGeneration)],
+        ),
       },
     }),
   });
@@ -193,7 +230,7 @@ export async function createGoCardlessLink(input: CreateLinkInput): Promise<Crea
     amount: String(amountInPence),
     interval_unit: intervalUnit,
     description: baseDescription,
-    registration_id: registrationId,
+    registration_id: sourceRegistrationId ?? registrationId,
     ...(totalCount !== null ? { count: String(totalCount) } : {}),
     ...(clubSlug ? { club_slug: clubSlug } : {}),
     ...(input.startDate ? { start_date: input.startDate } : {}),

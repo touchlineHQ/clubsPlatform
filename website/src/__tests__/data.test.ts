@@ -171,6 +171,7 @@ describe('loadClubRegistry', () => {
       ok: true,
       json: async () => ({
         multiClub: true,
+        selfRegister: false,
         pitchBookings: false,
         clubs: [{ id: 'c1', slug: 'east-leake', name: 'East Leake FC', location: 'East Leake' }],
       }),
@@ -204,7 +205,7 @@ describe('loadClubRegistry', () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
 
     const result = await loadClubRegistry();
-    expect(result).toEqual({ multiClub: false, pitchBookings: false, clubs: [] });
+    expect(result).toEqual({ multiClub: false, selfRegister: false, pitchBookings: false, clubs: [] });
   });
 
   it('returns empty registry when static fetch also fails', async () => {
@@ -214,13 +215,13 @@ describe('loadClubRegistry', () => {
     });
 
     const result = await loadClubRegistry();
-    expect(result).toEqual({ multiClub: false, pitchBookings: false, clubs: [] });
+    expect(result).toEqual({ multiClub: false, selfRegister: false, pitchBookings: false, clubs: [] });
   });
 
-  it('uses ?? defaults when API response is missing multiClub/pitchBookings/clubs fields', async () => {
+  it('uses ?? defaults when API response is missing multiClub/selfRegister/pitchBookings/clubs fields', async () => {
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
     const result = await loadClubRegistry();
-    expect(result).toEqual({ multiClub: false, pitchBookings: false, clubs: [] });
+    expect(result).toEqual({ multiClub: false, selfRegister: false, pitchBookings: false, clubs: [] });
   });
 
   it('uses ?? default for clubs when static fallback response has no clubs field', async () => {
@@ -229,7 +230,7 @@ describe('loadClubRegistry', () => {
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
     const result = await loadClubRegistry();
-    expect(result).toEqual({ multiClub: false, pitchBookings: false, clubs: [] });
+    expect(result).toEqual({ multiClub: false, selfRegister: false, pitchBookings: false, clubs: [] });
   });
 });
 

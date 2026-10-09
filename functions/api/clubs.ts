@@ -1,6 +1,6 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
-import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isClubSelfRegisterAllowed, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
 type ClubRow = {
   id: string;
@@ -16,6 +16,7 @@ type ClubRow = {
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
   const multiClub = isMultiClubMode(context.env);
+  const selfRegister = isClubSelfRegisterAllowed(context.env);
   const pitchBookings = isPitchBookingsEnabled(context.env);
 
   // published is added by migration 0021, and a Pages deployment can land before
@@ -55,7 +56,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     clubs = clubs.filter(c => c.slug !== 'demo');
   }
 
-  return json({ multiClub, pitchBookings, clubs });
+  return json({ multiClub, selfRegister, pitchBookings, clubs });
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {

@@ -1,0 +1,21 @@
+# Weekly version updates for npm (root + website) and GitHub Actions.
+# Dependabot alerts / security updates are enabled at the repo Settings level.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

@@ -16,6 +16,27 @@
 
 const SUFFIX_LEN = 8;
 
+/**
+ * Build the logical reference identifying a payment plan.
+ *
+ * `teamName` is always the *billing* registration's — a merged group's primary —
+ * so the reference stays stable for the life of the group. confirm.ts matches an
+ * existing subscription on it, and one that moved would collect twice.
+ */
+export function buildLogicalReference(
+  teamName: string,
+  fanId: string,
+  paymentType: string,
+): string {
+  return `${teamName.replace(/\s+/g, '').toUpperCase()}-${fanId}-${paymentType}`;
+}
+
+/** The type trailing a reference (`EASTLEAKE-1234-SUBS` → `SUBS`); `SUBS` when malformed. */
+export function paymentTypeFromReference(reference: string): string {
+  const tail = reference.split('-').pop()?.trim();
+  return tail ? tail.toUpperCase() : 'SUBS';
+}
+
 /** Build the player_payment.reference stored against a payment attempt. */
 export function buildDbReference(reference: string, billingRequestId: string): string {
   return `${reference}-${billingRequestId.slice(-SUFFIX_LEN)}`;

@@ -3,6 +3,11 @@ import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../.
 import { getPostHog } from '../../lib/posthog';
 import { writeAuditLog } from '../../lib/audit-log';
 import { GC_BLOCKING_STATUSES } from '../../lib/payment-status';
+import {
+  GROUP_MEMBER_IDS_SQL,
+  billingRegistrationJoinSql,
+  resolveBillingRegistrationId,
+} from '../../lib/registration-merge';
 
 /**
  * Manual payment override — an admin ticking a registration as paid for players
@@ -18,8 +23,11 @@ import { GC_BLOCKING_STATUSES } from '../../lib/payment-status';
  *   reference  MANUAL-<TEAMNAME>-<fanId>-SUBS
  *
  * The `-SUBS` suffix keeps the row visible to the existing `reference LIKE
- * '%-SUBS%'` filters; the `MANUAL-` prefix keeps it clear of confirm.ts's
- * `<reference>-________` dedupe match.
+ * '%-SUBS%'` filters; the `MANUAL-` prefix is now only a readability marker,
+ * since confirm.ts's dedupe no longer matches on the reference.
+ *
+ * Everything here works on the *billing* registration, so an override on any
+ * member of a merged group lands on its primary and covers the lot.
  */
 
 interface RegistrationRow {
@@ -48,8 +56,8 @@ const NO_COMPLETED_GC_PAYMENT_SQL = `NOT EXISTS (
 )`;
 
 /**
- * Load a registration's basic details for creating a manual payment reference.
- * Returns null if the registration doesn't exist or doesn't belong to the club.
+ * The registration a manual override should hang off, resolved through any merge
+ * in the same query. Null if it isn't in this club.
  */
 async function loadRegistration(
   db: D1Database,
@@ -59,11 +67,12 @@ async function loadRegistration(
   return db
     .prepare(
       `SELECT pr.id AS registrationId, pr.teamName, p.fanId
-         FROM "player_registration" pr
+         FROM "player_registration" src
+         ${billingRegistrationJoinSql('src', 'pr')}
          JOIN "player" p ON p.id = pr.playerId
-        WHERE pr.id = ? AND pr.clubSlug = ?`
+        WHERE src.id = ? AND src.clubSlug = ? AND pr.clubSlug = ?`
     )
-    .bind(registrationId, clubSlug)
+    .bind(registrationId, clubSlug, clubSlug)
     .first<RegistrationRow>();
 }
 
@@ -90,24 +99,29 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const note = body.note?.trim() || null;
 
+  // Resolved through any merge, so one override covers the whole group.
   const registration = await loadRegistration(context.env.DB, body.registrationId, clubSlug);
   if (!registration) return json({ error: 'Registration not found' }, { status: 404 });
+
+  const registrationId = registration.registrationId;
 
   // A manual override must never sit on top of a live GoCardless mandate or
   // subscription: the platform would show the player as paid up while
   // GoCardless carried on collecting. Deactivating the payment is not a way
   // around this — that only updates our DB, it does not cancel at GoCardless.
   // A completed plan is blocked too: the player has already paid in full.
+  //
+  // Covers every member: an in-flight flow can leave a live row on a secondary.
   const gcPayment = await context.env.DB
     .prepare(
       `SELECT id, status FROM "player_payment"
-        WHERE registrationId = ?
+        WHERE registrationId IN ${GROUP_MEMBER_IDS_SQL}
           AND clubSlug = ?
           AND status IN (${GC_BLOCKING_STATUSES.map(() => '?').join(',')})
           AND mandateId != ''
         LIMIT 1`
     )
-    .bind(body.registrationId, clubSlug, ...GC_BLOCKING_STATUSES)
+    .bind(registrationId, registrationId, clubSlug, ...GC_BLOCKING_STATUSES)
     .first<{ id: string; status: string }>();
 
   if (gcPayment) {
@@ -141,7 +155,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         ORDER BY updatedAt DESC
         LIMIT 1`
     )
-    .bind(clubSlug, body.registrationId)
+    .bind(clubSlug, registrationId)
     .first<{ id: string; status: string }>();
 
   if (existing?.status === 'manual') {
@@ -169,7 +183,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           WHERE id = ? AND status != 'manual'
             AND ${NO_COMPLETED_GC_PAYMENT_SQL}`
       )
-      .bind(reference, now, paymentId, body.registrationId, clubSlug)
+      .bind(reference, now, paymentId, registrationId, clubSlug)
       .run();
     if (update.meta.changes === 0) {
       return json({ error: 'Already marked as paid' }, { status: 409 });
@@ -189,11 +203,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       .bind(
         paymentId,
         clubSlug,
-        body.registrationId,
+        registrationId,
         reference,
         now,
         now,
-        body.registrationId,
+        registrationId,
         clubSlug,
       )
       .run();
@@ -221,7 +235,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       properties: {
         club_slug: clubSlug,
         payment_id: paymentId,
-        registration_id: body.registrationId,
+        registration_id: registrationId,
         fan_id: registration.fanId,
       },
     });
@@ -254,8 +268,15 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
 
   if (!clubSlug) return json({ error: 'Missing X-Club-Slug header' }, { status: 400 });
 
-  const registrationId = new URL(context.request.url).searchParams.get('registrationId');
-  if (!registrationId) return json({ error: 'registrationId required' }, { status: 400 });
+  const requestedId = new URL(context.request.url).searchParams.get('registrationId');
+  if (!requestedId) return json({ error: 'registrationId required' }, { status: 400 });
+
+  // Matches where POST wrote it, so undoing from a secondary's row doesn't 404.
+  const registrationId = await resolveBillingRegistrationId(
+    context.env.DB,
+    requestedId,
+    clubSlug,
+  );
 
   // Scoped to status 'manual' so this can never deactivate a GoCardless payment.
   const manual = await context.env.DB

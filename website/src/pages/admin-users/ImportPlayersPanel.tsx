@@ -1,114 +1,85 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
-  Alert, Badge, Box, Button, Center, Group, Loader,
+  Alert, Badge, Box, Button, Group, Loader,
   Paper, ScrollArea, Stack, Table, Text, Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconCheck, IconFileUpload, IconUsers } from '@tabler/icons-react';
-import * as XLSX from 'xlsx';
+import { IconAlertCircle, IconCheck, IconUsers } from '@tabler/icons-react';
 import { useClub } from '../../context/ClubContext';
 import { clubDesign } from '../../theme';
+import { FileDropzone } from '../../components/club/FileDropzone';
+import { parseImportSheet, readWorkbookRows, type ParsedPlayerRow } from '../../utils/faPlayerReport';
 
-interface ParsedPlayerRow {
-  fanId: string;
-  ageGroup: string;
-  teamName: string;
-  registrationExpiry: string;
-  registrationStatus: string;
-  playerEmail: string;
-  parentEmails: string[];
+/**
+ * Rows per write request.
+ *
+ * A row costs up to 36 D1 round trips server-side, and Cloudflare counts each as
+ * a subrequest against a per-request limit — 1,000 on the Free plan, which is
+ * what sets this. Sending a whole club at once is what left clubs half-imported.
+ *
+ * IMPORT_LIMITS.maxCommitRows mirrors this; the server refuses a larger write.
+ */
+export const IMPORT_CHUNK_ROWS = 15;
+
+/**
+ * Distinct addresses per write request.
+ *
+ * Each address becomes one or more pending player_contact rows. 15 rows is ~30
+ * addresses on real data but 165 at the worst the parent-email limit allows.
+ * Batching on both rows and addresses keeps a request inside the Workers
+ * subrequest budget whatever shape the file is.
+ *
+ * IMPORT_LIMITS.maxCommitEmails mirrors this; the server refuses a larger write.
+ */
+export const IMPORT_CHUNK_EMAILS = 45;
+
+/** Every address a row introduces, as the server counts them. */
+function emailsOf(row: ParsedPlayerRow): string[] {
+  return [row.playerEmail, ...(row.parentEmails ?? [])]
+    .map(e => String(e ?? '').trim().toLowerCase())
+    .filter(Boolean);
 }
 
+/** Split rows into requests that respect both limits. A row never exceeds either. */
+export function batchRows(rows: ParsedPlayerRow[]): ParsedPlayerRow[][] {
+  const batches: ParsedPlayerRow[][] = [];
+  let current: ParsedPlayerRow[] = [];
+  let emails = new Set<string>();
+
+  for (const row of rows) {
+    const next = new Set([...emails, ...emailsOf(row)]);
+    if (current.length > 0
+      && (current.length >= IMPORT_CHUNK_ROWS || next.size > IMPORT_CHUNK_EMAILS)) {
+      batches.push(current);
+      current = [];
+      emails = new Set(emailsOf(row));
+    } else {
+      emails = next;
+    }
+    current.push(row);
+  }
+
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+/** A registration the club holds that the uploaded file no longer mentions. */
+interface StaleRegistration {
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
+}
+
+// Mirrors the server's ImportResult in functions/api/admin/import-players.ts.
+// There is no shared module between functions/ and website/, so the two are
+// kept in step by hand.
 interface ImportResult {
   ok: boolean;
-  players: { created: number; updated: number };
-  users: { created: number; skipped: number };
-  invitations: { configured: boolean; sent: number; failed: number };
+  runId?: string;
+  players: { created: number };
+  registrations: { created: number; updated: number };
+  contacts: { created: number; skipped: number; dropped: number };
   errors: { fanId: string; reason: string }[];
-}
-
-const KNOWN_HEADERS: Record<string, keyof ColIndex> = {
-  'fan id':                     'fanId',
-  'age group':                  'ageGroup',
-  'team':                       'teamName',
-  'registration expiry':        'registrationExpiry',
-  'registration status':        'registrationStatus',
-  'email address':              'playerEmail',
-  'parent/carer email address': 'parentEmail',
-};
-
-interface ColIndex {
-  fanId: number;
-  ageGroup: number;
-  teamName: number;
-  registrationExpiry: number;
-  registrationStatus: number;
-  playerEmail: number;
-  parentEmail: number;
-}
-
-function formatCellDate(value: unknown): string {
-  if (!value && value !== 0) return '';
-  if (value instanceof Date) {
-    const dd = String(value.getDate()).padStart(2, '0');
-    const mm = String(value.getMonth() + 1).padStart(2, '0');
-    return `${dd}/${mm}/${value.getFullYear()}`;
-  }
-  if (typeof value === 'number') {
-    const d = XLSX.SSF.parse_date_code(value);
-    if (d) return `${String(d.d).padStart(2, '0')}/${String(d.m).padStart(2, '0')}/${d.y}`;
-  }
-  return String(value).trim();
-}
-
-function parseSheet(rows: unknown[][]): { parsed: ParsedPlayerRow[]; errors: string[] } {
-  const errors: string[] = [];
-
-  const headerRowIdx = rows.findIndex(r =>
-    r.some(cell => String(cell ?? '').trim().toLowerCase() === 'fan id')
-  );
-  if (headerRowIdx === -1) {
-    return { parsed: [], errors: ['Could not find a header row containing "FAN ID". Is this an FA Club Player Report?'] };
-  }
-
-  const headerRow = rows[headerRowIdx].map(c => String(c ?? '').trim().toLowerCase());
-  const colIndex = {} as ColIndex;
-  for (const [headerText, key] of Object.entries(KNOWN_HEADERS)) {
-    const idx = headerRow.indexOf(headerText);
-    if (idx !== -1) colIndex[key] = idx;
-  }
-
-  const required: (keyof ColIndex)[] = ['fanId', 'teamName'];
-  for (const k of required) {
-    if (colIndex[k] === undefined) {
-      errors.push(`Required column not found: ${k}`);
-    }
-  }
-  if (errors.length) return { parsed: [], errors };
-
-  const dataRows = rows.slice(headerRowIdx + 1);
-  const parsed: ParsedPlayerRow[] = [];
-
-  for (const row of dataRows) {
-    const fanId = String(row[colIndex.fanId] ?? '').trim();
-    if (!fanId) continue;
-
-    const parentEmailRaw = String(row[colIndex.parentEmail ?? -1] ?? '').trim();
-    const parentEmails = parentEmailRaw
-      ? parentEmailRaw.split(',').map(e => e.trim()).filter(Boolean)
-      : [];
-
-    parsed.push({
-      fanId,
-      ageGroup:             String(row[colIndex.ageGroup ?? -1] ?? '').trim(),
-      teamName:             String(row[colIndex.teamName] ?? '').trim(),
-      registrationExpiry:   formatCellDate(row[colIndex.registrationExpiry ?? -1]),
-      registrationStatus:   String(row[colIndex.registrationStatus ?? -1] ?? '').trim(),
-      playerEmail:          String(row[colIndex.playerEmail ?? -1] ?? '').trim().toLowerCase(),
-      parentEmails,
-    });
-  }
-
-  return { parsed, errors };
+  stale: { count: number; rows: StaleRegistration[] };
 }
 
 function summarise(rows: ParsedPlayerRow[]) {
@@ -121,41 +92,130 @@ function summarise(rows: ParsedPlayerRow[]) {
   return { uniqueFans: uniqueFans.size, uniqueTeams: uniqueTeams.size, allEmails: allEmails.size, guardianOnlyEmails: guardianOnlyEmails.size };
 }
 
+/**
+ * Registrations the club holds for a team in the file, for players the file
+ * does not list. Nothing here is deleted — an admin decides what to do.
+ */
+function StaleTable({ rows }: { rows: StaleRegistration[] }) {
+  return (
+    <Paper withBorder radius="md" p="md">
+      <Title order={6} ff={clubDesign.font.heading} fw={800} mb={4}>
+        No longer in the file
+      </Title>
+      <Text size="xs" c="dimmed" mb="xs">
+        These registrations are not in the file but stay in the club’s records. Nothing is
+        removed automatically.
+      </Text>
+      <Table fz="xs">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>FAN ID</Table.Th>
+            <Table.Th>Team</Table.Th>
+            <Table.Th>Current status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((r, i) => (
+            <Table.Tr key={i}>
+              <Table.Td>{r.fanId}</Table.Td>
+              <Table.Td>{r.teamName}</Table.Td>
+              <Table.Td>{r.registrationStatus || <Text c="dimmed" size="xs">—</Text>}</Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Paper>
+  );
+}
+
 interface ImportPlayersPanelProps {
   onImported?: () => void;
 }
 
+/** Parse, preview, and commit an FA player report selected by an administrator. */
 export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug };
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [rows, setRows] = useState<ParsedPlayerRow[] | null>(null);
   const [fileName, setFileName] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importedSoFar, setImportedSoFar] = useState(0);
+  /** Batches are uneven — an address-heavy row can close one early. */
+  const batches = useMemo(() => (rows ? batchRows(rows) : []), [rows]);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [apiError, setApiError] = useState('');
+  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  /**
+   * Which preview request the panel is currently showing.
+   *
+   * Picking a second file while the first is still in flight would otherwise let
+   * the first response land against the second file's rows: the counts and the
+   * stale list on screen would describe a file the admin is no longer importing,
+   * and the commit button would enable on that basis. Every response checks it
+   * still owns this counter before touching state.
+   */
+  const previewRequestVersion = useRef(0);
 
+  /** Ask the server what this file would do, without letting it do any of it. */
+  async function runPreview(parsed: ParsedPlayerRow[]) {
+    const requestVersion = ++previewRequestVersion.current;
+    const isCurrent = () => requestVersion === previewRequestVersion.current;
+
+    setPreviewing(true);
+    setPreviewError('');
+    setPreview(null);
+    try {
+      const res = await fetch('/api/admin/import-players', {
+        method: 'POST',
+        headers: { ...clubHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: parsed, dryRun: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as ImportResult;
+      if (isCurrent()) setPreview(data);
+    } catch (err) {
+      if (isCurrent()) setPreviewError(String(err));
+    } finally {
+      // A superseded request must not clear the flag: the request that replaced
+      // it is still running, and the commit button reads this.
+      if (isCurrent()) setPreviewing(false);
+    }
+  }
+
+  /** Reset all state derived from the server-side import preview. */
+  function clearPreview() {
+    // Abandons any in-flight preview, so a late response cannot revive it.
+    previewRequestVersion.current += 1;
+    setPreview(null);
+    setPreviewError('');
+    setPreviewing(false);
+  }
+
+  /** Parse a selected workbook and request a dry-run preview for its rows. */
   function handleFile(file: File) {
     setResult(null);
     setApiError('');
     setParseErrors([]);
     setRows(null);
+    clearPreview();
     setFileName(file.name);
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = e.target?.result;
-        const wb = XLSX.read(data, { type: 'array', cellDates: true });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
-        const { parsed, errors } = parseSheet(raw);
+        const { parsed, errors } = parseImportSheet(readWorkbookRows(e.target?.result));
         if (errors.length) {
           setParseErrors(errors);
         } else {
           setRows(parsed);
+          void runPreview(parsed);
         }
       } catch (err) {
         setParseErrors([`Failed to read file: ${String(err)}`]);
@@ -164,32 +224,82 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
     reader.readAsArrayBuffer(file);
   }
 
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  }
-
+  /**
+   * Commit the previewed rows in sequential batches of at most 25 and display
+   * combined counts with the preview's whole-file stale list. On failure,
+   * retain the selected file for retry and report registrations confirmed by
+   * earlier batches; notify the parent only after every batch succeeds.
+   */
   async function handleConfirm() {
-    if (!rows) return;
+    if (!rows || !preview) return;
     setImporting(true);
     setApiError('');
+    setImportedSoFar(0);
+
+    const chunks = batches;
+
+    // Start from the preview's stale list: a chunk covers only its own teams, so
+    // the server cannot compute staleness from one and does not try.
+    const totals: ImportResult = {
+      ok: true,
+      players: { created: 0 },
+      registrations: { created: 0, updated: 0 },
+      contacts: { created: 0, skipped: 0, dropped: 0 },
+      errors: [],
+      stale: preview.stale,
+    };
+    let importRunId: string | undefined;
+
     try {
-      const res = await fetch('/api/admin/import-players', {
-        method: 'POST',
-        headers: { ...clubHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+      for (const [index, chunk] of chunks.entries()) {
+        // Sequential, never parallel: two chunks carrying the same player+email
+        // would both find no contact and both insert, racing UNIQUE(clubSlug,
+        // playerId, email).
+        const res = await fetch('/api/admin/import-players', {
+          method: 'POST',
+          headers: { ...clubHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rows: chunk,
+            part: { index, total: chunks.length, ...(importRunId ? { runId: importRunId } : {}) },
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Unknown error' })) as { error?: string };
+          throw new Error(err.error ?? `HTTP ${res.status}`);
+        }
+        const data = await res.json() as ImportResult;
+        if (!data.runId || (importRunId && data.runId !== importRunId)) {
+          throw new Error('Server returned an invalid import run identifier');
+        }
+        importRunId = data.runId;
+
+        totals.ok &&= data.ok;
+        totals.players.created += data.players.created;
+        totals.registrations.created += data.registrations.created;
+        totals.registrations.updated += data.registrations.updated;
+        totals.contacts.created += data.contacts.created;
+        totals.contacts.skipped += data.contacts.skipped;
+        totals.contacts.dropped += data.contacts.dropped ?? 0;
+        totals.errors.push(...data.errors);
+
+        setImportedSoFar(chunks.slice(0, index + 1).reduce((n, c) => n + c.length, 0));
       }
-      const data = await res.json() as ImportResult;
-      setResult(data);
+
+      setResult(totals);
       setRows(null);
+      clearPreview();
       onImported?.();
     } catch (err) {
-      setApiError(String(err));
+      // Earlier chunks have already been written. Say so rather than implying
+      // nothing happened — re-running the same file is safe (it upserts), but
+      // the admin needs to know to do it.
+      setApiError(
+        totals.registrations.created + totals.registrations.updated > 0
+          ? `${String(err)} — ${totals.registrations.created + totals.registrations.updated} `
+            + 'registrations were imported before this failed. Re-run the same file to finish; '
+            + 'importing twice is safe.'
+          : String(err),
+      );
     } finally {
       setImporting(false);
     }
@@ -200,55 +310,23 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   return (
     <Stack gap="md">
       {!rows && !result && (
-        <Paper
-          withBorder
-          radius="md"
-          p="xl"
-          style={{
-            borderStyle: 'dashed',
-            cursor: 'pointer',
-            textAlign: 'center',
-            background: clubDesign.color.n1,
-            transition: 'border-color 0.15s, background 0.15s',
-          }}
-          onDrop={handleDrop}
-          onDragOver={e => e.preventDefault()}
-          onClick={() => inputRef.current?.click()}
-          onMouseEnter={e => {
-            e.currentTarget.style.borderColor = 'var(--mantine-primary-color-filled)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.borderColor = '';
-          }}
-        >
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-          />
-          <Center>
-            <Stack align="center" gap="xs">
-              <Box
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 14,
-                  background: 'var(--mantine-primary-color-light)',
-                  color: 'var(--mantine-primary-color-filled)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <IconFileUpload size={28} />
-              </Box>
-              <Text fw={700} ff={clubDesign.font.heading}>Drop a file here or click to browse</Text>
-              <Text size="sm" c="dimmed">Accepts .csv, .xlsx, .xls (FA Club Player Report)</Text>
-            </Stack>
-          </Center>
-        </Paper>
+        <>
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="gray"
+            radius="md"
+            title="Contact emails need a club sign-off"
+          >
+            <Text size="sm">
+              Addresses in the FA file are only kept when the club has accepted
+              the current three contact-email liabilities on the Customise page.
+              Without that sign-off, FAN / team / registration data still imports,
+              but every playerEmail and parentEmails address is stripped
+              server-side and counted as dropped.
+            </Text>
+          </Alert>
+          <FileDropzone onFile={handleFile} />
+        </>
       )}
 
       {parseErrors.length > 0 && (
@@ -267,14 +345,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               <Title order={5} ff={clubDesign.font.heading} fw={800}>{fileName}</Title>
               <Text size="sm" c="dimmed">Preview — review before importing</Text>
             </Box>
-            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setRows(null); setFileName(''); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setRows(null); setFileName(''); clearPreview(); }}>
               Change file
             </Button>
           </Group>
 
           <Group gap="xs">
             <Badge color="blue" radius="xl" variant="light">{summary.uniqueFans} players</Badge>
-            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} email accounts</Badge>
+            <Badge color="teal" radius="xl" variant="light">{summary.allEmails} Contact emails</Badge>
             <Badge color="grape" radius="xl" variant="light">{summary.guardianOnlyEmails} guardians</Badge>
             <Badge color="orange" radius="xl" variant="light">{summary.uniqueTeams} teams</Badge>
           </Group>
@@ -308,6 +386,49 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             </ScrollArea>
           </Paper>
 
+          {previewing && (
+            <Group gap="xs">
+              <Loader size={14} />
+              <Text size="sm" c="dimmed">Checking this file against the club’s records…</Text>
+            </Group>
+          )}
+
+          {previewError && (
+            <Alert icon={<IconAlertCircle size={16} />} color="red" radius="md" title="Could not preview this import">
+              <Text size="sm">{previewError}</Text>
+              <Button mt="sm" size="xs" radius="xl" variant="outline" onClick={() => void runPreview(rows)}>
+                Try again
+              </Button>
+            </Alert>
+          )}
+
+          {preview && (
+            <Stack gap="md">
+              <Group gap="xs">
+                <Badge color="green" radius="xl" variant="light">
+                  {preview.registrations.created} to create
+                </Badge>
+                <Badge color="blue" radius="xl" variant="light">
+                  {preview.registrations.updated} to update
+                </Badge>
+                <Badge
+                  color={preview.stale.count ? 'orange' : 'gray'}
+                  radius="xl"
+                  variant="light"
+                >
+                  {preview.stale.count} no longer in file
+                </Badge>
+                {(preview.contacts.dropped ?? 0) > 0 && (
+                  <Badge color="red" radius="xl" variant="light">
+                    {preview.contacts.dropped} contact emails will be dropped (no sign-off)
+                  </Badge>
+                )}
+              </Group>
+
+              {preview.stale.count > 0 && <StaleTable rows={preview.stale.rows} />}
+            </Stack>
+          )}
+
           <Box>
             <Button
               radius="xl"
@@ -315,10 +436,17 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               leftSection={importing ? <Loader size={14} color="white" /> : <IconUsers size={16} />}
               onClick={handleConfirm}
               loading={importing}
-              disabled={importing}
+              disabled={importing || previewing || !preview}
             >
-              Import {rows.length} player{rows.length !== 1 ? 's' : ''}
+              {importing && batches.length > 1
+                ? `Importing ${importedSoFar} of ${rows.length}…`
+                : `Import ${rows.length} player${rows.length !== 1 ? 's' : ''}`}
             </Button>
+            {importing && batches.length > 1 && (
+              <Text size="xs" c="dimmed" mt={6}>
+                Sent in batches so the import does not time out. Leave this page open.
+              </Text>
+            )}
           </Box>
         </Stack>
       )}
@@ -338,26 +466,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
             title={result.errors.length ? 'Import completed with warnings' : 'Import successful'}
           >
             <Stack gap={4}>
-              <Text size="sm">Players: <b>{result.players.created}</b> created, <b>{result.players.updated}</b> updated</Text>
-              <Text size="sm">User accounts: <b>{result.users.created}</b> created, <b>{result.users.skipped}</b> already existed</Text>
-              {/* A new account is unreachable until its owner is invited, so
-                  say plainly when nothing went out rather than leaving the
-                  count off the summary. */}
-              {result.users.created > 0 && (
-                result.invitations.configured ? (
-                  <Text size="sm">
-                    Invitations: <b>{result.invitations.sent}</b> sent
-                    {result.invitations.failed > 0 && <>, <b>{result.invitations.failed}</b> failed</>}
-                  </Text>
-                ) : (
-                  <Text size="sm" c="orange.8">
-                    No email provider is configured, so no set-password invitations were sent.
-                    These accounts cannot be signed into until one is.
-                  </Text>
-                )
-              )}
+              <Text size="sm">New players: <b>{result.players.created}</b></Text>
+              <Text size="sm">Registrations: <b>{result.registrations.created}</b> created, <b>{result.registrations.updated}</b> updated</Text>
+              <Text size="sm">Contact emails: <b>{result.contacts.created}</b> pending, <b>{result.contacts.skipped}</b> already held{(result.contacts.dropped ?? 0) > 0 ? <>, <b>{result.contacts.dropped}</b> dropped (no club sign-off)</> : null}</Text>
+              <Text size="sm">No longer in the file: <b>{result.stale.count}</b></Text>
             </Stack>
           </Alert>
+
+          {result.stale.count > 0 && <StaleTable rows={result.stale.rows} />}
 
           {result.errors.length > 0 && (
             <Paper withBorder radius="md" p="md">
@@ -382,7 +498,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           )}
 
           <Box>
-            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); clearPreview(); }}>
               Import another file
             </Button>
           </Box>

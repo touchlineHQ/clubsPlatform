@@ -88,7 +88,7 @@ import { App } from '../App';
 const minimalClub = {
   slug: 'test-club', name: 'Test FC', tagline: '', founded: 2000,
   email: '', address: { line1: '', line2: '', postcode: '' },
-  what3words: '', socials: {}, about: [], history: [],
+  what3words: '', socials: { facebook: '', instagram: '', twitter: '' }, about: [], history: [],
 };
 
 const appData: AppData = {
@@ -107,6 +107,7 @@ const appData: AppData = {
 
 const singleClubRegistry = {
   multiClub: false,
+  selfRegister: false,
   pitchBookings: false,
   clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', location: 'Test' }],
 };
@@ -147,7 +148,7 @@ describe('App', () => {
   });
 
   it('shows LandingPage in multi-club mode when no slug is in URL', async () => {
-    mockLoadClubRegistry.mockResolvedValue({ multiClub: true, pitchBookings: false, clubs: [] });
+    mockLoadClubRegistry.mockResolvedValue({ multiClub: true, selfRegister: false, pitchBookings: false, clubs: [] });
     renderApp(<App />);
     await waitFor(() => {
       expect(screen.getByTestId('landing-page')).toBeTruthy();
@@ -216,7 +217,7 @@ describe('App', () => {
       value: { hash: '', pathname: '/test-club/' },
     });
     const multiClubRegistry = {
-      multiClub: true, pitchBookings: false,
+      multiClub: true, selfRegister: false, pitchBookings: false,
       clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', location: 'Test' }],
     };
     mockLoadClubRegistry.mockResolvedValue(multiClubRegistry);
@@ -253,7 +254,7 @@ describe('App', () => {
       value: { hash: '', pathname: '/unknown-path/' },
     });
     const multiClubRegistry = {
-      multiClub: true, pitchBookings: false,
+      multiClub: true, selfRegister: false, pitchBookings: false,
       clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', location: 'Test' }],
     };
     mockLoadClubRegistry.mockResolvedValue(multiClubRegistry);
@@ -267,6 +268,7 @@ describe('App', () => {
 describe('App — private club', () => {
   const privateMultiClubRegistry = {
     multiClub: true,
+    selfRegister: false,
     pitchBookings: false,
     clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', published: false }],
   };
@@ -371,6 +373,7 @@ describe('App — private club', () => {
   it('shows a holding card instead of redirecting in single-club mode', async () => {
     mockLoadClubRegistry.mockResolvedValue({
       multiClub: false,
+      selfRegister: false,
       pitchBookings: false,
       clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', published: false }],
     });

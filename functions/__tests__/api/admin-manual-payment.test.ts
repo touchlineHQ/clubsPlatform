@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 import {
-  makeContext, makeDb, adminSession, managerSession, memberSession,
+  makeContext, makeDb, adminSession, platformAdminSession, managerSession, memberSession,
   postReq, deleteReq,
 } from '../test-utils';
 
@@ -83,8 +83,11 @@ describe('onRequestPost — validation', () => {
   });
 
   it('returns 400 without an X-Club-Slug header', async () => {
+    // A platform admin reaches the endpoint-level header validation; a
+    // club-bound admin is rejected by requireAdmin before that validation.
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const ctx = makeContext(
-      postReq('/api/admin/manual-payment', { registrationId: 'reg_1' }),
+      postReq('/api/admin/manual-payment', { registrationId: 'reg_1' }, { 'X-Club-Slug': '' }),
       { env: { DB: makeDb() as any } },
     );
     const res = await onRequestPost(ctx as any);
@@ -139,9 +142,38 @@ describe('onRequestPost — refuses to override a live GoCardless payment', () =
     const guard = findSql(db, `mandateId != ''`);
     expect(guard).toBeDefined();
     expect(guard!.sql).toContain('status IN');
+    // reg_1 twice: the member subquery binds the primary for itself and again
+    // to find anything merged into it.
     expect(guard!.bindings).toEqual([
-      'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
+      'reg_1', 'reg_1', 'test-club', 'active', 'mandate_only', 'completed',
     ]);
+  });
+
+  it('covers every member of a billing group, not just the primary', async () => {
+    // An in-flight flow can leave a live row on a secondary; still don't override.
+    const db = makeDb({ first: [REGISTRATION, null, null] });
+    await onRequestPost(markPaidCtx(db) as any);
+
+    const guard = findSql(db, `mandateId != ''`);
+    expect(guard!.sql).toContain('registration_merge');
+    expect(guard!.sql).toContain('primaryRegistrationId');
+  });
+
+  it('resolves a secondary to its primary before writing', async () => {
+    // loadRegistration joins through the merge, so it returns the primary.
+    const db = makeDb({ first: [REGISTRATION, null, null] });
+    await onRequestPost(
+      markPaidCtx(db, { registrationId: 'reg_secondary' }) as any,
+    );
+
+    const load = findSql(db, 'AS registrationId');
+    expect(load!.sql).toContain('registration_merge');
+    expect(load!.bindings).toEqual(['reg_secondary', 'test-club', 'test-club']);
+
+    // reg_1 is what the join resolved to, not the id the admin clicked.
+    const insert = findSql(db, 'INSERT INTO "player_payment"');
+    expect(insert!.bindings).toContain('reg_1');
+    expect(insert!.bindings).not.toContain('reg_secondary');
   });
 });
 
@@ -287,9 +319,9 @@ describe('onRequestDelete', () => {
   });
 
   it('returns 400 without an X-Club-Slug header', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const ctx = makeContext(
-      deleteReq('/api/admin/manual-payment?registrationId=reg_1'),
+      deleteReq('/api/admin/manual-payment?registrationId=reg_1', { 'X-Club-Slug': '' }),
       { env: { DB: makeDb() as any } },
     );
     const res = await onRequestDelete(ctx as any);

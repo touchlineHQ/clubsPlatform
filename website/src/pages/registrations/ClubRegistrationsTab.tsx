@@ -1,0 +1,1109 @@
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  Alert, Box, Button, Center, Checkbox, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
+} from '@mantine/core';
+import {
+  IconArrowsJoin, IconClipboardList, IconFileSpreadsheet, IconFileUpload, IconMailOff,
+} from '@tabler/icons-react';
+import { captureEvent } from '../../lib/posthog';
+import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
+import { ClubFilterBar } from './ClubFilterBar';
+import { EmptyState } from './EmptyState';
+import { RegistrationsSummary } from './RegistrationsSummary';
+import { RegistrationsTable } from './RegistrationsTable';
+import { MergeSuggestionsBanner } from './MergeSuggestionsBanner';
+import { exportRegistrationsToXlsx } from './exportRegistrations';
+import { useClubRegistrations } from './useClubRegistrations';
+import { ExportTooLargeError, useAllClubRegistrations } from './useAllClubRegistrations';
+import { useMergeSuggestions } from './useMergeSuggestions';
+import { ALL, MAX_MERGE_SELECTION, type RegistrationRow, type SubscriptionLevel } from './types';
+
+/**
+ * The club tab: one page of registrations, plus everything that acts on them.
+ *
+ * Lifted out of RegistrationsPage so the page is left orchestrating two tabs
+ * rather than holding twenty pieces of state that only one of them uses.
+ */
+
+interface ClubRegistrationsTabProps {
+  clubSlug: string;
+  levels: SubscriptionLevel[];
+  onOpenImport: () => void;
+  onOpenReport: (loadRows: () => Promise<RegistrationRow[]>, faFilter: {
+    team: string | null; registrationStatus: string | null; dropFaOnly: boolean;
+  }, filtersActive: boolean) => void;
+  /** Bumped by the page when an import lands, to force a reload. */
+  reloadToken: number;
+}
+
+export function ClubRegistrationsTab({
+  clubSlug, levels, onOpenImport, onOpenReport, reloadToken,
+}: ClubRegistrationsTabProps) {
+  const club = useClubRegistrations(clubSlug, true, reloadToken);
+  // Two instances, not one: the export and the status report each walk the
+  // filtered set, and sharing a loader would let the report's walk put the
+  // Export to Excel button into "Exporting …" with no export in progress.
+  const {
+    loadAll: loadRowsForExport, progress: exportProgress, running: exporting,
+  } = useAllClubRegistrations(clubSlug);
+  const { loadAll: loadRowsForReport } = useAllClubRegistrations(clubSlug);
+  // Club-wide, so the banner's count survives paging. Reloaded by an import,
+  // which can add the registration that makes a set worth suggesting.
+  const mergeSuggestions = useMergeSuggestions(clubSlug, true, reloadToken);
+
+  const [updatingLevelId, setUpdatingLevelId] = useState<string | null>(null);
+  const [levelError, setLevelError] = useState('');
+  const [pendingManual, setPendingManual] = useState<RegistrationRow | null>(null);
+  const [manualNote, setManualNote] = useState('');
+  const [manualBusyId, setManualBusyId] = useState<string | null>(null);
+  const [manualError, setManualError] = useState('');
+  const [unmarkPaidError, setUnmarkPaidError] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<RegistrationRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
+  // Parent contact consent (#149): secretary mints a copyable link; no mail required.
+  const [consentRow, setConsentRow] = useState<RegistrationRow | null>(null);
+  const consentFanIdRef = useRef<string | null>(null);
+  const [consentEmail, setConsentEmail] = useState('');
+  const [consentRelationship, setConsentRelationship] = useState<'guardian' | 'self'>('guardian');
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState('');
+  const [consentLink, setConsentLink] = useState<string | null>(null);
+  const [consentContacts, setConsentContacts] = useState<Array<{
+    id: string; email: string; state: string; relationship: string;
+    marketingOptIn: number; operationalOptIn: number;
+  }>>([]);
+  const [confirmSuppressedReAdd, setConfirmSuppressedReAdd] = useState(false);
+  const [pendingPurgeContact, setPendingPurgeContact] = useState<{
+    id: string; email: string;
+  } | null>(null);
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const [purgeError, setPurgeError] = useState('');
+  const [bulkPurge, setBulkPurge] = useState<null | { scope: 'team' | 'club'; teamName?: string }>(null);
+  const [bulkPurgeBusy, setBulkPurgeBusy] = useState(false);
+  const [bulkPurgeError, setBulkPurgeError] = useState('');
+  const [bulkPurgeResult, setBulkPurgeResult] = useState<string>('');
+
+  /**
+   * The rows picked for merging, held whole rather than by id.
+   *
+   * A `Set` of ids resolved against the loaded rows would empty the moment the
+   * admin turned the page: the ticks would survive but the derived rows would
+   * not, so the blocker would claim nothing was selected while the checkboxes
+   * said otherwise.
+   */
+  const [selectedForMerge, setSelectedForMerge] = useState<Map<string, RegistrationRow>>(new Map());
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [mergePrimaryId, setMergePrimaryId] = useState<string | null>(null);
+  const [mergeBusyId, setMergeBusyId] = useState<string | null>(null);
+  const [mergeError, setMergeError] = useState('');
+
+  // The applied term, not the typed one: these three decide what the export and
+  // the FA report cover, and they must match the rows on screen rather than a
+  // keystroke the table has not requested yet.
+  // Review mode counts as a filter: an empty review slice must read as "nothing
+  // matches what you asked for", not as "this club has no registrations".
+  const filtersActive =
+    club.filters.team !== ALL
+    || club.filters.status !== ALL
+    || club.filters.subscription !== ALL
+    || club.appliedSearch.trim() !== ''
+    || club.suggestedOnly;
+
+  const handleLevelChange = useCallback(async (row: RegistrationRow, levelId: string | null) => {
+    setUpdatingLevelId(row.registrationId);
+    setLevelError('');
+    const previous = {
+      overrideLevelId: row.overrideLevelId,
+      subscriptionLevelId: row.subscriptionLevelId,
+      subscriptionLevelName: row.subscriptionLevelName,
+    };
+    const newName = levelId ? (levels.find(l => l.id === levelId)?.name ?? null) : null;
+
+    club.patchRow(row.registrationId, {
+      overrideLevelId: levelId,
+      subscriptionLevelId: levelId ?? row.subscriptionLevelId,
+      subscriptionLevelName: levelId ? newName : row.subscriptionLevelName,
+    });
+
+    try {
+      const res = await fetch('/api/admin/registration-subscription-levels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({ registrationId: row.registrationId, subscriptionLevelId: levelId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to update subscription level');
+      }
+      // Re-reads the current page, not page 1: the row just edited is on screen
+      // and sending the admin back to the start would lose it.
+      club.refresh();
+    } catch (e) {
+      setLevelError(e instanceof Error ? e.message : 'Failed to update subscription level');
+      club.patchRow(row.registrationId, previous);
+    } finally {
+      setUpdatingLevelId(null);
+    }
+  }, [clubSlug, levels, club]);
+
+  const openManualModal = useCallback((row: RegistrationRow) => {
+    setManualNote('');
+    setManualError('');
+    setPendingManual(row);
+  }, []);
+
+  const closeManualModal = () => {
+    if (manualBusyId) return;
+    setPendingManual(null);
+    setManualNote('');
+    setManualError('');
+  };
+
+  const handleConfirmMarkPaid = async () => {
+    if (!pendingManual) return;
+    setManualBusyId(pendingManual.registrationId);
+    setManualError('');
+    try {
+      const res = await fetch('/api/admin/manual-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          registrationId: pendingManual.registrationId,
+          ...(manualNote.trim() ? { note: manualNote.trim() } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to mark as paid');
+      }
+      setPendingManual(null);
+      setManualNote('');
+      // Refresh rather than patch locally — the server owns the attribution
+      // (who/when) shown in the badge tooltip.
+      club.refresh();
+    } catch (e) {
+      setManualError(e instanceof Error ? e.message : 'Failed to mark as paid');
+    } finally {
+      setManualBusyId(null);
+    }
+  };
+
+  const handleUnmarkPaid = useCallback(async (row: RegistrationRow) => {
+    setManualBusyId(row.registrationId);
+    setUnmarkPaidError('');
+    try {
+      const res = await fetch(
+        `/api/admin/manual-payment?registrationId=${encodeURIComponent(row.registrationId)}`,
+        { method: 'DELETE', headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to remove the manual override');
+      }
+      club.refresh();
+    } catch (e) {
+      setUnmarkPaidError(e instanceof Error ? e.message : 'Failed to remove the manual override');
+    } finally {
+      setManualBusyId(null);
+    }
+  }, [clubSlug, club]);
+
+  const selectedRows = useMemo(() => [...selectedForMerge.values()], [selectedForMerge]);
+
+  /** Why the selection cannot merge, mirroring the API so the admin sees it before a 409. */
+  const mergeBlocker = useMemo((): string | null => {
+    if (selectedRows.length < 2) {
+      // Naming the search is the whole mitigation for a group split across
+      // pages: one player's registrations rarely sort adjacently.
+      return 'Select two or more registrations to merge. Searching a FAN ID brings one player‘s registrations onto a single page.';
+    }
+    if (selectedRows.length > MAX_MERGE_SELECTION) {
+      return `A billing group can hold at most ${MAX_MERGE_SELECTION} registrations.`;
+    }
+    if (new Set(selectedRows.map(r => r.fanId)).size > 1) {
+      return 'Registrations can only be merged for one player at a time.';
+    }
+    const alreadyMerged = selectedRows.find(r => r.billedWithTeamName || r.mergedTeamNames);
+    if (alreadyMerged) {
+      return `${alreadyMerged.teamName} is already part of a billing group. Unmerge it first.`;
+    }
+    return null;
+  }, [selectedRows]);
+
+  const toggleMergeSelection = useCallback((registrationId: string) => {
+    setMergeError('');
+    setSelectedForMerge(prev => {
+      const next = new Map(prev);
+      if (next.has(registrationId)) next.delete(registrationId);
+      else {
+        const row = club.rows.find(r => r.registrationId === registrationId);
+        if (row) next.set(registrationId, row);
+      }
+      return next;
+    });
+  }, [club.rows]);
+
+  const openMergeModal = () => {
+    // Level first, then paid, then whatever is first — the primary prices the
+    // group, so one without a level would render a dead card.
+    const preferred =
+      selectedRows.find(r => r.subscriptionLevelId && r.paymentStatus)
+      ?? selectedRows.find(r => r.subscriptionLevelId)
+      ?? selectedRows[0];
+    setMergePrimaryId(preferred?.registrationId ?? null);
+    setMergeError('');
+    setMergeModalOpen(true);
+  };
+
+  const handleConfirmMerge = async () => {
+    if (!mergePrimaryId || selectedRows.length < 2) return;
+    setMergeBusyId(mergePrimaryId);
+    setMergeError('');
+    try {
+      const res = await fetch('/api/admin/registration-merges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          primaryRegistrationId: mergePrimaryId,
+          registrationIds: selectedRows.map(r => r.registrationId),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to merge registrations');
+      }
+      captureEvent('registrations merged', { club_slug: clubSlug, group_size: selectedRows.length });
+      setMergeModalOpen(false);
+      setSelectedForMerge(new Map());
+      // Refresh, not patch: the server owns the grouping and the whole group's
+      // payment status moves with it. The suggestions go too — this pair is no
+      // longer a candidate, and a banner still offering it would answer "Not the
+      // same subs" with a 400.
+      club.refresh();
+      mergeSuggestions.refresh();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : 'Failed to merge registrations');
+    } finally {
+      setMergeBusyId(null);
+    }
+  };
+
+  /**
+   * Record that a suggested set is genuinely separate.
+   *
+   * The banner drops the set itself, so the table is only refreshed while
+   * review mode is narrowing it — outside review mode the rows have not
+   * changed, and reloading would throw away the reader's place for nothing.
+   *
+   * The event is captured server-side, which is where the set size is known
+   * authoritatively. Errors are raised for the banner to show next to the set
+   * they belong to.
+   */
+  const handleDismissSuggestion = async (playerId: string, ageGroup: string, setSize: number) => {
+    await mergeSuggestions.dismiss(playerId, ageGroup, setSize);
+    if (club.suggestedOnly) club.refresh();
+  };
+
+  /** Undo a dismissal, so the set is suggested again. */
+  const handleRestoreSuggestion = async (playerId: string, ageGroup: string, setSize: number) => {
+    await mergeSuggestions.restore(playerId, ageGroup, setSize);
+    if (club.suggestedOnly) club.refresh();
+  };
+
+  const handleUnmerge = async (row: RegistrationRow) => {
+    setMergeBusyId(row.registrationId);
+    setMergeError('');
+    try {
+      const res = await fetch(
+        `/api/admin/registration-merges?primaryRegistrationId=${encodeURIComponent(row.registrationId)}`,
+        { method: 'DELETE', headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Failed to unmerge registrations');
+      }
+      captureEvent('registrations unmerged', { club_slug: clubSlug });
+      club.refresh();
+      // Unmerging can make a set a candidate again, so the banner owes it.
+      mergeSuggestions.refresh();
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : 'Failed to unmerge registrations');
+    } finally {
+      setMergeBusyId(null);
+    }
+  };
+
+  /**
+   * Every row matching the current filters, for the FA report.
+   *
+   * Both the export and the FA report need the whole filtered set, not the page
+   * on screen, or each silently narrows to whatever happens to be visible.
+   */
+  const loadReportRows = useCallback(
+    () => loadRowsForReport(club.filters, club.appliedSearch),
+    [loadRowsForReport, club.filters, club.appliedSearch],
+  );
+
+  const handleExport = async () => {
+    setExportError('');
+    try {
+      const rows = await loadRowsForExport(club.filters, club.appliedSearch);
+      exportRegistrationsToXlsx(rows, clubSlug, club.filters);
+      captureEvent('registrations exported', {
+        club_slug: clubSlug,
+        row_count: rows.length,
+        filtered: filtersActive,
+        capped: false,
+      });
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Failed to export registrations');
+      if (e instanceof ExportTooLargeError) {
+        captureEvent('registrations exported', {
+          club_slug: clubSlug,
+          row_count: 0,
+          filtered: filtersActive,
+          capped: true,
+        });
+      }
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const res = await fetch(
+        `/api/my-registrations?registrationId=${encodeURIComponent(pendingDelete.registrationId)}`,
+        { method: 'DELETE', headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Delete failed');
+      }
+      const deletedId = pendingDelete.registrationId;
+      // Read before removing: `removeRow` schedules a state update, so
+      // `club.rows` still describes the page this delete is emptying.
+      const wasLastOnPage = club.rows.length === 1 && club.hasPrev;
+
+      // Drop it locally rather than refetching: the rest of the page is still
+      // valid, and a refetch would pull a row forward from the next page. The
+      // counts are a separate request, so they do have to be re-read or the
+      // strip over-reports by this row.
+      club.removeRow(deletedId);
+      club.refreshSummary();
+      setSelectedForMerge(prev => {
+        if (!prev.has(deletedId)) return prev;
+        const next = new Map(prev);
+        next.delete(deletedId);
+        return next;
+      });
+      // Otherwise page 2 renders the club's empty state with a pager under it.
+      if (wasLastOnPage) club.goPrev();
+      setPendingDelete(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const closeDeleteModal = () => {
+    if (deleting) return;
+    setPendingDelete(null);
+    setDeleteError('');
+  };
+
+  const openReport = () => onOpenReport(
+    loadReportRows,
+    {
+      team: club.filters.team !== ALL ? club.filters.team : null,
+      registrationStatus: club.filters.status !== ALL ? club.filters.status : null,
+      dropFaOnly: club.filters.subscription !== ALL || club.appliedSearch.trim() !== '',
+    },
+    filtersActive,
+  );
+
+
+  const openConsentModal = useCallback(async (row: RegistrationRow) => {
+    consentFanIdRef.current = row.fanId;
+    setConsentRow(row);
+    setConsentEmail('');
+    setConsentRelationship('guardian');
+    setConsentError('');
+    setConsentLink(null);
+    setConsentContacts([]);
+    setConfirmSuppressedReAdd(false);
+    setPurgeError('');
+    try {
+      const res = await fetch(
+        `/api/admin/player-contacts?fanId=${encodeURIComponent(row.fanId)}`,
+        { headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (res.ok) {
+        const data = await res.json() as { contacts: typeof consentContacts };
+        if (consentFanIdRef.current !== row.fanId) return;
+        setConsentContacts(data.contacts ?? []);
+        const pending = (data.contacts ?? []).find((c) => c.state === 'pending');
+        if (pending) setConsentEmail(pending.email);
+      }
+    } catch {
+      // Listing is best-effort; minting still works.
+    }
+  }, [clubSlug]);
+
+  const createConsentLink = useCallback(async () => {
+    if (!consentRow) return;
+    setConsentBusy(true);
+    setConsentError('');
+    setConsentLink(null);
+    try {
+      const res = await fetch('/api/admin/player-contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({
+          fanId: consentRow.fanId,
+          email: consentEmail,
+          relationship: consentRelationship,
+          confirmSuppressedReAdd,
+        }),
+      });
+      const data = await res.json() as {
+        error?: string; code?: string; consentUrl?: string; contacts?: unknown;
+      };
+      if (!res.ok) {
+        if (data.code === 'suppressed') {
+          setConsentError(
+            data.error
+              || 'This address was purged. Tick confirm re-add to restore it.',
+          );
+          return;
+        }
+        setConsentError(data.error || 'Could not create consent link');
+        return;
+      }
+      setConfirmSuppressedReAdd(false);
+      setConsentLink(data.consentUrl ?? null);
+      // Refresh status list
+      const list = await fetch(
+        `/api/admin/player-contacts?fanId=${encodeURIComponent(consentRow.fanId)}`,
+        { headers: { 'X-Club-Slug': clubSlug } },
+      );
+      if (list.ok) {
+        const body = await list.json() as { contacts: typeof consentContacts };
+        setConsentContacts(body.contacts ?? []);
+      }
+    } catch {
+      setConsentError('Could not create consent link');
+    } finally {
+      setConsentBusy(false);
+    }
+  }, [consentRow, consentEmail, consentRelationship, clubSlug, confirmSuppressedReAdd]);
+
+
+  const confirmPurgeContact = useCallback(async () => {
+    if (!pendingPurgeContact || !consentRow) return;
+    setPurgeBusy(true);
+    setPurgeError('');
+    try {
+      const res = await fetch('/api/admin/contact-purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({ contactId: pendingPurgeContact.id }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) {
+        setPurgeError(data.error || 'Could not remove contact email');
+        return;
+      }
+      setConsentContacts((prev) => prev.filter((c) => c.id !== pendingPurgeContact.id));
+      setPendingPurgeContact(null);
+    } catch {
+      setPurgeError('Could not remove contact email');
+    } finally {
+      setPurgeBusy(false);
+    }
+  }, [pendingPurgeContact, consentRow, clubSlug]);
+
+  const confirmBulkPurge = useCallback(async () => {
+    if (!bulkPurge) return;
+    setBulkPurgeBusy(true);
+    setBulkPurgeError('');
+    setBulkPurgeResult('');
+    let removed = 0;
+    try {
+      const base = bulkPurge.scope === 'team'
+        ? { teamName: bulkPurge.teamName }
+        : { entireClub: true as const };
+      let cursor: string | null = null;
+      // Each request is one D1-sized chunk. Keep going until the server reports
+      // nothing left, and say what already committed if a later request fails.
+      for (let request = 0; request < 500; request += 1) {
+        const res = await fetch('/api/admin/contact-purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+          body: JSON.stringify(cursor ? { ...base, cursor } : base),
+        });
+        const data = await res.json() as {
+          error?: string;
+          purgedCount?: number;
+          remaining?: number;
+          cursor?: string | null;
+        };
+        if (!res.ok) {
+          const left = typeof data.remaining === 'number' ? data.remaining : null;
+          setBulkPurgeError(
+            removed > 0
+              ? `${data.error || 'Bulk purge failed'} Removed ${removed} contact email(s)${left !== null ? `; ${left} still remaining` : '; some may still remain'}.`
+              : (data.error || 'Bulk purge failed'),
+          );
+          return;
+        }
+        const purgedCount = data.purgedCount ?? 0;
+        removed += purgedCount;
+        const remaining = data.remaining ?? 0;
+        cursor = data.cursor ?? null;
+        if (remaining === 0) {
+          setBulkPurgeResult(`Removed ${removed} contact email(s).`);
+          setBulkPurge(null);
+          return;
+        }
+        if (purgedCount === 0 || !cursor) {
+          setBulkPurgeError(
+            `Purge stopped early. Removed ${removed} contact email(s); ${remaining} still remaining.`,
+          );
+          return;
+        }
+      }
+      setBulkPurgeError(
+        `Purge stopped early. Removed ${removed} contact email(s); some may still remain.`,
+      );
+    } catch {
+      setBulkPurgeError(
+        removed > 0
+          ? `Bulk purge failed. Removed ${removed} contact email(s); some may still remain.`
+          : 'Bulk purge failed',
+      );
+    } finally {
+      setBulkPurgeBusy(false);
+    }
+  }, [bulkPurge, clubSlug]);
+
+  return (
+    <Stack gap="sm">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        <ClubFilterBar
+          facets={club.facets}
+          filters={club.filters}
+          onChange={club.setFilters}
+          search={club.search}
+          onSearch={club.setSearch}
+        />
+        <Group gap="xs" wrap="wrap">
+          <Button
+            leftSection={<IconFileUpload size={16} />}
+            onClick={onOpenImport}
+            radius="xl"
+            variant="light"
+            size="xs"
+          >
+            Import Players
+          </Button>
+          {/* Never disabled: with no registrations the report is all "No subs record". */}
+          <Button
+            leftSection={<IconClipboardList size={16} />}
+            onClick={openReport}
+            radius="xl"
+            variant="light"
+            size="xs"
+          >
+            Generate status report
+          </Button>
+          <Button
+            leftSection={<IconFileSpreadsheet size={16} />}
+            onClick={handleExport}
+            radius="xl"
+            variant="light"
+            size="xs"
+            loading={exporting}
+          >
+            {/* Rows, not pages: the export walks the whole filtered set, and a
+                page counter would mean nothing to the person watching. */}
+            {exporting ? `Exporting ${exportProgress}…` : 'Export to Excel'}
+          </Button>
+          {club.filters.team !== ALL && (
+            <Button
+              leftSection={<IconMailOff size={16} />}
+              onClick={() => {
+                setBulkPurgeResult('');
+                setBulkPurgeError('');
+                setBulkPurge({ scope: 'team', teamName: club.filters.team });
+              }}
+              radius="xl"
+              variant="light"
+              color="red"
+              size="xs"
+            >
+              Purge team contacts
+            </Button>
+          )}
+          <Button
+            leftSection={<IconMailOff size={16} />}
+            onClick={() => {
+              setBulkPurgeResult('');
+              setBulkPurgeError('');
+              setBulkPurge({ scope: 'club' });
+            }}
+            radius="xl"
+            variant="subtle"
+            color="red"
+            size="xs"
+          >
+            Purge all club contacts
+          </Button>
+        </Group>
+      </Group>
+
+      {exportError && <Alert color="red" variant="light">{exportError}</Alert>}
+      {bulkPurgeResult && <Alert color="teal" variant="light">{bulkPurgeResult}</Alert>}
+      {bulkPurgeError && !bulkPurge && <Alert color="red" variant="light">{bulkPurgeError}</Alert>}
+
+      {selectedForMerge.size > 0 && (
+        <Group
+          justify="space-between"
+          wrap="wrap"
+          gap="xs"
+          p="xs"
+          style={{
+            background: 'var(--mantine-color-indigo-0)',
+            borderRadius: 'var(--mantine-radius-md)',
+          }}
+        >
+          <Text size="sm">
+            {selectedForMerge.size} selected
+            {mergeBlocker && <Text span size="sm" c="dimmed"> — {mergeBlocker}</Text>}
+          </Text>
+          <Group gap="xs">
+            <Button size="xs" variant="subtle" onClick={() => setSelectedForMerge(new Map())}>
+              Clear
+            </Button>
+            <Button
+              size="xs"
+              radius="xl"
+              leftSection={<IconArrowsJoin size={16} />}
+              disabled={mergeBlocker !== null}
+              onClick={openMergeModal}
+            >
+              Merge registrations
+            </Button>
+          </Group>
+        </Group>
+      )}
+
+      <MergeSuggestionsBanner
+        suggestions={mergeSuggestions.suggestions}
+        dismissed={mergeSuggestions.dismissed}
+        openCount={mergeSuggestions.openCount}
+        dismissedCount={mergeSuggestions.dismissedCount}
+        truncated={mergeSuggestions.truncated}
+        dismissedLoading={mergeSuggestions.dismissedLoading}
+        reviewing={club.suggestedOnly}
+        onToggleReview={() => club.setSuggestedOnly(!club.suggestedOnly)}
+        onLoadDismissed={mergeSuggestions.loadDismissed}
+        onDismiss={handleDismissSuggestion}
+        onRestore={handleRestoreSuggestion}
+      />
+
+      {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
+      {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
+      {mergeError && <Alert color="red" variant="light">{mergeError}</Alert>}
+      {club.error && <Alert color="red" variant="light">{club.error}</Alert>}
+
+      {/* Counts cover the whole filtered set, so they keep their meaning as the
+          admin pages through it. */}
+      {club.summaryLoading && !club.summary
+        ? <Center h={72}><Loader size="sm" /></Center>
+        : club.summary && (filtersActive || club.summary.registrations > 0)
+          // Zeroes are meaningful when a filter produced them, and noise on a
+          // club that has never imported anyone.
+          && <RegistrationsSummary summary={club.summary} />}
+
+      {club.loading ? (
+        <Center h={160}><Loader /></Center>
+      ) : club.rows.length === 0 ? (
+        filtersActive
+          ? <Text size="sm" c="dimmed">No registrations match the current filters.</Text>
+          : <EmptyState isAdmin scope="club" />
+      ) : (
+        <RegistrationsTable
+          rows={club.rows}
+          sixthHeader="Linked accounts"
+          canDelete
+          onDelete={setPendingDelete}
+          serverSort={{ sort: club.sort, onSort: club.setSort }}
+          editableLevels={{ levels, updatingId: updatingLevelId, onChange: handleLevelChange }}
+          merge={{
+            selectedIds: new Set(selectedForMerge.keys()),
+            onToggle: toggleMergeSelection,
+            onUnmerge: handleUnmerge,
+            busyId: mergeBusyId,
+          }}
+          manualPayment={{
+            busyId: manualBusyId,
+            onMark: openManualModal,
+            onUnmark: handleUnmarkPaid,
+          }}
+          contactConsent={{ onAsk: (row) => { void openConsentModal(row); } }}
+        />
+      )}
+
+      {(club.hasPrev || club.hasNext) && (
+        <Group justify="space-between" align="center">
+          {/* No total: a COUNT over the filtered set is the full scan this page
+              exists to escape, so the position is all there is to show. */}
+          <Text size="sm" c="dimmed">Page {club.page}</Text>
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="default"
+              radius="xl"
+              disabled={!club.hasPrev || club.loading}
+              onClick={club.goPrev}
+            >
+              Previous
+            </Button>
+            <Button
+              size="xs"
+              variant="default"
+              radius="xl"
+              disabled={!club.hasNext || club.loading}
+              onClick={club.goNext}
+            >
+              Next
+            </Button>
+          </Group>
+        </Group>
+      )}
+
+      <Modal
+        opened={pendingManual !== null}
+        onClose={closeManualModal}
+        title="Mark as paid"
+        size="sm"
+        centered
+      >
+        {pendingManual && (
+          <Stack>
+            {manualError && <Alert color="red" variant="light">{manualError}</Alert>}
+            <Text size="sm">
+              Mark <strong>{pendingManual.fanId}</strong> ({pendingManual.teamName}) as
+              paid up for subs? They will show as <strong>Paid in full</strong> and will
+              not be asked to set up a Direct Debit.
+            </Text>
+            <Textarea
+              label="Note (optional)"
+              placeholder="e.g. cash at training 12 Aug, bank transfer ref 4471"
+              value={manualNote}
+              onChange={e => setManualNote(e.currentTarget.value)}
+              rows={3}
+              radius="md"
+            />
+            <Text size="xs" c="dimmed">
+              Your name and the time are recorded against this override for audit.
+            </Text>
+            <Group justify="flex-end">
+              <Button
+                variant="default"
+                radius="xl"
+                onClick={closeManualModal}
+                disabled={manualBusyId !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="green"
+                radius="xl"
+                onClick={handleConfirmMarkPaid}
+                loading={manualBusyId !== null}
+              >
+                Mark as paid
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+
+      <Modal
+        opened={pendingDelete !== null}
+        onClose={closeDeleteModal}
+        title="Remove registration"
+        size="sm"
+        centered
+      >
+        {pendingDelete && (
+          <Stack>
+            {deleteError && <Alert color="red" variant="light">{deleteError}</Alert>}
+            <Text size="sm">
+              Remove <strong>{pendingDelete.fanId}</strong> from{' '}
+              <strong>{pendingDelete.teamName}</strong>? This deletes the registration
+              and any linked payment records and cannot be undone.
+            </Text>
+            {pendingDelete.mergedTeamNames && (
+              <Alert color="orange" variant="light">
+                This registration is what{' '}
+                <strong>{pendingDelete.mergedTeamNames}</strong> {' '}
+                {pendingDelete.mergedTeamNames.includes(',') ? 'are' : 'is'} billed
+                through. Removing it takes the group&rsquo;s payment record with it and
+                leaves them unpaid — unmerge first.
+              </Alert>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" radius="xl" onClick={closeDeleteModal} disabled={deleting}>
+                Cancel
+              </Button>
+              <Button color="red" radius="xl" onClick={handleConfirmDelete} loading={deleting}>
+                Remove
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+
+      <Modal
+        opened={mergeModalOpen}
+        onClose={() => { if (!mergeBusyId) setMergeModalOpen(false); }}
+        title="Merge registrations"
+        size="md"
+        centered
+      >
+        <Stack>
+          {mergeError && <Alert color="red" variant="light">{mergeError}</Alert>}
+          <Text size="sm">
+            These registrations will be billed as one payment. Choose which one the
+            payment hangs off — its subscription level prices the whole group, and its
+            team name is what appears on the Direct Debit.
+          </Text>
+          <Radio.Group value={mergePrimaryId ?? ''} onChange={setMergePrimaryId}>
+            <Stack gap="xs">
+              {selectedRows.map(r => (
+                <Radio
+                  key={r.registrationId}
+                  value={r.registrationId}
+                  label={
+                    <Box>
+                      <Text size="sm" fw={600}>{r.teamName}</Text>
+                      <Text size="xs" c={r.subscriptionLevelName ? 'dimmed' : 'orange'}>
+                        {r.subscriptionLevelName ?? 'No subscription level assigned'}
+                        {r.paymentStatus && ` · ${getSubscriptionStatus(r).label}`}
+                      </Text>
+                    </Box>
+                  }
+                />
+              ))}
+            </Stack>
+          </Radio.Group>
+          <Text size="xs" c="dimmed">
+            The other registrations keep their own level on record; it just stops being
+            charged. You can unmerge at any time before a payment is set up.
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              onClick={() => setMergeModalOpen(false)}
+              disabled={mergeBusyId !== null}
+            >
+              Cancel
+            </Button>
+            <Button
+              radius="xl"
+              onClick={handleConfirmMerge}
+              loading={mergeBusyId !== null}
+              disabled={!mergePrimaryId}
+            >
+              Merge
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={consentRow !== null}
+        onClose={() => { consentFanIdRef.current = null; setConsentRow(null); setConsentLink(null); }}
+        title="Parent contact email"
+        size="md"
+        centered
+      >
+        {consentRow && (
+          <Stack>
+            {consentError && <Alert color="red" variant="light">{consentError}</Alert>}
+            <Text size="sm">
+              Create a link for FAN <strong>{consentRow.fanId}</strong> ({consentRow.teamName}).
+              Copy it into WhatsApp or your usual email — mail from this site is optional.
+            </Text>
+            {consentContacts.length > 0 && (
+              <Stack gap={6}>
+                <Text size="xs" c="dimmed" tt="uppercase" fw={700}>Existing contacts</Text>
+                {consentContacts.map((c) => (
+                  <Group key={c.id} gap="xs" justify="space-between" wrap="nowrap">
+                    <Group gap="xs" wrap="wrap">
+                      <Text size="sm" ff="monospace">{c.email}</Text>
+                      <Badge size="xs" variant="light" color={
+                        c.state === 'confirmed' ? 'green'
+                          : c.state === 'pending' ? 'yellow'
+                            : c.state === 'withdrawn' ? 'orange' : 'gray'
+                      }>
+                        {c.state}
+                      </Badge>
+                      {c.marketingOptIn === 1 && (
+                        <Badge size="xs" variant="outline" color="grape">marketing</Badge>
+                      )}
+                    </Group>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="red"
+                      leftSection={<IconMailOff size={14} />}
+                      onClick={() => {
+                        setPurgeError('');
+                        setPendingPurgeContact({ id: c.id, email: c.email });
+                      }}
+                    >
+                      Remove email
+                    </Button>
+                  </Group>
+                ))}
+              </Stack>
+            )}
+            <TextInput
+              label="Parent / guardian email"
+              value={consentEmail}
+              onChange={(e) => setConsentEmail(e.currentTarget.value)}
+              type="email"
+              required
+            />
+            <Select
+              label="Relationship"
+              data={[
+                { value: 'guardian', label: 'Guardian / parent' },
+                { value: 'self', label: 'Player (self)' },
+              ]}
+              value={consentRelationship}
+              onChange={(v) => setConsentRelationship(v === 'self' ? 'self' : 'guardian')}
+            />
+            <Text size="xs" c="dimmed">
+              You cannot opt the parent into marketing — only they can, on the form.
+            </Text>
+            <Checkbox
+              label="Confirm re-add of a previously purged address"
+              checked={confirmSuppressedReAdd}
+              onChange={(e) => setConfirmSuppressedReAdd(e.currentTarget.checked)}
+            />
+            {purgeError && <Alert color="red" variant="light">{purgeError}</Alert>}
+            <Button
+              radius="xl"
+              loading={consentBusy}
+              disabled={!consentEmail.trim()}
+              onClick={() => void createConsentLink()}
+            >
+              Create consent link
+            </Button>
+            {consentLink && (
+              <Stack gap="xs">
+                <Text size="sm" fw={600}>Copy this link</Text>
+                <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{consentLink}</Text>
+                <CopyButton value={consentLink}>
+                  {({ copied, copy }) => (
+                    <Button variant="light" color={copied ? 'teal' : 'blue'} radius="xl" onClick={copy}>
+                      {copied ? 'Copied' : 'Copy link'}
+                    </Button>
+                  )}
+                </CopyButton>
+              </Stack>
+            )}
+          </Stack>
+        )}
+      </Modal>
+
+      <Modal
+        opened={pendingPurgeContact !== null}
+        onClose={() => { if (!purgeBusy) setPendingPurgeContact(null); }}
+        title="Remove contact email"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            Permanently remove <strong>{pendingPurgeContact?.email}</strong> from this player.
+            FAN, registration and payment history stay. A later import will not
+            silently re-add this address.
+          </Text>
+          {purgeError && <Alert color="red" variant="light">{purgeError}</Alert>}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              disabled={purgeBusy}
+              onClick={() => setPendingPurgeContact(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              radius="xl"
+              loading={purgeBusy}
+              onClick={() => void confirmPurgeContact()}
+            >
+              Remove email
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={bulkPurge !== null}
+        onClose={() => { if (!bulkPurgeBusy) setBulkPurge(null); }}
+        title={bulkPurge?.scope === 'team' ? 'Purge team contact emails' : 'Purge all club contact emails'}
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            {bulkPurge?.scope === 'team' ? (
+              <>
+                Remove every contact email for players registered on{' '}
+                <strong>{bulkPurge.teamName}</strong>. One audit entry per contact.
+                Addresses are suppressed so import cannot silently re-add them.
+              </>
+            ) : (
+              <>
+                Remove <strong>every</strong> contact email at this club. One audit
+                entry per contact. FAN, registration and payment history stay.
+              </>
+            )}
+          </Text>
+          {bulkPurgeError && <Alert color="red" variant="light">{bulkPurgeError}</Alert>}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              radius="xl"
+              disabled={bulkPurgeBusy}
+              onClick={() => setBulkPurge(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              radius="xl"
+              loading={bulkPurgeBusy}
+              onClick={() => void confirmBulkPurge()}
+            >
+              {bulkPurge?.scope === 'team' ? 'Purge team contacts' : 'Purge all club contacts'}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </Stack>
+  );
+}

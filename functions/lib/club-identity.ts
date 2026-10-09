@@ -39,8 +39,11 @@ export async function getClubIdentity(
   if (row.data) {
     try {
       const parsed = JSON.parse(row.data) as { email?: unknown };
-      if (typeof parsed.email === "string" && parsed.email.includes("@")) {
-        replyTo = parsed.email.trim();
+      const candidate = typeof parsed.email === "string" ? parsed.email.trim() : "";
+      // A malformed optional address would make the provider reject the whole
+      // message, so only a plausible local@domain.tld is used.
+      if (/^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/.test(candidate)) {
+        replyTo = candidate;
       }
     } catch {
       // Malformed club data is not a reason to fail to send. Reply-to is a

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
-  Alert, Badge, Box, Button, Center, Code, Divider, Group,
+  Alert, Badge, Box, Button, Code, Divider, Group,
   Loader, Paper, Select, SimpleGrid, Stack, Text, TextInput,
 } from '@mantine/core';
 import {
@@ -8,16 +8,15 @@ import {
   IconExternalLink, IconReceipt,
 } from '@tabler/icons-react';
 import { clubDesign } from '../../theme';
-import { ONE_TIME_TYPES, type PlayerRegistrationRow } from './types';
+import { ONE_TIME_TYPES } from './types';
+import { usePlayerRegistrationSearch } from './usePlayerRegistrationSearch';
 
 interface Props {
   clubHeaders: HeadersInit;
 }
 
 export function OneTimePaymentsTab({ clubHeaders }: Props) {
-  const [registrations, setRegistrations] = useState<PlayerRegistrationRow[]>([]);
-  const [loadingPlayers, setLoadingPlayers] = useState(true);
-  const [loadError, setLoadError] = useState('');
+  const search = usePlayerRegistrationSearch(clubHeaders);
 
   const [selectedRegId, setSelectedRegId] = useState<string | null>(null);
   const [paymentType, setPaymentType] = useState<string>('KIT');
@@ -30,19 +29,7 @@ export function OneTimePaymentsTab({ clubHeaders }: Props) {
   const [generatedRef, setGeneratedRef] = useState('');
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/admin/player-registrations', { headers: clubHeaders })
-      .then(r => r.ok ? r.json() as Promise<{ registrations: PlayerRegistrationRow[] }> : Promise.reject())
-      .then(d => setRegistrations(d.registrations))
-      .catch(() => setLoadError('Failed to load player registrations.'))
-      .finally(() => setLoadingPlayers(false));
-  }, []);
-
-  const playerOptions = registrations.map(r => ({
-    value: r.registrationId,
-    label: `FAN ${r.fanId} — ${r.teamName}`,
-  }));
-  const selectedReg = registrations.find(r => r.registrationId === selectedRegId) ?? null;
+  const selectedReg = search.selected;
 
   const amountValid = () => {
     const n = parseFloat(amountGbp);
@@ -99,29 +86,36 @@ export function OneTimePaymentsTab({ clubHeaders }: Props) {
         </Text>
       </Alert>
 
-      {loadError && (
+      {search.error && (
         <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" radius="md">
-          {loadError}
+          {search.error}
         </Alert>
       )}
 
       <Paper p={{ base: 'md', sm: 'lg' }} withBorder radius="md">
         <Stack gap="md">
           <Text fw={700} ff={clubDesign.font.heading} fz="md">1. Select a registration</Text>
-          {loadingPlayers ? (
-            <Center h={60}><Loader size="sm" /></Center>
-          ) : (
-            <Select
-              placeholder="Search by FAN number or team…"
-              data={playerOptions}
-              value={selectedRegId}
-              onChange={(v) => { setSelectedRegId(v); setGeneratedLink(''); setGenError(''); }}
-              searchable
-              clearable
-              radius="md"
-              nothingFoundMessage="No players match your search"
-            />
-          )}
+          <Select
+            placeholder="Search by FAN number or team…"
+            data={search.options}
+            value={selectedRegId}
+            onChange={(v) => {
+              setSelectedRegId(v);
+              setGeneratedLink('');
+              setGenError('');
+              search.select(v);
+            }}
+            searchable
+            clearable
+            radius="md"
+            searchValue={search.query}
+            onSearchChange={search.setQuery}
+            // The club is not loaded up front any more, so the list cannot be
+            // narrowed locally — every keystroke is a query.
+            filter={({ options }) => options}
+            nothingFoundMessage={search.nothingFoundMessage}
+            rightSection={search.searching ? <Loader size="xs" /> : undefined}
+          />
           {selectedReg && (
             <Group gap="sm" wrap="wrap">
               <Badge color="blue" variant="light">FAN {selectedReg.fanId}</Badge>

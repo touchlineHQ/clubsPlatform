@@ -4,6 +4,7 @@ import {
   nowMs,
   randomId,
   isMultiClubMode,
+  isClubSelfRegisterAllowed,
   isPitchBookingsEnabled,
   getClubSlug,
   requireAdmin,
@@ -18,6 +19,7 @@ vi.mock('../../lib/auth', () => ({
 }));
 
 import { createAuth } from '../../lib/auth';
+import { adminSession, platformAdminSession } from '../test-utils';
 const mockCreateAuth = vi.mocked(createAuth);
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
@@ -39,8 +41,17 @@ function makeContext(
   headerOverrides: Record<string, string> = {},
 ) {
   const user = { role: 'member', clubSlug: null, ...userOverrides };
-  const getSession = session ? vi.fn().mockResolvedValue({ user }) : vi.fn().mockResolvedValue(null);
-  mockCreateAuth.mockReturnValue({ api: { getSession } } as ReturnType<typeof createAuth>);
+  const sessionValue =
+    session && typeof session === 'object' && 'user' in session
+      ? {
+          ...session,
+          user: { ...(session as { user: Record<string, unknown> }).user, ...userOverrides },
+        }
+      : session
+        ? { user }
+        : null;
+  const getSession = vi.fn().mockResolvedValue(sessionValue);
+  mockCreateAuth.mockReturnValue({ api: { getSession } } as unknown as ReturnType<typeof createAuth>);
 
   const headers = new Headers(headerOverrides);
   return {
@@ -123,6 +134,23 @@ describe('isMultiClubMode', () => {
   });
 });
 
+
+// ─── isClubSelfRegisterAllowed ────────────────────────────────────────────────
+
+describe('isClubSelfRegisterAllowed', () => {
+  it.each([['1'], ['true'], ['yes'], ['on']])('returns true for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
+  });
+
+  it.each([[' TRUE '], ['YES'], ['On']])('normalizes enabled ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(true);
+  });
+
+  it.each([['0'], ['false'], ['FALSE'], ['off'], ['unexpected'], [''], [undefined]])('returns false for ALLOW_CLUB_SELF_REGISTER=%s', (v) => {
+    expect(isClubSelfRegisterAllowed(makeEnv({ ALLOW_CLUB_SELF_REGISTER: v }))).toBe(false);
+  });
+});
+
 // ─── isPitchBookingsEnabled ───────────────────────────────────────────────────
 
 describe('isPitchBookingsEnabled', () => {
@@ -194,6 +222,25 @@ describe('requireAdmin', () => {
       { MULTI_CLUB: 'true' },
       { 'X-Club-Slug': 'any-club' },
     );
+    const result = await requireAdmin(ctx);
+    expect('session' in result).toBe(true);
+  });
+
+  it.each(['true', 'false'])('returns 403 for a club-bound admin mismatch when MULTI_CLUB=%s', async (multiClub) => {
+    const ctx = makeContext(adminSession, {}, { MULTI_CLUB: multiClub }, { 'X-Club-Slug': 'other-club' });
+    const result = await requireAdmin(ctx);
+    expect('error' in result).toBe(true);
+    if ('error' in result) expect(result.error.status).toBe(403);
+  });
+
+  it.each(['true', 'false'])('allows a club-bound admin match when MULTI_CLUB=%s', async (multiClub) => {
+    const ctx = makeContext(adminSession, {}, { MULTI_CLUB: multiClub }, { 'X-Club-Slug': 'test-club' });
+    const result = await requireAdmin(ctx);
+    expect('session' in result).toBe(true);
+  });
+
+  it.each(['true', 'false'])('allows a platform superadmin to access any club when MULTI_CLUB=%s', async (multiClub) => {
+    const ctx = makeContext(platformAdminSession, {}, { MULTI_CLUB: multiClub }, { 'X-Club-Slug': 'any-club' });
     const result = await requireAdmin(ctx);
     expect('session' in result).toBe(true);
   });

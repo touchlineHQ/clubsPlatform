@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import {
   Table, Select, Stack, Alert, Loader, Center, Badge, Text,
-  Tabs, Paper, Group, Button, Box,
+  Tabs, Paper, Group, Button, Box, Modal, TextInput,
 } from '@mantine/core';
-import { IconUsers, IconUserCog } from '@tabler/icons-react';
+import { IconUsers, IconUserCog, IconDownload, IconTrash, IconEdit } from '@tabler/icons-react';
 import type { LiveTeam, TeamRoleAssignment } from '../types';
 import { useClub } from '../context/ClubContext';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { dedupeOptions } from '../utils/selectOptions';
 
 interface UserRow {
   id: string;
@@ -33,6 +34,7 @@ interface Props {
   liveTeams: LiveTeam[];
 }
 
+/** Admin user directory with team assignments and member-rights controls. */
 export function AdminUsersPage({ liveTeams }: Props) {
   const { clubSlug } = useClub();
   const clubHeaders = { 'X-Club-Slug': clubSlug };
@@ -42,6 +44,12 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
+  const [dataBusy, setDataBusy] = useState<string | null>(null);
+  const [dataMessage, setDataMessage] = useState('');
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [savingCorrection, setSavingCorrection] = useState(false);
 
   // Team assignments tab state
   const [assignments, setAssignments] = useState<TeamRoleAssignment[]>([]);
@@ -120,6 +128,94 @@ export function AdminUsersPage({ liveTeams }: Props) {
       setError('Failed to update role');
     } finally {
       setUpdating(null);
+    }
+  };
+
+
+  const handleExportMember = async (userId: string, label: string) => {
+    setDataBusy(userId);
+    setDataMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/member-data?userId=${encodeURIComponent(userId)}`, {
+        headers: clubHeaders,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Export failed');
+      }
+      const bundle = await res.json();
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `member-data-${label || userId}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDataMessage('Member data exported.');
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.exportMember' });
+      setError(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setDataBusy(null);
+    }
+  };
+
+  const openCorrection = (user: UserRow) => {
+    setEditingUser(user);
+    setEditName(user.name);
+    setEditEmail(user.email);
+    setError('');
+  };
+
+  const handleCorrection = async () => {
+    if (!editingUser) return;
+    setSavingCorrection(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/member-data?userId=${encodeURIComponent(editingUser.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
+        body: JSON.stringify({ name: editName, email: editEmail }),
+      });
+      const body = await res.json().catch(() => ({})) as { error?: string; user?: UserRow };
+      if (!res.ok) throw new Error(body.error ?? 'Correction failed');
+      setUsers(prev => prev.map(user => user.id === editingUser.id
+        ? { ...user, name: editName.trim(), email: editEmail.trim().toLowerCase() }
+        : user));
+      setEditingUser(null);
+      setDataMessage('Member data corrected.');
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.correctMember' });
+      setError(e instanceof Error ? e.message : 'Correction failed');
+    } finally {
+      setSavingCorrection(false);
+    }
+  };
+
+  const handleDeleteMember = async (userId: string, label: string) => {
+    if (!window.confirm(
+      `Delete personal data for ${label || userId}? Contact emails and consent records at this club will be purged. Membership FAN/payment records are kept.`,
+    )) return;
+    setDataBusy(userId);
+    setDataMessage('');
+    setError('');
+    try {
+      const res = await fetch(`/api/admin/member-data?userId=${encodeURIComponent(userId)}`, {
+        method: 'DELETE',
+        headers: clubHeaders,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? 'Delete failed');
+      }
+      setUsers(prev => prev.filter(u => u.id !== userId));
+      setDataMessage('Member personal data deleted.');
+    } catch (e) {
+      captureError(e, { op: 'adminUsers.deleteMember' });
+      setError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDataBusy(null);
     }
   };
 
@@ -224,10 +320,11 @@ export function AdminUsersPage({ liveTeams }: Props) {
     label: `${t.name} (${t.league})`,
   }));
 
-  const teamOptions = [
+  // liveTeams comes from the external feed, which can repeat a team.
+  const teamOptions = dedupeOptions([
     ...definedTeamOptions,
     { group: 'Dynamic Teams', items: dynamicTeamOptions },
-  ];
+  ]);
 
   const roleOptions = [
     { value: 'coach', label: 'Coach' },
@@ -251,6 +348,19 @@ export function AdminUsersPage({ liveTeams }: Props) {
         subtitle={`${users.length} registered user${users.length !== 1 ? 's' : ''} · ${assignments.length} team assignment${assignments.length !== 1 ? 's' : ''}`}
       />
 
+      {editingUser !== null && (
+        <Modal opened onClose={() => setEditingUser(null)} title="Correct member data">
+          <Stack>
+            <TextInput label="Name" value={editName} onChange={(event) => setEditName(event.currentTarget.value)} required />
+            <TextInput label="Email" type="email" value={editEmail} onChange={(event) => setEditEmail(event.currentTarget.value)} required />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setEditingUser(null)} disabled={savingCorrection}>Cancel</Button>
+              <Button onClick={handleCorrection} loading={savingCorrection}>Save correction</Button>
+            </Group>
+          </Stack>
+        </Modal>
+      )}
+
       <Tabs defaultValue="users">
         <Tabs.List>
           <Tabs.Tab value="users" leftSection={<IconUsers size={14} />}>Users</Tabs.Tab>
@@ -260,6 +370,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
         <Tabs.Panel value="users" pt="md">
           <Stack>
             {error && <Alert color="red" variant="light">{error}</Alert>}
+            {dataMessage && <Alert color="green" variant="light">{dataMessage}</Alert>}
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
               <Table striped highlightOnHover>
                 <Table.Thead>
@@ -267,6 +378,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
                     <Table.Th>Name</Table.Th>
                     <Table.Th>Email</Table.Th>
                     <Table.Th>Role</Table.Th>
+                    <Table.Th>Data rights</Table.Th>
                   </Table.Tr>
                 </Table.Thead>
                 <Table.Tbody>
@@ -292,6 +404,40 @@ export function AdminUsersPage({ liveTeams }: Props) {
                           radius="md"
                           disabled={updating === user.id}
                         />
+                      </Table.Td>
+                      <Table.Td>
+                        <Group gap={6} wrap="nowrap">
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconEdit size={12} />}
+                            disabled={dataBusy !== null}
+                            onClick={() => openCorrection(user)}
+                          >
+                            Correct
+                          </Button>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            leftSection={<IconDownload size={12} />}
+                            loading={dataBusy === user.id}
+                            disabled={dataBusy !== null}
+                            onClick={() => handleExportMember(user.id, user.email || user.name)}
+                          >
+                            Export
+                          </Button>
+                          <Button
+                            size="compact-xs"
+                            variant="light"
+                            color="red"
+                            leftSection={<IconTrash size={12} />}
+                            loading={dataBusy === user.id}
+                            disabled={dataBusy !== null}
+                            onClick={() => handleDeleteMember(user.id, user.email || user.name)}
+                          >
+                            Delete
+                          </Button>
+                        </Group>
                       </Table.Td>
                     </Table.Tr>
                   ))}

@@ -1,0 +1,436 @@
+import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
+import { nowMs, randomId } from "./api-helpers";
+import { prepareAuditLog } from "./audit-log";
+import { hashWording } from "./club-email-signoff";
+
+/**
+ * One-click contact email purge (#134).
+ *
+ * Hard-deletes player_contact (and related consent_record rows), records a
+ * salted hash so FA import cannot silently re-add the address, and writes an
+ * admin_audit_log entry that never contains the plaintext email. Leaves FAN,
+ * registration, team, payment history, and any real parent user/login alone.
+ */
+
+/** Current hash material version; bump if salt rotation is required. */
+export const CONTACT_SUPPRESSION_HASH_VERSION = 1;
+
+/** Salt material for the current hash version (stored on each suppression row). */
+export const CONTACT_SUPPRESSION_SALT_V1 = "contact-suppression-v1";
+
+export type ContactPurgeActor = {
+  /** Acting user id (admin or parent). Stored in admin_audit_log.adminId. */
+  actorId: string;
+  /** Distinguishes audit action / note without recording the address. */
+  source: "admin" | "parent" | "admin_bulk_team" | "admin_bulk_club";
+};
+
+export type ContactPurgeResult = {
+  contactId: string;
+  playerId: string;
+  clubSlug: string;
+};
+
+export class ContactPurgeError extends Error {
+  constructor(
+    message: string,
+    public readonly code:
+      | "not_found"
+      | "invalid_email"
+      | "suppressed"
+      | "forbidden",
+  ) {
+    super(message);
+    this.name = "ContactPurgeError";
+  }
+}
+
+/** Lowercase + trim; null when empty or clearly not an email. */
+export function normalizeContactEmail(raw: string): string | null {
+  const email = raw.trim().toLowerCase();
+  if (!email || email.length > 254) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return email;
+}
+
+/**
+ * Salted SHA-256 hex digest of a club-scoped normalised address.
+ * Never store or log the plaintext email alongside this hash.
+ */
+export async function hashContactEmailForSuppression(
+  clubSlug: string,
+  email: string,
+  {
+    salt = CONTACT_SUPPRESSION_SALT_V1,
+    hashVersion = CONTACT_SUPPRESSION_HASH_VERSION,
+  }: { salt?: string; hashVersion?: number } = {},
+): Promise<{ emailHash: string; salt: string; hashVersion: number }> {
+  const normalised = normalizeContactEmail(email);
+  if (!normalised) {
+    throw new ContactPurgeError("email is invalid", "invalid_email");
+  }
+  const emailHash = await hashWording(
+    `${hashVersion}\0${salt}\0${clubSlug}\0${normalised}`,
+  );
+  return { emailHash, salt, hashVersion };
+}
+
+/** True when this club has a suppression row for the address under the current hash version. */
+export async function isEmailSuppressed(
+  db: D1Database,
+  clubSlug: string,
+  email: string,
+): Promise<boolean> {
+  const normalised = normalizeContactEmail(email);
+  if (!normalised) return false;
+  const { emailHash } = await hashContactEmailForSuppression(clubSlug, normalised);
+  const row = await db
+    .prepare(
+      `SELECT id FROM "contact_email_suppression"
+        WHERE clubSlug = ? AND emailHash = ?`,
+    )
+    .bind(clubSlug, emailHash)
+    .first<{ id: string }>();
+  return !!row;
+}
+
+/** Prepare suppression removal for an atomic, explicitly confirmed re-add. */
+export async function prepareClearEmailSuppression(
+  db: D1Database,
+  clubSlug: string,
+  email: string,
+  { requirePreviousChange = false }: { requirePreviousChange?: boolean } = {},
+): Promise<D1PreparedStatement> {
+  const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+  // When guarded, this must immediately follow the contact write in a batch.
+  return db
+    .prepare(
+      `DELETE FROM "contact_email_suppression"
+        WHERE clubSlug = ? AND emailHash = ?${requirePreviousChange ? " AND changes() > 0" : ""}`,
+    )
+    .bind(clubSlug, emailHash);
+}
+
+/** Remove a suppression so an admin can explicitly re-add the address. */
+export async function clearEmailSuppression(
+  db: D1Database,
+  clubSlug: string,
+  email: string,
+): Promise<boolean> {
+  const normalised = normalizeContactEmail(email);
+  if (!normalised) return false;
+  const statement = await prepareClearEmailSuppression(db, clubSlug, normalised);
+  const result = await statement.run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+type ContactRow = {
+  id: string;
+  clubSlug: string;
+  playerId: string;
+  email: string;
+};
+
+/**
+ * Workers Free D1 queries per invocation. Paid is 1000; this repo does not pin a plan.
+ * Each statement inside db.batch() counts, and another batch does not reset the budget.
+ */
+export const D1_FREE_QUERIES_PER_INVOCATION = 50;
+
+/** Scope SELECT + write statements for one bulk-purge request. Under the Free cap. */
+export const BULK_PURGE_MAX_QUERIES = 45;
+
+/**
+ * One write batch per invocation. Stops one short of the invocation budget
+ * because the scope SELECT is a separate query. Also the ceiling for db.batch()
+ * itself so a chunk cannot exceed D1's per-batch statement count on Free.
+ */
+export const D1_MAX_STATEMENTS_PER_BATCH = BULK_PURGE_MAX_QUERIES - 1;
+
+export type BulkContactPurgeResult = {
+  purged: ContactPurgeResult[];
+  /** Still matching this scope after the chunk that just committed. */
+  remaining: number;
+  /** Pass back as `cursor` to continue. Null when nothing remains. */
+  cursor: string | null;
+};
+
+/** Consent delete, contact delete, audit, plus suppression when the address hashes. */
+export function contactPurgeWriteStatements(email: string): number {
+  return normalizeContactEmail(email) ? 4 : 3;
+}
+
+/** Prefix of `contacts` whose write statements fit in one batch under the Free cap. */
+export function planBulkPurgeChunk<T extends { email: string }>(
+  contacts: readonly T[],
+): { chunk: T[]; statements: number } {
+  const chunk: T[] = [];
+  let statements = 0;
+  for (const contact of contacts) {
+    const cost = contactPurgeWriteStatements(contact.email);
+    if (statements + cost > D1_MAX_STATEMENTS_PER_BATCH) break;
+    chunk.push(contact);
+    statements += cost;
+  }
+  return { chunk, statements };
+}
+
+function auditActionFor(source: ContactPurgeActor["source"]): string {
+  switch (source) {
+    case "parent":
+      return "contact_purged_by_parent";
+    case "admin_bulk_team":
+      return "contact_purged_bulk_team";
+    case "admin_bulk_club":
+      return "contact_purged_bulk_club";
+    default:
+      return "contact_purged";
+  }
+}
+
+/**
+ * Writes for one already-loaded contact. No D1 round trip — the caller batches these.
+ * Invalid stored addresses are still deleted; they just cannot be suppressed.
+ */
+async function preparePurgeStatements(
+  db: D1Database,
+  clubSlug: string,
+  contact: ContactRow,
+  actor: ContactPurgeActor,
+): Promise<D1PreparedStatement[]> {
+  const statements: D1PreparedStatement[] = [
+    db
+      .prepare(
+        `DELETE FROM "consent_record"
+          WHERE clubSlug = ?
+            AND subjectType = 'player_contact'
+            AND subjectId = ?`,
+      )
+      .bind(clubSlug, contact.id),
+    db
+      .prepare(`DELETE FROM "player_contact" WHERE id = ? AND clubSlug = ?`)
+      .bind(contact.id, clubSlug),
+  ];
+
+  if (normalizeContactEmail(contact.email)) {
+    const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
+      clubSlug,
+      contact.email,
+    );
+    // Keep an earlier suppression for the same address at this club.
+    statements.push(
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO "contact_email_suppression"
+             (id, clubSlug, emailHash, salt, hashVersion, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(randomId("cesup"), clubSlug, emailHash, salt, hashVersion, nowMs()),
+    );
+  }
+
+  statements.push(
+    prepareAuditLog(db, {
+      clubSlug,
+      adminId: actor.actorId,
+      action: auditActionFor(actor.source),
+      targetTable: "player_contact",
+      targetId: contact.id,
+      // Player id only — never the deleted address.
+      note: `playerId=${contact.playerId};source=${actor.source}`,
+    }),
+  );
+  return statements;
+}
+
+/**
+ * Hard-delete one player_contact, scrub related consent, suppress the address,
+ * and audit — without touching user/account/FAN/registration/payment rows.
+ */
+export async function purgePlayerContact(
+  db: D1Database,
+  {
+    clubSlug,
+    contactId,
+    actor,
+  }: {
+    clubSlug: string;
+    contactId: string;
+    actor: ContactPurgeActor;
+  },
+): Promise<ContactPurgeResult | null> {
+  const contact = await db
+    .prepare(
+      `SELECT id, clubSlug, playerId, email FROM "player_contact"
+        WHERE id = ? AND clubSlug = ?`,
+    )
+    .bind(contactId, clubSlug)
+    .first<ContactRow>();
+  if (!contact) return null;
+
+  await db.batch(await preparePurgeStatements(db, clubSlug, contact, actor));
+
+  return {
+    contactId: contact.id,
+    playerId: contact.playerId,
+    clubSlug,
+  };
+}
+
+function continuationCursor(cursor: string | null | undefined): string | null {
+  const trimmed = cursor?.trim() ?? "";
+  return trimmed ? trimmed : null;
+}
+
+async function loadPurgeCandidates(
+  db: D1Database,
+  sql: string,
+  binds: unknown[],
+): Promise<ContactRow[]> {
+  const loaded = await db.prepare(sql).bind(...binds).all<ContactRow>();
+  return loaded.results ?? [];
+}
+
+/**
+ * One invocation: one scope read, then a single batch small enough that
+ * scope + writes stay under the Free D1 query cap. Earlier rows in the batch
+ * commit together; the caller continues with `cursor` while `remaining` > 0.
+ */
+async function purgeContactChunk(
+  db: D1Database,
+  clubSlug: string,
+  contacts: ContactRow[],
+  actor: ContactPurgeActor,
+): Promise<BulkContactPurgeResult> {
+  const { chunk } = planBulkPurgeChunk(contacts);
+  if (chunk.length === 0) {
+    return { purged: [], remaining: contacts.length, cursor: null };
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  for (const contact of chunk) {
+    statements.push(...(await preparePurgeStatements(db, clubSlug, contact, actor)));
+  }
+  await db.batch(statements);
+
+  const remaining = contacts.length - chunk.length;
+  return {
+    purged: chunk.map((contact) => ({
+      contactId: contact.id,
+      playerId: contact.playerId,
+      clubSlug,
+    })),
+    remaining,
+    cursor: remaining > 0 ? chunk[chunk.length - 1].id : null,
+  };
+}
+
+/**
+ * Purge contacts for players registered on a team at this club.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
+ */
+export async function purgeContactsForTeam(
+  db: D1Database,
+  {
+    clubSlug,
+    teamName,
+    actorId,
+    cursor,
+  }: {
+    clubSlug: string;
+    teamName: string;
+    actorId: string;
+    cursor?: string | null;
+  },
+): Promise<BulkContactPurgeResult> {
+  const trimmed = teamName.trim();
+  if (!trimmed) return { purged: [], remaining: 0, cursor: null };
+
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT DISTINCT pc.id AS id, pc.clubSlug AS clubSlug, pc.playerId AS playerId, pc.email AS email
+       FROM "player_contact" pc
+       JOIN "player_registration" pr
+         ON pr.playerId = pc.playerId AND pr.clubSlug = pc.clubSlug
+      WHERE pc.clubSlug = ?
+        AND pr.teamName = ? COLLATE NOCASE
+        AND (? IS NULL OR pc.id > ?)
+      ORDER BY pc.id`,
+    [clubSlug, trimmed, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, {
+    actorId,
+    source: "admin_bulk_team",
+  });
+}
+
+/**
+ * Purge player_contact rows at this club.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
+ */
+export async function purgeContactsForClub(
+  db: D1Database,
+  {
+    clubSlug,
+    actorId,
+    cursor,
+  }: {
+    clubSlug: string;
+    actorId: string;
+    cursor?: string | null;
+  },
+): Promise<BulkContactPurgeResult> {
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT id, clubSlug, playerId, email FROM "player_contact"
+      WHERE clubSlug = ?
+        AND (? IS NULL OR id > ?)
+      ORDER BY id`,
+    [clubSlug, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, {
+    actorId,
+    source: "admin_bulk_club",
+  });
+}
+
+/**
+ * Parent self-purge: hard-delete contacts at the club whose email matches the
+ * parent's login email. Does not delete the user / account.
+ * One chunk per call — pass `cursor` back while `remaining` > 0.
+ */
+export async function purgeContactsMatchingEmail(
+  db: D1Database,
+  {
+    clubSlug,
+    email,
+    actorId,
+    source = "parent",
+    cursor,
+  }: {
+    clubSlug: string;
+    email: string;
+    actorId: string;
+    source?: ContactPurgeActor["source"];
+    cursor?: string | null;
+  },
+): Promise<BulkContactPurgeResult> {
+  const normalised = normalizeContactEmail(email);
+  if (!normalised) {
+    throw new ContactPurgeError("email is invalid", "invalid_email");
+  }
+
+  const afterId = continuationCursor(cursor);
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT id, clubSlug, playerId, email FROM "player_contact"
+      WHERE clubSlug = ?
+        AND lower(email) = ?
+        AND (? IS NULL OR id > ?)
+      ORDER BY id`,
+    [clubSlug, normalised, afterId, afterId],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, { actorId, source });
+}

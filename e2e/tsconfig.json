@@ -1,0 +1,25 @@
+{
+  // The third TypeScript project in this repo, alongside functions/ and website/.
+  // It exists so the specs are type-checked at all: both other projects
+  // deliberately exclude their own tests, and neither could compile these files
+  // anyway — functions/ has no DOM, website/ has no Node globals.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    // DOM for the page.evaluate callbacks, which run in the browser.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Pinned to node deliberately, NOT left to default. Without it TypeScript
+    // auto-includes every @types/* package in the root node_modules — which is
+    // where @cloudflare/workers-types lives. Loading that alongside "DOM"
+    // redeclares Request, Response, crypto and TextEncoder and buries the real
+    // errors under duplicate-identifier noise, exactly as functions/tsconfig.json
+    // warns. @playwright/test's types arrive through imports, not globals, so
+    // narrowing this costs nothing.
+    "types": ["node"]
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

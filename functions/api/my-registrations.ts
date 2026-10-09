@@ -1,4 +1,12 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
+import { readMeta, reportReadCost } from "../lib/read-cost";
+import {
+  billingIdFromJoinSql,
+  billingMergeJoinSql,
+  mergedTeamNamesSql,
+  subscriptionLevelJoinSql,
+} from "../lib/registration-merge";
+import { GC_BLOCKING_STATUSES } from "../lib/payment-status";
 
 interface RegistrationRow {
   registrationId: string;
@@ -13,6 +21,15 @@ interface RegistrationRow {
   overrideLevelId: string | null;
   subscriptionLevelName: string | null;
   paymentStatus: string | null;
+  // Resolved in SQL, then stripped from rows that are not in a billing group by
+  // omitMergeFieldsWhenUnmerged — a club that has merged nothing sends none of
+  // these at all, which is the wire contract the page was built against.
+  /** The registration whose payment covers this one. Absent means itself. */
+  billingRegistrationId?: string;
+  /** This registration's primary's team, when it is a secondary. */
+  billedWithTeamName?: string;
+  /** The other teams this registration is billed for, when it is a primary. */
+  mergedTeamNames?: string;
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
   manualNote?: string | null;
@@ -43,6 +60,22 @@ interface RegistrationRow {
  */
 function paymentStatusSubquery(distinguishManual: boolean): string {
   const manualBranch = distinguishManual ? `'manual'` : `'completed'`;
+  // Keyed on the row's BILLING registration, not its own id.
+  //
+  // This used to key on `pr.id` and let a JS pass overlay a secondary's status
+  // with its primary's. That pass could only reach a primary it had already
+  // loaded, which was every primary while this endpoint returned the whole club
+  // — and stops being true the moment the read is paginated, because the primary
+  // frequently is not on the page. The overlay would then silently leave a
+  // secondary reading "Outstanding" and a player would be chased for money
+  // already paid.
+  //
+  // The old comment here argued a subquery-per-row was too expensive to resolve
+  // the group in SQL. That was right for an unbounded club scan and is wrong
+  // now: `billingIdFromJoinSql` reads two real columns supplied by a PK-seeking
+  // LEFT JOIN, so this is one index probe into player_payment(registrationId),
+  // which idx_player_payment_reg_status makes index-only. Do not key this back
+  // on pr.id.
   return `(
   SELECT CASE
     WHEN SUM(CASE WHEN pp.status = 'active' THEN 1 ELSE 0 END) > 0 THEN 'active'
@@ -52,80 +85,122 @@ function paymentStatusSubquery(distinguishManual: boolean): string {
     WHEN COUNT(pp.id) > 0 THEN 'inactive'
     ELSE NULL
   END
-  FROM "player_payment" pp WHERE pp.registrationId = pr.id
+  FROM "player_payment" pp WHERE pp.registrationId = ${billingIdFromJoinSql('pr')}
 ) AS paymentStatus`;
 }
 
 const PERSONAL_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(false);
-const CLUB_PAYMENT_STATUS_SUBQUERY = paymentStatusSubquery(true);
 
-interface ManualAttributionRow {
-  registrationId: string;
-  manualPaidBy: string | null;
-  manualPaidAt: number;
-  manualNote: string | null;
+/** The three merge columns every registration query selects, resolved in SQL. */
+const MERGE_COLUMNS_SQL = `rm0."primaryRegistrationId" AS billingRegistrationId,
+         bpr."teamName"              AS billedWithTeamName,
+         ${mergedTeamNamesSql('pr')} AS mergedTeamNames`;
+
+/**
+ * Drops the three merge keys from rows that are not in a billing group.
+ *
+ * SQL hands back `NULL` for all three on an unmerged registration, but the page
+ * was built against a wire contract where a club that has merged nothing sends
+ * none of these keys at all — see the test that asserts exactly that. Three null
+ * keys on every row of a whole-club response is also response weight for
+ * nothing. Cheap: one pass, no database access.
+ */
+function omitMergeFieldsWhenUnmerged(rows: RegistrationRow[]): RegistrationRow[] {
+  return rows.map((r) => {
+    if (r.billingRegistrationId || r.mergedTeamNames) return r;
+    const { billingRegistrationId: _b, billedWithTeamName: _t, mergedTeamNames: _m, ...rest } = r;
+    return rest as RegistrationRow;
+  });
+}
+
+/** Which read a failure came from. The client reports this back on #107. */
+type ReadLabel = "personal_scan" | "import_stamp";
+
+/** Carries the label of the read that failed up to the handler's catch. */
+class ReadFailure extends Error {
+  constructor(readonly read: ReadLabel, readonly cause: unknown) {
+    super(`my-registrations ${read} failed`);
+    this.name = "ReadFailure";
+  }
+}
+
+interface ReadTiming {
+  read: ReadLabel;
+  ms: number;
 }
 
 /**
- * Reads back who marked each manual payment as paid, from the audit log written
- * by api/admin/manual-payment.ts. Kept out of the main query — one extra lookup
- * beats three correlated subqueries, and it is skipped entirely when the club
- * has no manual overrides.
+ * Runs one read, timing it and labelling any failure.
+ *
+ * #107 arrived as a bare client-side "Failed to load registrations" fired off a
+ * `!res.ok` that read neither the status nor the body, so nobody could say
+ * which of this endpoint's reads had died. This is the server half of fixing
+ * that: a failure now names itself, both in the log and in the response.
  */
-async function attachManualAttribution(
-  db: D1Database,
-  clubSlug: string,
-  rows: RegistrationRow[],
-): Promise<RegistrationRow[]> {
-  if (!rows.some((r) => r.paymentStatus === "manual")) return rows;
-
-  const { results } = await db
-    .prepare(
-      `SELECT pp.registrationId,
-              u.email      AS manualPaidBy,
-              al.createdAt AS manualPaidAt,
-              al.note      AS manualNote
-         FROM "admin_audit_log" al
-         JOIN "player_payment" pp ON pp.id = al.targetId
-         LEFT JOIN "user" u ON u.id = al.adminId
-        WHERE al.clubSlug = ?
-          AND al.targetTable = 'player_payment'
-          AND al.action = 'manual_paid'
-          AND pp.status = 'manual'
-        ORDER BY al.createdAt DESC`
-    )
-    .bind(clubSlug)
-    .all<ManualAttributionRow>();
-
-  // Ordered newest-first, so the first hit per registration is the override
-  // currently in force — a registration re-marked after an undo has several.
-  const latest = new Map<string, ManualAttributionRow>();
-  for (const row of results) {
-    if (!latest.has(row.registrationId)) latest.set(row.registrationId, row);
+async function timedRead<T>(
+  read: ReadLabel,
+  timings: ReadTiming[],
+  run: () => Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  try {
+    const value = await run();
+    timings.push({ read, ms: Date.now() - started });
+    return value;
+  } catch (err) {
+    timings.push({ read, ms: Date.now() - started });
+    throw new ReadFailure(read, err);
   }
+}
 
-  return rows.map((r) => {
-    const attribution = r.paymentStatus === "manual"
-      ? latest.get(r.registrationId)
-      : undefined;
-    return attribution
-      ? {
-          ...r,
-          manualPaidBy: attribution.manualPaidBy,
-          manualPaidAt: attribution.manualPaidAt,
-          manualNote: attribution.manualNote,
-        }
-      : r;
+/**
+ * Records what this endpoint's reads cost, through the shared sampler.
+ *
+ * Local until #114 moved the club-wide scan to the admin endpoints, which left
+ * this copy measuring the one path that is no longer expensive — and left its
+ * large-club arm permanently dead, since both callers now pass no club rows at
+ * all. The thresholds and the sampling rationale live in lib/read-cost.ts now,
+ * so a new endpoint inherits them instead of going unwatched.
+ *
+ * A load that is *killed* still reports nothing here, by definition. That case
+ * is covered from the browser, by the status and body the page reads.
+ */
+function reportPersonalReadCost(
+  context: EventContext<Env, string, unknown>,
+  userId: string,
+  clubSlug: string,
+  scope: "admin" | "user",
+  timings: ReadTiming[],
+  personalRows: number,
+  rowsRead: number | undefined,
+): void {
+  reportReadCost(context, userId, clubSlug, {
+    endpoint: "my_registrations",
+    ms: timings.reduce((n, t) => n + t.ms, 0),
+    // The personal scan's own count, not the request's. The admin path also
+    // stamps the last import, but that is MAX(importedAt) on an index seek —
+    // idx_club_import_log_clubSlug_importedAt — so it reads about one row and
+    // counting it would add a rounding error, not information.
+    rowsRead,
+    rowsReturned: personalRows,
+    extra: {
+      scope,
+      ...Object.fromEntries(timings.map((t) => [`${t.read}_ms`, t.ms])),
+    },
   });
 }
 
 /**
- * GET handler — fetches registrations for the authenticated user.
+ * GET handler — the registrations linked to the authenticated user.
  *
- * Returns personal registrations (linked to the user) and, for admins, all club
- * registrations with manual payment attribution when applicable. Manual payment
- * status is collapsed to 'completed' for personal queries and kept distinct for
- * admins.
+ * No longer returns the club's rows. That was every registration in the club in
+ * one response, and it now comes from /api/admin/registrations one bounded page
+ * at a time. What stays here is bounded by construction: a user's own
+ * registrations, and the club's last import timestamp.
+ *
+ * Manual payment status is collapsed to 'completed' here, so a manually-paid
+ * player is indistinguishable from one who paid GoCardless in full. The admin
+ * endpoint keeps the two apart.
  */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const result = await requireAuth(context);
@@ -148,7 +223,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return json({ error: "Access denied: club mismatch" }, { status: 403 });
   }
 
-  const personalRows = await context.env.DB
+  const timings: ReadTiming[] = [];
+
+  try {
+  const personalRows = await timedRead("personal_scan", timings, () => context.env.DB
     .prepare(
       `SELECT
          pr.id            AS registrationId,
@@ -162,87 +240,61 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
          sl.id            AS subscriptionLevelId,
          rsl.subscriptionLevelId AS overrideLevelId,
          sl.name          AS subscriptionLevelName,
-         ${PERSONAL_PAYMENT_STATUS_SUBQUERY}
+         ${PERSONAL_PAYMENT_STATUS_SUBQUERY},
+         ${MERGE_COLUMNS_SQL}
        FROM user_player up
        JOIN player p ON p.id = up.playerId
        JOIN player_registration pr ON pr.playerId = p.id
-       LEFT JOIN registration_subscription_level rsl
-              ON rsl.registrationId = pr.id
-       LEFT JOIN team_status_subscription_level tssl
-              ON tssl.clubSlug = pr.clubSlug
-             AND tssl.teamName = pr.teamName
-             AND tssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN status_subscription_level ssl
-              ON ssl.clubSlug = pr.clubSlug
-             AND ssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN team_subscription_level tsl
-              ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
+       ${billingMergeJoinSql('pr')}
+       ${subscriptionLevelJoinSql('pr')}
        WHERE up.userId = ? AND pr.clubSlug = ?
        ORDER BY pr.teamName ASC, p.fanId ASC`
     )
     .bind(userId, clubSlug)
-    .all<RegistrationRow>();
+    .all<RegistrationRow>());
 
   if (!isAdmin) {
+    reportPersonalReadCost(
+      context, userId, clubSlug, "user", timings,
+      personalRows.results.length, readMeta(personalRows).rows_read,
+    );
     return json({
-      personal: personalRows.results,
-      club: null,
+      personal: omitMergeFieldsWhenUnmerged(personalRows.results),
       scope: "user",
+      lastImportedAt: null,
     });
   }
 
-  const clubRows = await context.env.DB
-    .prepare(
-      `SELECT
-         pr.id            AS registrationId,
-         p.fanId,
-         pr.teamName,
-         pr.ageGroup,
-         pr.registrationExpiry,
-         pr.registrationStatus,
-         NULL             AS relationship,
-         GROUP_CONCAT(u.email || '|' || up.relationship, ',') AS linkedAccounts,
-         sl.id            AS subscriptionLevelId,
-         rsl.subscriptionLevelId AS overrideLevelId,
-         sl.name          AS subscriptionLevelName,
-         ${CLUB_PAYMENT_STATUS_SUBQUERY}
-       FROM player_registration pr
-       JOIN player p ON p.id = pr.playerId
-       LEFT JOIN user_player up ON up.playerId = p.id
-       LEFT JOIN "user" u ON u.id = up.userId
-       LEFT JOIN registration_subscription_level rsl
-              ON rsl.registrationId = pr.id
-       LEFT JOIN team_status_subscription_level tssl
-              ON tssl.clubSlug = pr.clubSlug
-             AND tssl.teamName = pr.teamName
-             AND tssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN status_subscription_level ssl
-              ON ssl.clubSlug = pr.clubSlug
-             AND ssl.registrationStatus = pr.registrationStatus
-       LEFT JOIN team_subscription_level tsl
-              ON tsl.clubSlug = pr.clubSlug AND tsl.teamName = pr.teamName
-       LEFT JOIN subscription_level sl
-              ON sl.id = COALESCE(rsl.subscriptionLevelId, tssl.subscriptionLevelId, ssl.subscriptionLevelId, tsl.subscriptionLevelId)
-       WHERE pr.clubSlug = ?
-       GROUP BY pr.id
-       ORDER BY pr.teamName ASC, p.fanId ASC`
-    )
+  const lastImport = await timedRead("import_stamp", timings, () => context.env.DB
+    .prepare(`SELECT MAX(importedAt) AS importedAt FROM "club_import_log" WHERE clubSlug = ?`)
     .bind(clubSlug)
-    .all<RegistrationRow>();
+    .first<{ importedAt: number | null }>());
 
-  const club = await attachManualAttribution(
-    context.env.DB,
-    clubSlug,
-    clubRows.results,
+  reportPersonalReadCost(
+    context, userId, clubSlug, "admin", timings,
+    personalRows.results.length, readMeta(personalRows).rows_read,
   );
 
   return json({
-    personal: personalRows.results,
-    club,
+    personal: omitMergeFieldsWhenUnmerged(personalRows.results),
     scope: "admin",
+    lastImportedAt: lastImport?.importedAt ?? null,
   });
+  } catch (err) {
+    if (!(err instanceof ReadFailure)) throw err;
+    // Named, so #107 stops being "something in here broke". The log line is
+    // free; the response body is what the browser reports back to PostHog.
+    console.error("my-registrations read failed", {
+      read: err.read,
+      clubSlug,
+      ms: timings.find((t) => t.read === err.read)?.ms ?? null,
+      cause: String(err.cause),
+    });
+    return json(
+      { error: "Failed to load registrations", read: err.read },
+      { status: 500 },
+    );
+  }
 };
 
 /**
@@ -262,6 +314,53 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const registrationId = url.searchParams.get("registrationId");
   if (!registrationId) {
     return json({ error: "registrationId is required" }, { status: 400 });
+  }
+
+  // Deleting cascades away the only record that GoCardless is still collecting —
+  // a pre-existing hazard this endpoint never guarded.
+  const livePayment = await context.env.DB
+    .prepare(
+      `SELECT status FROM "player_payment"
+        WHERE registrationId = ?
+          AND clubSlug = ?
+          AND status IN (${GC_BLOCKING_STATUSES.map(() => '?').join(',')})
+          AND mandateId != ''
+        LIMIT 1`
+    )
+    .bind(registrationId, clubSlug, ...GC_BLOCKING_STATUSES)
+    .first<{ status: string }>();
+
+  if (livePayment) {
+    return json(
+      {
+        error: "This registration has a live GoCardless payment. Cancel the subscription "
+          + "on the Payments tab before removing it.",
+        status: livePayment.status,
+      },
+      { status: 409 },
+    );
+  }
+
+  // primaryRegistrationId is ON DELETE RESTRICT, so this would otherwise surface
+  // as a raw FK violation. Catch it and say what to do instead.
+  const dependants = await context.env.DB
+    .prepare(
+      `SELECT COUNT(*) AS n FROM "registration_merge"
+        WHERE "primaryRegistrationId" = ? AND "clubSlug" = ?`
+    )
+    .bind(registrationId, clubSlug)
+    .first<{ n: number }>();
+
+  if ((dependants?.n ?? 0) > 0) {
+    return json(
+      {
+        error: `This registration is billed for ${dependants!.n} other `
+          + `${dependants!.n === 1 ? "registration" : "registrations"}. `
+          + "Unmerge the group before removing it.",
+        mergedCount: dependants!.n,
+      },
+      { status: 409 },
+    );
   }
 
   const result = await context.env.DB

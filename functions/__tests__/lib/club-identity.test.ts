@@ -92,3 +92,11 @@ describe('clubLink', () => {
       .toBe('https://clubs.example/c/#/login');
   });
 });
+
+describe('reply-to validation', () => {
+  it.each(['@', 'name@', '@example.com', 'a b@example.com', 'x@y'])('rejects %s', async (bad) => {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => ({ slug: 's', name: 'N', data: JSON.stringify({ email: bad }) }) }) }) } as any;
+    const { getClubIdentity } = await import('../../lib/club-identity');
+    expect((await getClubIdentity(db, 's'))!.replyTo).toBeNull();
+  });
+});

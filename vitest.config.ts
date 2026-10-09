@@ -11,6 +11,7 @@ const rootReactDom = path.resolve('./node_modules/react-dom');
 export default defineConfig({
   plugins: [react()],
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: [
       { find: /^react\/jsx-dev-runtime$/, replacement: `${rootReact}/jsx-dev-runtime.js` },
       { find: /^react\/jsx-runtime$/, replacement: `${rootReact}/jsx-runtime.js` },

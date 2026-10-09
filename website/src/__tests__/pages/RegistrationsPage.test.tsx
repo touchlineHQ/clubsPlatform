@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import { renderWithMantine, mockMember, mockAdmin, mockSingleClub } from '../test-utils';
 
 vi.mock('react-router-dom', () => ({
@@ -16,6 +16,29 @@ vi.mock('@mantine/core', async (importOriginal) => {
     Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   };
 });
+
+vi.mock('../../lib/posthog', () => ({
+  captureEvent: vi.fn(),
+  captureError: vi.fn(),
+}));
+
+// The export writes a real file otherwise, and these tests are about which rows
+// reach it rather than how SheetJS serialises them.
+const writeFile = vi.fn((..._args: unknown[]) => undefined);
+const jsonToSheet = vi.fn((..._args: unknown[]) => ({}) as Record<string, unknown>);
+vi.mock('xlsx', () => ({
+  utils: {
+    // Named so a test can read back which rows reached the workbook.
+    json_to_sheet: (rows: unknown) => jsonToSheet(rows),
+    book_new: vi.fn(() => ({})),
+    book_append_sheet: vi.fn(),
+  },
+  writeFile: (data: unknown, name: unknown) => writeFile(data, name),
+}));
+
+import { captureError, captureEvent } from '../../lib/posthog';
+import { summariseRegistrations } from '../../utils/registrationSummary';
+import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
 
 const mockFetch = vi.fn();
 beforeEach(() => {
@@ -38,7 +61,193 @@ const sampleRow = {
   paymentStatus: 'active',
 };
 
+/**
+ * Routes fetch by URL.
+ *
+ * The club tab is five endpoints now — a page of rows, the facets, the summary,
+ * the levels and the merge suggestions — so one blanket resolution no longer
+ * describes it. Facets and summary are derived from the same rows the page
+ * endpoint serves, which keeps a fixture a single source of truth.
+ *
+ * Suggestions are passed in rather than derived: computing them here would
+ * reimplement the grouping the server now owns, and a test that agrees with its
+ * own reimplementation proves nothing about what the endpoint returns.
+ */
+function routeClubApi(rows: Record<string, unknown>[], over: {
+  personal?: unknown[];
+  nextCursor?: string | null;
+  suggestions?: Record<string, unknown>[];
+  dismissed?: Record<string, unknown>[];
+  /** The club's count, which is deliberately not the length of the page above. */
+  openCount?: number;
+  dismissedCount?: number;
+  /** Rows the cursor from page one leads to. Facets and the summary see both. */
+  secondPage?: Record<string, unknown>[];
+} = {}) {
+  const all = over.secondPage ? [...rows, ...over.secondPage] : rows;
+  mockFetch.mockImplementation((url: string) => {
+    const u = String(url);
+    const json = (body: unknown) => Promise.resolve({
+      ok: true,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    });
+
+    if (u.startsWith('/api/admin/registration-facets')) {
+      return json({
+        teams: [...new Set(all.map(r => r.teamName as string))].filter(Boolean).sort(),
+        statuses: [...new Set(all.map(r => r.registrationStatus as string))].filter(Boolean).sort(),
+      });
+    }
+    if (u.startsWith('/api/admin/registration-merge-suggestions')) {
+      const params = new URLSearchParams(u.split('?')[1] ?? '');
+      if (params.get('state') === 'dismissed') {
+        return json({ suggestions: over.dismissed ?? [], nextCursor: null, limit: 50 });
+      }
+      const open = over.suggestions ?? [];
+      return json({
+        suggestions: open,
+        nextCursor: null,
+        limit: 50,
+        openCount: over.openCount ?? open.length,
+        dismissedCount: over.dismissedCount ?? (over.dismissed?.length ?? 0),
+      });
+    }
+    if (u.startsWith('/api/admin/registration-summary')) {
+      return json(summariseRegistrations(applyQuery(all, u) as never));
+    }
+    if (u.startsWith('/api/admin/registrations')) {
+      // Both pages are narrowed the same way, so a suggested-only walk over two
+      // pages sees the same set the banner counted.
+      const suggested = suggestedIds(over.suggestions);
+      if (over.secondPage) {
+        const onPageTwo = new URLSearchParams(u.split('?')[1] ?? '').get('cursor') === 'page2';
+        return json({
+          rows: applyQuery(onPageTwo ? over.secondPage : rows, u, suggested),
+          nextCursor: onPageTwo ? null : 'page2',
+          limit: 50,
+        });
+      }
+      return json({
+        rows: applyQuery(rows, u, suggested),
+        nextCursor: over.nextCursor ?? null,
+        limit: 50,
+      });
+    }
+    if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
+    if (u.startsWith('/api/my-registrations')) {
+      return json({ personal: over.personal ?? [], scope: 'admin' });
+    }
+    return json({ ok: true });
+  });
+}
+
+/**
+ * Applies the query string the way the endpoint does.
+ *
+ * Filtering moved to SQL, so a mock that ignored these would let a page that
+ * forgot to send them pass. `suggestedOnly` is in here for the same reason: the
+ * toggle is only worth anything if it reaches the request.
+ */
+function applyQuery(
+  rows: Record<string, unknown>[],
+  url: string,
+  suggested: Set<string> = new Set(),
+) {
+  const params = new URLSearchParams(url.split('?')[1] ?? '');
+  const team = params.get('team');
+  const status = params.get('status');
+  const subscription = params.get('subscription');
+  const q = params.get('q')?.toLowerCase();
+
+  return rows.filter(r => {
+    if (params.get('suggestedOnly') === '1' && !suggested.has(String(r.registrationId))) return false;
+    if (team && r.teamName !== team) return false;
+    if (status && (r.registrationStatus ?? '') !== status) return false;
+    if (subscription && getSubscriptionStatus(r as never).status !== subscription) return false;
+    if (q) {
+      const fan = String(r.fanId ?? '').toLowerCase();
+      const name = String(r.teamName ?? '').toLowerCase();
+      if (!fan.startsWith(q) && !name.startsWith(q)) return false;
+    }
+    return true;
+  });
+}
+
+/** Every registration id named by a suggestion fixture. */
+function suggestedIds(suggestions?: Record<string, unknown>[]): Set<string> {
+  return new Set((suggestions ?? []).flatMap(s => (s.registrationIds as string[]) ?? []));
+}
+
+/** How many calls have been made to an endpoint, by URL prefix. */
+function callsTo(prefix: string): number {
+  return mockFetch.mock.calls.filter(c => String(c[0]).startsWith(prefix)).length;
+}
+
+/** The query string of the last call to the paginated list endpoint. */
+function lastListQuery(): URLSearchParams {
+  const call = [...mockFetch.mock.calls].reverse()
+    .find(c => String(c[0]).startsWith('/api/admin/registrations?'));
+  return new URLSearchParams(String(call?.[0]).split('?')[1] ?? '');
+}
+
 describe('RegistrationsPage', () => {
+  /** Renders as an admin and switches to the Club Registrations tab. */
+  async function renderClubTab(
+    club: Record<string, unknown>[],
+    over: Parameters<typeof routeClubApi>[1] = {},
+  ) {
+    routeClubApi(club, over);
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    // The team name also appears in the filter dropdown, so key off the
+    // toolbar instead to know the club table has rendered.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+  }
+
+  it('discards a late contact list for another FAN and preserves the current pending email', async () => {
+    await renderClubTab([
+      sampleRow,
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2' },
+    ]);
+    const route = mockFetch.getMockImplementation()!;
+    let resolveFirst!: (value: unknown) => void;
+    const firstContacts = new Promise(resolve => { resolveFirst = resolve; });
+    mockFetch.mockImplementation((url: string) => {
+      if (String(url).startsWith('/api/admin/player-contacts')) {
+        const fanId = new URLSearchParams(String(url).split('?')[1]).get('fanId');
+        return Promise.resolve({
+          ok: true,
+          json: () => fanId === 'fan_1' ? firstContacts : Promise.resolve({
+            contacts: [{ id: 'c2', email: 'current@example.com', state: 'pending' }],
+          }),
+        });
+      }
+      return route(url);
+    });
+    const firstRow = (await screen.findByText('fan_1')).closest('tr')!;
+    const secondRow = screen.getByText('fan_2').closest('tr')!;
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Ask parent' }));
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Ask parent' }));
+    await waitFor(() => expect(screen.getByLabelText(/Parent \/ guardian email/))
+      .toHaveValue('current@example.com'));
+    await act(async () => {
+      resolveFirst({ contacts: [{ id: 'c1', email: 'stale@example.com', state: 'pending' }] });
+      await firstContacts;
+    });
+    expect(screen.getByLabelText(/Parent \/ guardian email/)).toHaveValue('current@example.com');
+    expect(screen.getByText('current@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('stale@example.com')).not.toBeInTheDocument();
+  });
+
   it('renders personal registrations returned by API', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
@@ -84,7 +293,12 @@ describe('RegistrationsPage', () => {
   });
 
   it('shows an error when fetch fails', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async () => '',
+    });
 
     renderWithMantine(<RegistrationsPage />, {
       authValue: mockMember,
@@ -96,47 +310,182 @@ describe('RegistrationsPage', () => {
     });
   });
 
-  it('shows Export to Excel button next to Import Players in Club Registrations tab', async () => {
-    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+  it('reports which read failed, so #107 names a cause', async () => {
+    // The bare !res.ok this replaces sent PostHog nothing but the string
+    // "Failed to load registrations", which is why #93 was closed as
+    // not_planned and then recurred as #107.
     mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({ error: 'Failed to load registrations', read: 'club_scan' }),
     });
 
     renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
+      authValue: mockMember,
       clubValue: mockSingleClub,
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ op: 'registrations.refresh', status: 500, read: 'club_scan' }),
+      );
+    });
+  });
+
+  it('keeps the body when the edge answers instead of the Worker', async () => {
+    // A Worker killed by a CPU or subrequest limit never reaches our handler,
+    // so the response is the edge's HTML and there is no `read` to report. The
+    // status and the snippet are then the only evidence of what happened.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => '<!DOCTYPE html><title>Worker exceeded resource limits</title>',
     });
 
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          op: 'registrations.refresh',
+          status: 503,
+          read: null,
+          body: expect.stringContaining('exceeded resource limits'),
+        }),
+      );
+    });
+  });
+
+  it('keeps the error text when the JSON carries no read label', async () => {
+    // The endpoint's own 400/401/403 answers are JSON but name no read, and
+    // their `error` text is the only evidence they give.
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: 'Access denied: club mismatch' }),
+    });
+
+    renderWithMantine(<RegistrationsPage />, {
+      authValue: mockMember,
+      clubValue: mockSingleClub,
+    });
+
+    await waitFor(() => {
+      expect(captureError).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({
+          status: 403,
+          read: null,
+          body: expect.stringContaining('club mismatch'),
+        }),
+      );
+    });
+  });
+
+  it('shows Export to Excel button next to Import Players in Club Registrations tab', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
       expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Generate status report/i })).toBeTruthy();
     });
+  });
+
+  describe('exporting', () => {
+    /**
+     * The export walks the paginated endpoint. These cover the two ends of
+     * that loop where a bug is invisible in the file it produces.
+     */
+    beforeEach(() => {
+      writeFile.mockClear();
+      jsonToSheet.mockClear();
+      vi.mocked(captureEvent).mockClear();
+    });
+
+    it('writes one workbook from every page, not just the one on screen', async () => {
+      // Two cursor-linked pages, because a single page would let an export that
+      // stopped at the table's own rows pass — the failure this asserts against.
+      const onScreen = { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Reserves' };
+      const offScreen = { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Colts' };
+      routeClubApi([onScreen], { secondPage: [offScreen] });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockAdmin,
+        clubValue: mockSingleClub,
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: /Export to Excel/i }));
+
+      await waitFor(() => expect(writeFile).toHaveBeenCalledTimes(1));
+
+      // The rows that reached the sheet, not just the count the event carries.
+      const sheeted = jsonToSheet.mock.calls.at(-1)?.[0] as { 'FAN ID': string }[];
+      expect(sheeted.map(r => r['FAN ID'])).toEqual(['fan_a', 'fan_b']);
+      expect(captureEvent).toHaveBeenCalledWith('registrations exported', expect.objectContaining({
+        row_count: 2,
+        capped: false,
+      }));
+      expect(screen.queryByText(/Narrow your filters/i)).toBeNull();
+    });
+
+    it('says to narrow the filters rather than writing a short file', async () => {
+      // Every page hands back a cursor, so the loop runs out of pages with more
+      // still to come — the one case where a written file would be a lie.
+      routeClubApi([{ ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a' }], {
+        nextCursor: 'more',
+      });
+
+      renderWithMantine(<RegistrationsPage />, {
+        authValue: mockAdmin,
+        clubValue: mockSingleClub,
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
+      });
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: /Export to Excel/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Narrow your filters/i)).toBeTruthy();
+      });
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(captureEvent).toHaveBeenCalledWith('registrations exported', expect.objectContaining({
+        row_count: 0,
+        capped: true,
+      }));
+    });
+  });
+
+  it('opens the status report panel from the Club Registrations tab', async () => {
+    const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
+    await renderClubTab([adminRow]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Generate status report/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Download status report/i })).toBeTruthy();
+    });
+    // Nothing is generated until the admin picks a file.
+    expect(screen.getByRole('button', { name: /Download status report/i })).toBeDisabled();
   });
 
   it('shows Import Players button in Club Registrations tab for admins', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
-    });
-
-    renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
-      clubValue: mockSingleClub,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Import Players/i })).toBeTruthy();
@@ -145,21 +494,7 @@ describe('RegistrationsPage', () => {
 
   it('opens the delete modal when the remove button is clicked on a club registration', async () => {
     const adminRow = { ...sampleRow, registrationId: 'reg_2', fanId: 'fan_2', teamName: 'Reserves' };
-    mockFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({ personal: [], club: [adminRow], scope: 'admin' }),
-    });
-
-    renderWithMantine(<RegistrationsPage />, {
-      authValue: mockAdmin,
-      clubValue: mockSingleClub,
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+    await renderClubTab([adminRow]);
 
     await waitFor(() => {
       const removeBtn = document.querySelector('[aria-label="Remove registration"]');
@@ -181,27 +516,6 @@ describe('RegistrationsPage', () => {
       manualPaidAt: 1755000000000,
       manualNote: 'cash at training',
     };
-
-    /** Renders as an admin and switches to the Club Registrations tab. */
-    async function renderClubTab(club: unknown[]) {
-      mockFetch.mockResolvedValue({
-        ok: true,
-        json: async () => ({ personal: [], club, scope: 'admin' }),
-      });
-
-      renderWithMantine(<RegistrationsPage />, {
-        authValue: mockAdmin,
-        clubValue: mockSingleClub,
-      });
-
-      await waitFor(() => {
-        expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy();
-      });
-      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
-      // The team name also appears in the filter dropdown, so key off the
-      // toolbar instead to know the club table has rendered.
-      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
-    }
 
     it('shows a manually paid registration as Paid in full, with a marker for the admin', async () => {
       await renderClubTab([manualRow]);
@@ -357,6 +671,748 @@ describe('RegistrationsPage', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Could not undo this payment')).toBeTruthy();
+      });
+    });
+  });
+
+  // ─── Summary strip ──────────────────────────────────────────────────────────
+
+  describe('paging', () => {
+    const pageRows = [
+      { ...sampleRow, registrationId: 'reg_1', fanId: 'FAN-1', teamName: 'Alpha' },
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'FAN-2', teamName: 'Beta' },
+    ];
+
+    it('asks for a bounded page rather than the whole club', async () => {
+      await renderClubTab(pageRows);
+
+      expect(lastListQuery().get('limit')).toBe('50');
+      expect(lastListQuery().get('sort')).toBe('teamName');
+      expect(lastListQuery().get('dir')).toBe('asc');
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('follows the cursor the server returned, and offers a way back', async () => {
+      routeClubApi(pageRows, { nextCursor: 'CURSOR_ONE' });
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      expect(screen.queryByRole('button', { name: 'Previous' })).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+      await waitFor(() => expect(lastListQuery().get('cursor')).toBe('CURSOR_ONE'));
+      await waitFor(() => expect(screen.getByText('Page 2')).toBeTruthy());
+
+      // Back is the only way to a page a keyset cursor has already walked past.
+      fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+      await waitFor(() => expect(screen.getByText('Page 1')).toBeTruthy());
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('drops the cursor when the sort changes', async () => {
+      // A cursor is a position in one ordering. Carried into another it would
+      // skip an arbitrary slice, so the server rejects it and the page must not
+      // send it.
+      routeClubApi(pageRows, { nextCursor: 'CURSOR_ONE' });
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(lastListQuery().get('cursor')).toBe('CURSOR_ONE'));
+
+      fireEvent.click(screen.getByRole('button', { name: /FAN ID/i }));
+
+      await waitFor(() => expect(lastListQuery().get('sort')).toBe('fanId'));
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('sorts in SQL rather than reordering the page it holds', async () => {
+      await renderClubTab(pageRows);
+
+      fireEvent.click(screen.getByRole('button', { name: /Team/i }));
+
+      await waitFor(() => expect(lastListQuery().get('dir')).toBe('desc'));
+    });
+
+    it('searches server-side so one FAN is reachable without paging', async () => {
+      await renderClubTab(pageRows);
+
+      fireEvent.change(screen.getByLabelText('Search registrations'), { target: { value: 'FAN-2' } });
+
+      await waitFor(() => expect(lastListQuery().get('q')).toBe('FAN-2'));
+      expect(lastListQuery().get('cursor')).toBeNull();
+    });
+
+    it('hides the pager when everything fits on one page', async () => {
+      await renderClubTab(pageRows);
+      expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+    });
+
+    it('debounces the search box rather than scanning the club per keystroke', async () => {
+      // The summary aggregates the whole filtered set, so an undebounced box
+      // sends one club-wide scan per character typed.
+      await renderClubTab(pageRows);
+      const listBefore = callsTo('/api/admin/registrations?');
+      const summaryBefore = callsTo('/api/admin/registration-summary');
+
+      const box = screen.getByLabelText('Search registrations');
+      for (const value of ['F', 'FA', 'FAN', 'FAN-', 'FAN-2']) {
+        fireEvent.change(box, { target: { value } });
+      }
+
+      await waitFor(() => expect(lastListQuery().get('q')).toBe('FAN-2'));
+      expect(callsTo('/api/admin/registrations?') - listBefore).toBe(1);
+      expect(callsTo('/api/admin/registration-summary') - summaryBefore).toBe(1);
+    });
+  });
+
+  describe('summary strip', () => {
+    // FAN-1 plays for two teams, so registrations (4) and players (3) differ.
+    const summaryClub = [
+      { ...sampleRow, registrationId: 'reg_1', fanId: 'FAN-1', teamName: 'First XI', paymentStatus: 'active' },
+      { ...sampleRow, registrationId: 'reg_2', fanId: 'FAN-1', teamName: 'Reserves', paymentStatus: 'completed' },
+      { ...sampleRow, registrationId: 'reg_3', fanId: 'FAN-2', teamName: 'First XI', paymentStatus: null },
+      {
+        ...sampleRow,
+        registrationId: 'reg_4',
+        fanId: 'FAN-3',
+        teamName: 'Reserves',
+        paymentStatus: null,
+        subscriptionLevelId: null,
+        subscriptionLevelName: null,
+      },
+    ];
+
+    /** Reads a tile's number by its label — StatTile renders value and label as siblings. */
+    function statValue(label: string): string {
+      const strip = screen.getByRole('group', { name: /registrations summary/i });
+      return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
+    }
+
+    /** Picks an option from one of the filter Selects. */
+    async function chooseFilter(filter: string | RegExp, option: string) {
+      fireEvent.click(screen.getByRole('combobox', { name: filter }));
+      // Click inside the retry: Mantine closes the dropdown a tick after it opens.
+      await waitFor(() => {
+        const opt = screen.queryByRole('option', { name: option });
+        expect(opt).toBeTruthy();
+        fireEvent.click(opt!);
+      });
+    }
+
+    it('counts the club rows above the table', async () => {
+      await renderClubTab(summaryClub);
+
+      expect(statValue('Registrations')).toBe('4');
+      expect(statValue('Players')).toBe('3');
+      expect(statValue('Paying')).toBe('2');
+      expect(statValue('Outstanding')).toBe('1');
+      expect(statValue('No level assigned')).toBe('1');
+    });
+
+    it('recomputes when the team filter changes', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by team/i, 'Reserves');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('2'));
+      expect(statValue('Players')).toBe('2');
+      expect(statValue('Paying')).toBe('1');
+      expect(statValue('No level assigned')).toBe('1');
+    });
+
+    it('recomputes when the subscription status filter changes', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by subscription/i, 'Paying');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('1'));
+      expect(statValue('Paying')).toBe('1');
+      expect(statValue('Outstanding')).toBe('0');
+    });
+
+    it('renders zeroes rather than blanks when no row matches the filters', async () => {
+      await renderClubTab(summaryClub);
+
+      await chooseFilter(/filter by subscription/i, 'Cancelled');
+
+      await waitFor(() => expect(statValue('Registrations')).toBe('0'));
+      for (const label of ['Players', 'Paying', 'Outstanding', 'No level assigned']) {
+        expect(statValue(label)).toBe('0');
+      }
+      expect(screen.getByText(/No registrations match the current filters/i)).toBeTruthy();
+    });
+
+    it('re-requests the page and the summary when the filters change', async () => {
+      // The inverse of what this asserted before the move to SQL: filtering
+      // client-side made no request, and doing it server-side must.
+      await renderClubTab(summaryClub);
+      const before = mockFetch.mock.calls.length;
+
+      await chooseFilter('Filter by team', 'First XI');
+
+      await waitFor(() => expect(lastListQuery().get('team')).toBe('First XI'));
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(before);
+      expect(mockFetch.mock.calls.some(
+        c => String(c[0]).startsWith('/api/admin/registration-summary?')
+          && String(c[0]).includes('team=First+XI'),
+      )).toBe(true);
+    });
+
+    it('leaves the empty state alone when the club has no registrations', async () => {
+      await renderClubTab([]);
+
+      expect(screen.queryByRole('group', { name: /registrations summary/i })).toBeNull();
+      expect(screen.getByText(/No registrations yet for this club/i)).toBeTruthy();
+    });
+  });
+
+  // ── Deleting a registration ────────────────────────────────────────────────
+
+  describe('deleting a registration', () => {
+    const rowA = { ...sampleRow, registrationId: 'reg_a', fanId: 'fan_a', teamName: 'Alpha' };
+    const rowB = { ...sampleRow, registrationId: 'reg_b', fanId: 'fan_b', teamName: 'Beta' };
+
+    /** Opens the confirm modal for one row and confirms it. */
+    async function removeRow(teamName: string) {
+      const row = screen.getByLabelText(`Select ${teamName} for merging`).closest('tr')!;
+      fireEvent.click(within(row).getByRole('button', { name: /Remove registration/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Remove$/ }));
+    }
+
+    it('re-reads the counts, which the local row drop cannot do', async () => {
+      // The row leaves the page without a refetch, but the summary is its own
+      // request — left alone it keeps over-reporting by the deleted row.
+      await renderClubTab([rowA, rowB]);
+      const before = callsTo('/api/admin/registration-summary');
+
+      await removeRow('Alpha');
+
+      // By the row's checkbox, not its team name — that also names a facet
+      // option in the team filter's dropdown.
+      await waitFor(() => expect(screen.queryByLabelText('Select Alpha for merging')).toBeNull());
+      expect(callsTo('/api/admin/registration-summary')).toBeGreaterThan(before);
+    });
+
+    it('drops the deleted row from the merge selection', async () => {
+      // It is held by value, captured at toggle time, so nothing else would.
+      await renderClubTab([rowA, rowB]);
+
+      fireEvent.click(screen.getByLabelText('Select Alpha for merging'));
+      fireEvent.click(screen.getByLabelText('Select Beta for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+
+      await removeRow('Alpha');
+
+      await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+    });
+
+    it('steps back a page when the delete empties page 2', async () => {
+      // Otherwise the club's empty state renders with a pager reading Page 2
+      // underneath it.
+      mockFetch.mockImplementation((url: string) => {
+        const u = String(url);
+        const json = (body: unknown) => Promise.resolve({
+          ok: true,
+          json: async () => body,
+          text: async () => JSON.stringify(body),
+        });
+
+        if (u.startsWith('/api/admin/registration-facets')) return json({ teams: [], statuses: [] });
+        if (u.startsWith('/api/admin/registration-summary')) {
+          return json(summariseRegistrations([rowA, rowB] as never));
+        }
+        if (u.startsWith('/api/admin/registrations')) {
+          const cursor = new URLSearchParams(u.split('?')[1] ?? '').get('cursor');
+          return cursor
+            ? json({ rows: [rowB], nextCursor: null, limit: 50 })
+            : json({ rows: [rowA], nextCursor: 'CURSOR_ONE', limit: 50 });
+        }
+        if (u.startsWith('/api/admin/subscription-levels')) return json({ levels: [] });
+        return json({ personal: [], scope: 'admin' });
+      });
+
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+      await waitFor(() => expect(screen.getByText('Page 2')).toBeTruthy());
+
+      await removeRow('Beta');
+
+      await waitFor(() => expect(screen.getByText('Page 1')).toBeTruthy());
+      expect(screen.queryByText(/No registrations yet for this club/i)).toBeNull();
+    });
+  });
+
+  // ── Merging registrations ──────────────────────────────────────────────────
+
+  describe('merging registrations', () => {
+    /** Two registrations of one player, same age group, each billed on its own. */
+    const tuesday = {
+      ...sampleRow,
+      registrationId: 'reg_tue',
+      teamName: 'U15 Tuesday',
+      ageGroup: 'U15',
+      billingRegistrationId: 'reg_tue',
+      billedWithTeamName: null,
+      mergedTeamNames: null,
+      paymentStatus: null,
+    };
+    const thursday = {
+      ...tuesday,
+      registrationId: 'reg_thu',
+      teamName: 'U15 Thursday',
+      billingRegistrationId: 'reg_thu',
+    };
+
+    function statValue(label: string): string {
+      const strip = screen.getByRole('group', { name: /registrations summary/i });
+      return within(strip).getByText(label).previousElementSibling?.textContent ?? '';
+    }
+
+    /** What the suggestions endpoint returns for the tuesday/thursday pair. */
+    const pairSuggestion = {
+      playerId: 'p_1',
+      fanId: 'fan_1',
+      ageGroup: 'U15',
+      setSize: 2,
+      registrationIds: ['reg_thu', 'reg_tue'],
+      teamNames: ['U15 Thursday', 'U15 Tuesday'],
+    };
+
+    it('offers merge suggestions computed over the whole club', async () => {
+      // Replaces the assertion that the banner was withdrawn in #114. The
+      // grouping is the server's now, so the banner is fed by the endpoint
+      // rather than by suggestMerges over whatever page is loaded (#115).
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Review them' })).toBeTruthy();
+    });
+
+    it('counts the club, not the loaded page', async () => {
+      // The regression #114 created: a pair split across two pages was no
+      // longer suggested and the count silently meant "on this page". Here the
+      // page holds neither member of the eleven suggested sets.
+      await renderClubTab([{ ...tuesday, ageGroup: 'U16' }], {
+        suggestions: [pairSuggestion],
+        openCount: 11,
+      });
+
+      expect(screen.getByText(/11 players have registrations in the same age group/i)).toBeTruthy();
+    });
+
+    it('asks the server for the suggested rows rather than filtering in memory', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+      // And the toggle comes back off, so the admin is not stranded in it.
+      fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBeNull());
+    });
+
+    it('leaves the summary tiles counting the club while reviewing', async () => {
+      // The tiles describe the club, not the review slice. Re-scoping them with
+      // the toggle is the trap the server-side predicate avoids by staying out
+      // of the shared filter builder.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+
+      const summaryCall = [...mockFetch.mock.calls].reverse()
+        .find(c => String(c[0]).startsWith('/api/admin/registration-summary'));
+      expect(new URLSearchParams(String(summaryCall?.[0]).split('?')[1]).get('suggestedOnly')).toBeNull();
+    });
+
+    it('dismisses a set and drops it from the banner without reloading the table', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+      const pagesBefore = callsTo('/api/admin/registrations?');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls
+          .find(c => String(c[0]) === '/api/admin/registration-merge-suggestions'
+            && (c[1] as { method?: string })?.method === 'POST');
+        expect(JSON.parse((call?.[1] as { body: string }).body))
+          .toEqual({ playerId: 'p_1', ageGroup: 'U15', setSize: 2 });
+      });
+
+      // Gone from the banner, and the count moved with it.
+      await waitFor(() => expect(screen.queryByText(/same age group/i)).toBeNull());
+      expect(screen.getByText(/1 suggestion dismissed/i)).toBeTruthy();
+      // The rows did not change, so the table was not re-read.
+      expect(callsTo('/api/admin/registrations?')).toBe(pagesBefore);
+    });
+
+    it('lists what has been dismissed, and undoes one', async () => {
+      // A suppression list nobody can see is a support ticket waiting to happen.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [],
+        dismissed: [{
+          playerId: 'p_1', fanId: 'fan_1', ageKey: 'u15', ageGroup: 'U15',
+          setSize: 2, dismissedBy: 'user_1', dismissedAt: 1_700_000_000_000,
+        }],
+      });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Review dismissed' }));
+
+      const restore = await screen.findByRole('button', { name: 'Restore' });
+      fireEvent.click(restore);
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(c =>
+          String(c[0]).startsWith('/api/admin/registration-merge-suggestions?')
+          && (c[1] as { method?: string })?.method === 'DELETE');
+        const params = new URLSearchParams(String(call?.[0]).split('?')[1]);
+        expect(params.get('playerId')).toBe('p_1');
+        expect(params.get('ageGroup')).toBe('U15');
+      });
+    });
+
+    it('says why a dismissal failed rather than pretending it worked', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        json: async () => ({ error: 'no merge suggestion for this player and age group' }),
+        text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      expect(await screen.findByText(/no merge suggestion for this player/i)).toBeTruthy();
+      // Still listed, because nothing was recorded.
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+    });
+
+    it('says so when a restore fails, and keeps the dismissal listed', async () => {
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [],
+        dismissed: [{
+          playerId: 'p_1', fanId: 'fan_1', ageKey: 'u15', ageGroup: 'U15',
+          setSize: 2, dismissedBy: 'user_1', dismissedAt: 1_700_000_000_000,
+        }],
+      });
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Review dismissed' }));
+      const restore = await screen.findByRole('button', { name: 'Restore' });
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        json: async () => ({ error: 'dismissal not found' }),
+        text: async () => '',
+      }));
+      fireEvent.click(restore);
+
+      expect(await screen.findByText(/dismissal not found/i)).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy();
+    });
+
+    it('still offers the suggestions when the dismissed list cannot be loaded', async () => {
+      // The dismissals are a secondary read; failing it must not take the
+      // banner's own suggestions down with it.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [pairSuggestion],
+        dismissedCount: 1,
+      });
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false, json: async () => ({}), text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Review dismissed' }));
+
+      expect(await screen.findByText(/nothing dismissed/i)).toBeTruthy();
+      expect(screen.getByText(/same age group/i)).toBeTruthy();
+    });
+
+    it('hides the banner rather than blocking the table when its read fails', async () => {
+      routeClubApi([tuesday, thursday]);
+      const routed = mockFetch.getMockImplementation()!;
+      mockFetch.mockImplementation((url: string) =>
+        String(url).startsWith('/api/admin/registration-merge-suggestions')
+          ? Promise.resolve({ ok: false, json: async () => ({ error: 'suggestions unavailable' }), text: async () => '' })
+          : routed(url));
+
+      renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+      await waitFor(() => expect(screen.getByRole('tab', { name: /Club Registrations/i })).toBeTruthy());
+      fireEvent.click(screen.getByRole('tab', { name: /Club Registrations/i }));
+
+      // The table still renders, and the banner is simply absent: it is a hint
+      // over the rows, not a precondition for them. captureError carries the
+      // failure instead of an alert the admin can do nothing about.
+      await waitFor(() => expect(screen.getByRole('button', { name: /Export to Excel/i })).toBeTruthy());
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+      expect(screen.queryByText(/suggestions unavailable/i)).toBeNull();
+      expect(captureError).toHaveBeenCalledWith(
+        expect.anything(), expect.objectContaining({ op: 'registrations.suggestions' }),
+      );
+    });
+
+    it('keeps a way out of review mode after the last suggestion is dismissed', async () => {
+      // Dismissing the last open set takes openCount to 0, and the toggle used
+      // to live inside that condition — so the admin was left with an empty
+      // filtered table and no way back short of reloading the page.
+      await renderClubTab([tuesday, thursday], {
+        suggestions: [pairSuggestion],
+        dismissedCount: 0,
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      // The banner stays, says there is nothing left, and still offers the exit.
+      expect(await screen.findByText(/nothing left to review/i)).toBeTruthy();
+      const showAll = screen.getByRole('button', { name: 'Show all' });
+      fireEvent.click(showAll);
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBeNull());
+    });
+
+    it('reads an empty review slice as a filter, not as an empty club', async () => {
+      // filtersActive drives which empty state shows. Without suggestedOnly in
+      // it, a review slice with nothing in it claimed the club had no
+      // registrations at all.
+      await renderClubTab([tuesday, thursday], { suggestions: [] , openCount: 1 });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review them' }));
+
+      await waitFor(() => expect(lastListQuery().get('suggestedOnly')).toBe('1'));
+      expect(await screen.findByText(/no registrations match/i)).toBeTruthy();
+    });
+
+    it('refuses a dismissal of a set that grew, and says to look again', async () => {
+      // The server answers 409 with its own count; the banner must not report
+      // this as a dismissal that landed.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+      fireEvent.click(screen.getByRole('button', { name: 'List them' }));
+
+      mockFetch.mockImplementationOnce(() => Promise.resolve({
+        ok: false,
+        status: 409,
+        json: async () => ({ error: 'this suggestion has changed since it was loaded', setSize: 3 }),
+        text: async () => '',
+      }));
+      fireEvent.click(screen.getByRole('button', { name: 'Not the same subs' }));
+
+      expect(await screen.findByText(/has changed since it was loaded/i)).toBeTruthy();
+    });
+
+    it('reloads the suggestions after a merge, so the banner cannot offer a merged pair', async () => {
+      // suggestionCandidateSql drops merged rows, so a banner that kept listing
+      // the pair would answer "Not the same subs" with a 400.
+      await renderClubTab([tuesday, thursday], { suggestions: [pairSuggestion] });
+
+      const before = callsTo('/api/admin/registration-merge-suggestions');
+
+      fireEvent.click(screen.getByRole('checkbox', { name: /Select U15 Tuesday for merging/i }));
+      fireEvent.click(screen.getByRole('checkbox', { name: /Select U15 Thursday for merging/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/i }));
+
+      await waitFor(() => {
+        expect(callsTo('/api/admin/registration-merge-suggestions')).toBeGreaterThan(before);
+      });
+    });
+
+    it('says nothing at all when the club has no suggestions and no dismissals', async () => {
+      await renderClubTab([tuesday, thursday], { suggestions: [], openCount: 0 });
+
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Review them' })).toBeNull();
+    });
+
+    it('never invents a suggestion from the rows on screen', async () => {
+      // U18 plus Robins First is two commitments until the club says otherwise
+      // — but that judgement is the server's now, and is asserted in SQL by
+      // functions/__tests__/api/admin-merge-suggestions.test.ts. What matters
+      // here is that the page shows the endpoint's answer and does not re-derive
+      // one from the page it happens to hold: a pair of rows that looks
+      // suggestible must stay silent when the endpoint says nothing.
+      await renderClubTab([tuesday, thursday], { suggestions: [], openCount: 0 });
+
+      expect(screen.queryByText(/same age group/i)).toBeNull();
+    });
+
+    it('counts a merged group as one billable unit but two registrations', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(statValue('Registrations')).toBe('2');
+      expect(statValue('Billable units')).toBe('1');
+      // A merged group is already ruled on, so it is not a candidate — excluded
+      // by the endpoint's two anti-joins rather than by anything on this page.
+    });
+
+    it('explains on the row why a merged registration reads as paid', async () => {
+      await renderClubTab([
+        { ...tuesday, paymentStatus: 'active', mergedTeamNames: 'U15 Thursday' },
+        {
+          ...thursday,
+          paymentStatus: 'active',
+          billingRegistrationId: 'reg_tue',
+          billedWithTeamName: 'U15 Tuesday',
+        },
+      ]);
+
+      expect(screen.getByText('Billed with U15 Tuesday')).toBeTruthy();
+      expect(screen.getByText('Billed for 2 teams')).toBeTruthy();
+    });
+
+    it('offers Unmerge on the primary only', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(screen.getAllByRole('button', { name: /^Unmerge$/ })).toHaveLength(1);
+    });
+
+    it('hides Mark as paid on a secondary — the override belongs on the primary', async () => {
+      await renderClubTab([
+        tuesday,
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      expect(screen.getAllByRole('button', { name: /Mark as paid/i })).toHaveLength(1);
+    });
+
+    it('enables Merge once two registrations of one player are selected', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      await waitFor(() => expect(screen.getByText('1 selected')).toBeTruthy());
+      // One is not a group.
+      expect(screen.getByRole('button', { name: /Merge registrations/i })
+        .hasAttribute('disabled')).toBe(true);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Merge registrations/i })
+          .hasAttribute('disabled')).toBe(false);
+      });
+    });
+
+    it('refuses to merge across players, and says why before the API does', async () => {
+      await renderClubTab([
+        tuesday,
+        { ...thursday, fanId: 'fan_other' },
+      ]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/one player at a time/i)).toBeTruthy();
+      });
+      expect(screen.getByRole('button', { name: /Merge registrations/i })
+        .hasAttribute('disabled')).toBe(true);
+    });
+
+    it('posts the chosen primary and refreshes', async () => {
+      await renderClubTab([tuesday, thursday]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+      await waitFor(() => expect(screen.getByTestId('modal')).toBeTruthy());
+
+      // The POST, then the refresh it triggers.
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) })
+        .mockResolvedValue({
+          ok: true,
+          json: async () => ({
+            personal: [],
+            club: [
+              { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+              { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+            ],
+            scope: 'admin',
+          }),
+        });
+      fireEvent.click(within(screen.getByTestId('modal')).getByRole('button', { name: /^Merge$/ }));
+
+      await waitFor(() => {
+        const call = mockFetch.mock.calls.find(
+          c => String(c[0]).includes('/api/admin/registration-merges'),
+        );
+        expect(call).toBeTruthy();
+        expect(call![1].method).toBe('POST');
+        expect(JSON.parse(call![1].body)).toEqual({
+          primaryRegistrationId: 'reg_tue',
+          registrationIds: ['reg_tue', 'reg_thu'],
+        });
+      });
+    });
+
+    it('defaults the primary to the registration that has a level', async () => {
+      // A primary without a level would render a dead card for a payable player.
+      await renderClubTab([
+        { ...tuesday, subscriptionLevelId: null, subscriptionLevelName: null },
+        thursday,
+      ]);
+
+      fireEvent.click(screen.getByLabelText('Select U15 Tuesday for merging'));
+      fireEvent.click(screen.getByLabelText('Select U15 Thursday for merging'));
+      await waitFor(() => expect(screen.getByText('2 selected')).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: /Merge registrations/i }));
+
+      await waitFor(() => {
+        const chosen = within(screen.getByTestId('modal'))
+          .getByRole('radio', { checked: true }) as HTMLInputElement;
+        expect(chosen.value).toBe('reg_thu');
+      });
+    });
+
+    it('surfaces the API‘s refusal rather than pretending it worked', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      mockFetch.mockResolvedValue({
+        ok: false,
+        json: async () => ({ error: 'This group has a live GoCardless payment.' }),
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^Unmerge$/ }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/live GoCardless payment/i)).toBeTruthy();
+      });
+    });
+
+    it('warns before removing a registration others are billed through', async () => {
+      await renderClubTab([
+        { ...tuesday, mergedTeamNames: 'U15 Thursday' },
+        { ...thursday, billingRegistrationId: 'reg_tue', billedWithTeamName: 'U15 Tuesday' },
+      ]);
+
+      // Rows sort by team name, so pick the primary by the badge only it carries.
+      const primaryRow = screen.getByText('Billed for 2 teams').closest('tr')!;
+      fireEvent.click(within(primaryRow).getByRole('button', { name: /Remove registration/i }));
+
+      await waitFor(() => {
+        expect(within(screen.getByTestId('modal')).getByText(/unmerge first/i)).toBeTruthy();
       });
     });
   });

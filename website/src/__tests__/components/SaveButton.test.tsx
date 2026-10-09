@@ -30,7 +30,7 @@ const appData: AppData = {
     email: '',
     address: { line1: '', line2: '', postcode: '' },
     what3words: '',
-    socials: {},
+    socials: { facebook: '', instagram: '', twitter: '' },
     about: [],
     history: [],
   },

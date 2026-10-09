@@ -282,6 +282,7 @@ describe('GET /api/clubs', () => {
 
     expect(res.status).toBe(200);
     expect(body.multiClub).toBe(false);
+    expect(body.selfRegister).toBe(false);
     expect(body.pitchBookings).toBe(false);
     expect(body.clubs).toHaveLength(1);
     expect(body.clubs[0].slug).toBe('test-club');
@@ -301,7 +302,20 @@ describe('GET /api/clubs', () => {
 
     expect(res.status).toBe(200);
     expect(body.multiClub).toBe(true);
+    expect(body.selfRegister).toBe(false);
     expect(body.clubs).toHaveLength(2);
+  });
+
+  it('returns selfRegister true when ALLOW_CLUB_SELF_REGISTER is set', async () => {
+    const rows = [
+      { id: 'club_1', slug: 'test-club', name: 'Test Club', active: 1, primaryColor: null, createdAt: 1000 },
+    ];
+    const ctx = makeContext(getReq('/api/clubs'), {
+      env: { DB: makeDb({ all: [rows] }) as any, MULTI_CLUB: '1', ALLOW_CLUB_SELF_REGISTER: '1' } as any,
+    });
+    const res = await clubsGet(ctx as any);
+    const body = await res.json() as any;
+    expect(body.selfRegister).toBe(true);
   });
 });
 

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   escapeHtml,
-  invitationMessage,
   resetPasswordMessage,
   verifyEmailMessage,
 } from '../../lib/account-email';
@@ -19,7 +18,6 @@ describe('every message', () => {
   const messages = [
     ['reset', resetPasswordMessage('East Leake FC', LINK)],
     ['verify', verifyEmailMessage('East Leake FC', LINK)],
-    ['invitation', invitationMessage('East Leake FC', LINK, 7)],
   ] as const;
 
   for (const [name, message] of messages) {
@@ -45,17 +43,5 @@ describe('club names are admin-editable text', () => {
     const message = resetPasswordMessage('<img src=x onerror=alert(1)>', LINK);
     expect(message.html).not.toContain('<img');
     expect(message.html).toContain('&lt;img');
-  });
-});
-
-describe('invitation wording', () => {
-  it('says where the account came from, since the reader never asked for it', () => {
-    const message = invitationMessage('East Leake FC', LINK, 7);
-    expect(message.text).toMatch(/registration records/i);
-  });
-
-  it('states the expiry, and says day rather than days for one', () => {
-    expect(invitationMessage('C', LINK, 7).text).toContain('7 days');
-    expect(invitationMessage('C', LINK, 1).text).toContain('1 day');
   });
 });

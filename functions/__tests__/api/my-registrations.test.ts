@@ -1,9 +1,16 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { makeContext, makeDb, makeEnv, adminSession, memberSession, getReq, deleteReq } from '../test-utils';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { makeContext, makeDb, makeEnv, adminSession, platformAdminSession, memberSession, getReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
+}));
+
+// Without this the read-cost tests build a real client and it attempts an HTTP
+// call to the fake host, so the assertion passes while the test does I/O.
+const mockCaptureImmediate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock('posthog-node', () => ({
+  PostHog: vi.fn(() => ({ captureImmediate: mockCaptureImmediate })),
 }));
 
 import { onRequestGet, onRequestDelete } from '../../api/my-registrations';
@@ -54,7 +61,7 @@ describe('onRequestGet', () => {
     mockGetSession.mockResolvedValue(memberSession);
     const db = makeDb({ all: [[]] });
     const ctx = makeContext(
-      getReq('/api/my-registrations'),
+      getReq('/api/my-registrations', { 'X-Club-Slug': '' }),
       { env: { DB: db as any } },
     );
     const res = await onRequestGet(ctx as any);
@@ -76,7 +83,8 @@ describe('onRequestGet', () => {
     expect(Array.isArray(body.personal)).toBe(true);
     expect(body.personal.length).toBe(1);
     expect(body.personal[0].registrationId).toBe('reg_1');
-    expect(body.club).toBeNull();
+    // `club` is gone, not null: the club's rows come from /api/admin/registrations.
+    expect(body).not.toHaveProperty('club');
   });
 
   it('member scope: returns empty personal array when no registrations', async () => {
@@ -91,80 +99,6 @@ describe('onRequestGet', () => {
     expect(res.status).toBe(200);
     expect(body.scope).toBe('user');
     expect(body.personal).toEqual([]);
-  });
-
-  it('admin scope: returns both personal and club registrations with scope=admin', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
-    // .all() is called twice: first for personalRows, then for clubRows
-    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
-    const ctx = makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    );
-    const res = await onRequestGet(ctx as any);
-    const body = await res.json() as any;
-    expect(res.status).toBe(200);
-    expect(body.scope).toBe('admin');
-    expect(Array.isArray(body.personal)).toBe(true);
-    expect(Array.isArray(body.club)).toBe(true);
-    expect(body.club.length).toBe(1);
-    expect(body.club[0].registrationId).toBe('reg_2');
-  });
-
-  it('admin scope: attaches who marked a registration as manually paid', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
-    const manualRow = { ...clubRegistration, paymentStatus: 'manual' };
-    const db = makeDb({
-      all: [
-        [sampleRegistration],
-        [manualRow],
-        // Newest first — reg_2 was re-marked after an undo.
-        [
-          { registrationId: 'reg_2', manualPaidBy: 'alice@club.com', manualPaidAt: 200, manualNote: 'cash' },
-          { registrationId: 'reg_2', manualPaidBy: 'bob@club.com', manualPaidAt: 100, manualNote: 'older' },
-        ],
-      ],
-    });
-    const ctx = makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    );
-    const res = await onRequestGet(ctx as any);
-    const body = await res.json() as any;
-
-    expect(res.status).toBe(200);
-    expect(body.club[0].manualPaidBy).toBe('alice@club.com');
-    expect(body.club[0].manualPaidAt).toBe(200);
-    expect(body.club[0].manualNote).toBe('cash');
-  });
-
-  it('admin scope: skips the attribution lookup when no row is manual', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
-    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
-    const ctx = makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    );
-    await onRequestGet(ctx as any);
-    // Personal + club queries only — no third lookup.
-    expect((db.prepare as any).mock.calls.length).toBe(2);
-  });
-
-  it('hides the manual override from players but keeps it for admins', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
-    const db = makeDb({ all: [[sampleRegistration], [clubRegistration]] });
-    const ctx = makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    );
-    await onRequestGet(ctx as any);
-
-    const [personalSql, clubSql] = (db.prepare as any).mock.calls.map((c: unknown[]) => c[0] as string);
-    const manualBranch = `WHEN SUM(CASE WHEN pp.status = 'manual' THEN 1 ELSE 0 END) > 0 THEN`;
-    // The player sees a manually-paid registration as paid in full, not as one
-    // still collecting — 'active' now badges as "Paying".
-    expect(personalSql).toContain(`${manualBranch} 'completed'`);
-    expect(clubSql).toContain(`${manualBranch} 'manual'`);
   });
 
   it('ranks a live subscription above a finished one, and both above a spent mandate', async () => {
@@ -187,21 +121,6 @@ describe('onRequestGet', () => {
     expect(personalSql.indexOf(`COUNT(pp.id) > 0 THEN 'inactive'`)).toBeGreaterThan(
       order[order.length - 1],
     );
-  });
-
-  it('admin scope: club field is an array even when empty', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
-    const db = makeDb({ all: [[], []] });
-    const ctx = makeContext(
-      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
-      { env: { DB: db as any } },
-    );
-    const res = await onRequestGet(ctx as any);
-    const body = await res.json() as any;
-    expect(res.status).toBe(200);
-    expect(body.scope).toBe('admin');
-    expect(body.personal).toEqual([]);
-    expect(body.club).toEqual([]);
   });
 });
 
@@ -229,10 +148,10 @@ describe('onRequestDelete', () => {
   });
 
   it('returns 400 when X-Club-Slug header is missing', async () => {
-    mockGetSession.mockResolvedValue(adminSession);
+    mockGetSession.mockResolvedValue(platformAdminSession);
     const db = makeDb();
     const ctx = makeContext(
-      deleteReq('/api/my-registrations?registrationId=reg_1'),
+      deleteReq('/api/my-registrations?registrationId=reg_1', { 'X-Club-Slug': '' }),
       { env: { DB: db as any } },
     );
     const res = await onRequestDelete(ctx as any);
@@ -273,4 +192,167 @@ describe('onRequestDelete', () => {
     const res = await onRequestDelete(ctx as any);
     expect(res.status).toBe(404);
   });
+
+  function deleteCtx(db: any, id = 'reg_1') {
+    return makeContext(
+      deleteReq(`/api/my-registrations?registrationId=${id}`, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: db as any } },
+    );
+  }
+
+  it('refuses to delete a registration with a live GoCardless payment', async () => {
+    // Cascades away the only record that GoCardless is still collecting.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [{ status: 'active' }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/live GoCardless payment/i);
+  });
+
+  it('refuses to delete a registration that other registrations are billed through', async () => {
+    // ON DELETE RESTRICT would otherwise surface as a raw FK violation.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [null, { n: 2 }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(409);
+    expect(body.error).toMatch(/billed for 2 other registrations/i);
+    expect(body.mergedCount).toBe(2);
+  });
+
+  it('allows deleting a registration that is billed through another one', async () => {
+    // A secondary owns no group; its own merge row cascades away with it.
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [null, { n: 0 }], run: { meta: { changes: 1 } } });
+    const res = await onRequestDelete(deleteCtx(db) as any);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── Merged registrations ─────────────────────────────────────────────────────
+
+describe('naming which read failed (#107)', () => {
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue(adminSession);
+    // Re-armed here because the afterEach below strips it back to a bare vi.fn().
+    mockCaptureImmediate.mockResolvedValue(undefined);
+    // These tests fail reads on purpose; the handler logs each one by design.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const get = (db: any) => onRequestGet(makeContext(
+    getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+    { env: { DB: db as any } },
+  ) as any);
+
+  /** A db whose Nth .all() rejects, the rest succeeding. */
+  function failingAllAt(n: number) {
+    const db = makeDb({ all: [[], []], batch: [[[]]], first: null });
+    let call = 0;
+    const realPrepare = db.prepare as any;
+    (db as any).prepare = vi.fn((sql: string) => {
+      const stmt = realPrepare(sql);
+      const bound = stmt.bind();
+      const guard = () => {
+        call += 1;
+        return call === n
+          ? Promise.reject(new Error('D1_ERROR: too much'))
+          : bound.all();
+      };
+      return { ...stmt, bind: vi.fn(() => ({ ...bound, all: guard })) };
+    });
+    return db;
+  }
+
+  it('names the personal scan when it is the one that dies', async () => {
+    const res = await get(failingAllAt(1));
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('personal_scan');
+    expect(body.error).toBe('Failed to load registrations');
+  });
+
+  it('names the import stamp when it is the one that dies', async () => {
+    const db = makeDb({ all: [[], []], batch: [[[]]], first: null });
+    const realPrepare = db.prepare as any;
+    (db as any).prepare = vi.fn((sql: string) => {
+      const stmt = realPrepare(sql);
+      if (!/club_import_log/.test(sql)) return stmt;
+      return {
+        ...stmt,
+        bind: vi.fn(() => ({ first: () => Promise.reject(new Error('boom')) })),
+      };
+    });
+
+    const res = await get(db);
+    const body = await res.json() as any;
+
+    expect(res.status).toBe(500);
+    expect(body.read).toBe('import_stamp');
+  });
+
+  it('logs the failing read rather than swallowing it', async () => {
+    await get(failingAllAt(1));
+
+    expect(console.error).toHaveBeenCalledWith('my-registrations read failed', expect.objectContaining({
+      read: 'personal_scan',
+      clubSlug: 'test-club',
+    }));
+  });
+
+  it('does not report read cost on a small, fast load', async () => {
+    // The endpoint suspected of being killed by a resource limit must not pay
+    // for a capture on the healthy path.
+    const captured: unknown[] = [];
+    const ctx: any = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({ all: [[], []], batch: [[[]]], first: null }) as any,
+               POSTHOG_API_KEY: 'k', POSTHOG_HOST: 'https://ph.example.com' } },
+    );
+    ctx.waitUntil = (p: unknown) => captured.push(p);
+
+    const res = await onRequestGet(ctx);
+
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(0);
+    expect(mockCaptureImmediate).not.toHaveBeenCalled();
+  });
+
+  it('reports a read that touched a lot of rows even when it was fast', async () => {
+    // The whole argument for sampling on rows_read: the club scan this work
+    // removed read 7,495 rows in 23ms, so a duration-only threshold would never
+    // have recorded it. Passing no rowsRead leaves this endpoint duration-only,
+    // which is the blindness the change is meant to remove.
+    const captured: unknown[] = [];
+    const ctx: any = makeContext(
+      getReq('/api/my-registrations', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({
+                 all: [[sampleRegistration], []],
+                 batch: [[[]]],
+                 first: null,
+                 allMeta: { rows_read: 7495 },
+               }) as any,
+               POSTHOG_API_KEY: 'k', POSTHOG_HOST: 'https://ph.example.com' } },
+    );
+    ctx.waitUntil = (p: unknown) => captured.push(p);
+
+    const res = await onRequestGet(ctx);
+
+    expect(res.status).toBe(200);
+    expect(captured).toHaveLength(1);
+    expect(mockCaptureImmediate).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'registrations read',
+      properties: expect.objectContaining({
+        endpoint: 'my_registrations',
+        rows_read: 7495,
+        rows_returned: 1,
+      }),
+    }));
+  });
+
 });

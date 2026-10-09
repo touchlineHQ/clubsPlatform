@@ -1,8 +1,8 @@
 /**
  * The wording and markup of the account emails.
  *
- * Kept apart from both the provider (lib/email.ts) and the flows that trigger
- * them (lib/auth.ts, api/admin/import-players.ts) so the copy can be read and
+ * Kept apart from both the provider (lib/email.ts) and the flow that triggers
+ * them (lib/auth.ts) so the copy can be read and
  * changed without touching either.
  */
 
@@ -90,36 +90,6 @@ export function verifyEmailMessage(clubName: string, link: string): BuiltMessage
       `Thanks for signing up to ${clubName}.`,
       ``,
       `Confirm this is your email address — the link expires in an hour:`,
-      link,
-    ].join("\n"),
-  };
-}
-
-/**
- * Sent when the player import creates an account for someone.
- *
- * The recipient did not ask for this and has never heard of the account, so
- * the message has to say where it came from before it asks for anything.
- */
-export function invitationMessage(clubName: string, link: string, expiresInDays: number): BuiltMessage {
-  const days = expiresInDays === 1 ? "1 day" : `${expiresInDays} days`;
-  return {
-    subject: `Set up your ${clubName} account`,
-    html: layout(
-      clubName,
-      `<p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
-        ${escapeHtml(clubName)} has set up an account for you from its registration records, so you can see your players' registrations and subscriptions online.
-      </p>
-      <p style="margin:0 0 24px;font-size:15px;line-height:1.5;">
-        Choose a password to finish setting it up. This link expires in ${escapeHtml(days)}.
-      </p>
-      ${button(link, "Set my password")}`,
-    ),
-    text: [
-      `${clubName} has set up an account for you from its registration records,`,
-      `so you can see your players' registrations and subscriptions online.`,
-      ``,
-      `Choose a password to finish setting it up. This link expires in ${days}:`,
       link,
     ].join("\n"),
   };

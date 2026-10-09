@@ -5,3 +5,10 @@ dist
 .idea
 coverage
 website/coverage
+
+# Playwright (e2e). .wrangler is already ignored, so .wrangler/e2e-state needs nothing.
+test-results
+playwright-report
+blob-report
+playwright/.cache
+e2e/.auth

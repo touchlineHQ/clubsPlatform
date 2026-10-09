@@ -34,6 +34,156 @@ make db-migrate-local   # Apply migrations to local D1
 make db-migrate-prod    # Apply migrations to production D1
 ```
 
+### Checks
+
+```bash
+npm run typecheck    # tsc over functions/, website/src, and their tests
+npm run test         # vitest, both halves
+npm run test:coverage   # same, with the 80% thresholds enforced
+```
+
+Typechecking and coverage tests run in CI on every pull request, alongside the
+end-to-end suite described below, and again before deployment. Their failures
+stop the release. Browser verification before production deployment is required
+only when both `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are configured.
+If either credential is absent, the preview deployment and browser smoke test
+are skipped, and production deployment may proceed without browser verification.
+
+**`functions/` and `website/` are separate TypeScript projects**, and have to
+be. Pages Functions run on workerd rather than in a browser, so
+`functions/tsconfig.json` builds against `@cloudflare/workers-types` with no
+`DOM` lib — that package supplies its own `Request`, `Response`, `crypto` and
+`TextEncoder`, and adding `DOM` alongside it redeclares all of them. They also
+resolve `hono`, `better-auth` and `posthog-node` from the **root**
+`package.json`, because esbuild resolves upward from `functions/` at deploy
+time and never looks in `website/node_modules`. Keeping the config at
+`functions/` makes `tsc` resolve them the same way the real bundle does.
+
+**Test files are typechecked too**, but as their own projects —
+`functions/tsconfig.tests.json` and `tsconfig.website-tests.json` — because
+workers-types and the DOM lib redeclare each other, and because website
+*source* resolves against `website/node_modules` while website *tests* resolve
+against the root one (where vitest and `@testing-library/*` live). Root
+`package.json` carries `@mantine/*`, `react-router-dom` and
+`@testing-library/*` as devDependencies so vitest can run the website's tests
+from the repo root.
+
+There is no `npm run lint` yet — no linter is configured in this repo.
+
+### Data protection
+
+The platform treats player identity as a blind asset (`fanId` only). Contact
+emails are Direct PII and must not live in the auth `user` table once the
+boundary work lands. See [docs/DATA_PROTECTION.md](docs/DATA_PROTECTION.md)
+for what is held, what is out of bounds, lawful bases, retention, and the
+current gap around imported parent emails.
+
+**One-club mode (current production posture):** one real club + fake `demo`,
+with `ALLOW_CLUB_SELF_REGISTER` off. Each club is the controller; the club site
+serves a privacy notice at `/#/privacy`. touchlineHQ does **not** need a host
+ICO fee or Art. 28 DPAs for other clubs until a second real club is hosted or
+self-serve registration is turned on. Do not run `import-players` against a
+real FA CSV on the live club until contact emails are not auth identities —
+prefer FAN-only import.
+
+### End-to-end tests
+
+Playwright drives the real thing — a browser against the built bundle, the Pages
+Functions and D1 — which is the one seam the vitest suite cannot see. Specs live
+in `e2e/` as `*.spec.ts`.
+
+```bash
+npm run e2e          # starts its own server, runs everything
+npm run e2e:smoke    # only the @smoke subset
+npx playwright show-report
+```
+
+`npm run e2e` needs no running server and no credentials: `e2e:serve` applies the
+migrations to a throwaway local D1 under `.wrangler/e2e-state`, then serves
+`website/dist` with `wrangler pages dev`. **Build first** — it serves `dist`, not
+source:
+
+```bash
+cd website && npm run build
+```
+
+To point the same specs at something already deployed — a Cloudflare preview, say
+— set `E2E_BASE_URL`, which also stops Playwright starting a server of its own:
+
+```bash
+E2E_BASE_URL=https://<deployment>.clubsplatform.pages.dev npm run e2e:smoke
+```
+
+Reset the throwaway database with `rm -rf .wrangler/e2e-state`.
+
+**The `--d1` UUID in `e2e:serve` must stay equal to
+`[env.preview].d1_databases.database_id` in `wrangler.toml`.** `wrangler pages dev`
+rejects `--env` and only ever reads the top-level config, which deliberately has
+no D1 binding, so the binding is supplied on the command line instead. Wrangler
+keys local D1 storage by that id, which is how `e2e:migrate` and `e2e:serve` end
+up talking to the same file. If they ever diverge, the schema is created in a
+different empty database and `/api/clubs` returns an empty list rather than an
+error — which is why the first spec asserts that the registry actually contains
+the demo club.
+
+#### Where each tier runs
+
+**Pull requests into main** run the local tier only, via
+`.github/workflows/e2e.yml` — no credentials, no Cloudflare deployments per PR,
+deterministic enough to be a required status check.
+
+**Commits on main** run the real thing, as the `preview-e2e` job in
+`.github/workflows/main.yml`. It sits between the test suite and the production
+deploy and blocks it: migrate the preview database, deploy this commit as a
+Cloudflare preview, run `@smoke` against it, and only then migrate and deploy
+production. That ordering is what makes the gate trustworthy — the preview
+database is migrated *first*, so the suite runs against the schema the code
+expects. On a pull request it could not be, because migrating a shared database
+from an unreviewed branch would break preview for every other open PR.
+
+The preview specs must stay **read-only**: every preview deployment binds the one
+`clubsplatform-preview` database.
+
+Note the preview deploy uses `--branch=ci-preview`. It must never be
+`--branch=main` — Pages treats a deploy whose branch matches the project's
+production branch as a *production* deployment, which would ship the commit before
+the tests it is meant to gate had run.
+
+#### Cloudflare Access
+
+Preview deployments are behind Cloudflare Access, so an unauthenticated request to
+one gets a `302` to `<team>.cloudflareaccess.com` instead of the app. CI
+authenticates with an Access **service token**:
+
+| Secret | |
+|---|---|
+| `CF_ACCESS_CLIENT_ID` | Service token client id (ends `.access`) |
+| `CF_ACCESS_CLIENT_SECRET` | Service token client secret, shown once at creation |
+
+To set them up: create a service token under Zero Trust → **Access → Service
+Auth**, then add a policy to the Access application covering
+`*.clubsplatform.pages.dev` whose action is **Service Auth** and which includes
+that token. The action matters — an Allow policy will not accept service-token
+headers, which presents as a `302` even though everything looks configured.
+
+`playwright.config.ts` turns those two variables into `CF-Access-Client-Id` /
+`CF-Access-Client-Secret` on every request when both are present, and sends nothing
+when they are not, so local runs are unaffected.
+
+While the secrets are absent the gate **skips itself with a warning** and main
+keeps shipping; it switches on as soon as both exist. The preview *migration* step
+is deliberately outside that condition, so the canary that catches a broken
+migration before production still runs either way.
+
+If a club on the preview deployment ever renders with no content, its seed was
+claimed but not written (see `functions/lib/seed.ts`). Clear the flag so the next
+request re-seeds:
+
+```sh
+npx wrangler d1 execute clubsplatform-preview --remote --env preview \
+  --command "UPDATE club_config SET seeded=0 WHERE slug='demo'"
+```
+
 ## Environment Variables
 
 Set in `wrangler.toml` under `[vars]`:
@@ -42,7 +192,8 @@ Set in `wrangler.toml` under `[vars]`:
 |----------|-------------|---------|
 | `BETTER_AUTH_SECRET` | Auth signing secret | required |
 | `BETTER_AUTH_URL` | Override auth base URL | auto-detected |
-| `MULTI_CLUB` | Enable multi-club platform mode | disabled |
+| `MULTI_CLUB` | Enable multi-club platform mode (path routing + demo slug) | disabled |
+| `ALLOW_CLUB_SELF_REGISTER` | Allow `POST /api/clubs/register` self-serve club creation (requires `MULTI_CLUB`) | disabled |
 | `PITCH_BOOKINGS` | Enable pitch scheduling & booking features | disabled |
 | `SECRETS_ENCRYPTION_KEY` | AES-256-GCM key for at-rest secret encryption (64 hex chars) | required for secrets |
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
@@ -107,7 +258,7 @@ and `[env.preview]` override it, a variable added only to the top-level
 
 ## Transactional email
 
-Password resets, sign-up verification and player-import invitations are sent
+Password resets and sign-up verification are sent
 through [Resend](https://resend.com). Two values configure it:
 
 | Value | Where it is set | Notes |
@@ -164,7 +315,7 @@ upload failure logs a warning and the build carries on. The wrapper also
 deletes the source maps itself in that case: the plugin only removes them after
 a *successful* upload, so without the cleanup a swallowed error would publish
 our source maps to Cloudflare Pages. If that cleanup ever fails, the build
-fails — shipping is worth more than symbolication, but not worth leaking
+fails — shipping is worth more than attribution, but not worth leaking
 source.
 
 Two more things to know if you touch this:
@@ -240,10 +391,16 @@ For **production** set `SECRETS_ENCRYPTION_KEY` and `SECRETS_TRANSPORT_PRIVATE_K
 
 Set `MULTI_CLUB = "true"` in `wrangler.toml` to activate:
 
-- Root URL shows the **landing page** (club directory + self-service sign-up)
+- Root URL shows the **landing page** (club directory; self-serve signup only when also allowed — see below)
 - Each club is served at `/{slug}/`
 - Club data is stored in D1 and seeded from static JSON on first access
-- Any authenticated user can create their own club and become its admin
+- The seeded **`demo`** club is a shop-window with fake content only (no FA CSV import, no parent emails, no live GoCardless on that slug). Keep it that way; create real clubs via platform-admin `POST /api/clubs` or seed JSON.
+
+### Self-serve club registration
+
+`MULTI_CLUB` alone does **not** open public club creation. Set `ALLOW_CLUB_SELF_REGISTER = "true"` (in addition to `MULTI_CLUB`) to allow authenticated users to `POST /api/clubs/register` and become that club's admin.
+
+Production and preview keep `ALLOW_CLUB_SELF_REGISTER = "false"` in `wrangler.toml` so a multi-club deploy can host live + demo without strangers creating clubs. Platform admins can still create clubs with `POST /api/clubs`. `GET /api/clubs` exposes `selfRegister` so the landing page can show or hide the signup funnel from the API flag.
 
 ### Seeding
 
@@ -280,6 +437,8 @@ Changes save to D1 via the API and take effect immediately.
 
 | Flag | What it shows |
 |------|---------------|
+| `MULTI_CLUB = "true"` | Path routing per club slug, landing page, demo club registry entry |
+| `ALLOW_CLUB_SELF_REGISTER = "true"` | Landing signup funnel + `POST /api/clubs/register` (requires `MULTI_CLUB`) |
 | `PITCH_BOOKINGS = "true"` | Pitch Schedule, Request a Pitch, Booking Requests in the sidebar |
 
 ## Project Structure
@@ -330,15 +489,32 @@ Changes save to D1 via the API and take effect immediately.
 
 ## Deployment
 
-Deploy to Cloudflare Pages. Set the build command and output directory in the Pages dashboard:
+Deployment is automatic and there is nothing to run by hand. Pushing to `main`
+runs `.github/workflows/main.yml`, which has three jobs in order:
 
-```
-Build command:   cd website && npm install && npm run build
-Build output:    website/dist
-```
+1. **`test`** — `npm run typecheck`, then `npm run test:coverage`.
+2. **`preview-e2e`** — migrates the preview D1 (a canary: a broken migration
+   trips here before production data is touched). Only when both
+   `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` are configured does it
+   deploy the commit as a Cloudflare preview and run the browser smoke test.
+   If either credential is absent, the preview deployment and browser smoke
+   test are skipped, and production deployment may proceed without browser
+   verification.
+3. **`deploy`** — applies production migrations, builds with source-map upload
+   enabled, and uploads to Cloudflare Pages.
 
-Apply production migrations after deploying:
+Each job gates the next: tests and preview migrations must pass before production
+deployment. Browser verification is required only when both Cloudflare Access
+credentials are configured; if either is absent, the preview deployment and
+browser smoke test are skipped, and production may proceed without browser
+verification.
 
-```bash
-make db-migrate-prod
-```
+**Production migrations are applied by CI, before the deploy** — do not run them
+by hand after a release, and note that `make db-migrate-prod` exists for
+emergencies rather than as part of the normal flow.
+
+This is a **direct upload** (`wrangler pages deploy website/dist`) from GitHub
+Actions, not a Cloudflare Git integration. The Pages dashboard's build command,
+build output and build environment variables are not part of this at all — they
+never run. See [Analytics (PostHog)](#analytics-posthog) for what that means for
+the `VITE_*` values, which have to be injected by the workflow's build step.

@@ -28,6 +28,35 @@
     ]
   },
   {
+    "event": "club email recipients dropped",
+    "description": "One or more player_contact recipients were excluded from a purpose-gated club email send, with reasons recorded for admin review.",
+    "files": [
+      "functions/api/admin/email-send.ts"
+    ]
+  },
+  {
+    "event": "club email send completed",
+    "description": "A purpose-gated club email send finished; counts include sent, skipped (mail unconfigured), and dropped recipients.",
+    "files": [
+      "functions/api/admin/email-send.ts"
+    ]
+  },
+  {
+    "event": "club email signoff accepted",
+    "description": "A club admin independently accepts all three contact-email liabilities under the current policy wording, enabling address collection on import.",
+    "files": [
+      "functions/api/admin/email-signoff.ts",
+      "functions/api/clubs/register.ts"
+    ]
+  },
+  {
+    "event": "club email signoff prompted",
+    "description": "Customise shows the blocking contact-email sign-off prompt because the club has no acceptance under the current policy version.",
+    "files": [
+      "website/src/components/customize/EmailSignoffPrompt.tsx"
+    ]
+  },
+  {
     "event": "club published",
     "description": "An admin takes their club's site live from the Customise page, making it visible to everyone.",
     "files": [
@@ -49,6 +78,14 @@
     ]
   },
   {
+    "event": "contact email purged",
+    "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only \u2014 never the address.",
+    "files": [
+      "functions/api/admin/contact-purge.ts",
+      "functions/api/me/contact-purge.ts"
+    ]
+  },
+  {
     "event": "customisation save failed",
     "description": "A save from the Site Admin page failed. Paired with a $exception carrying the cause.",
     "files": [
@@ -60,6 +97,13 @@
     "description": "An admin successfully saved the club's content from the Site Admin page.",
     "files": [
       "website/src/components/customize/SaveButton.tsx"
+    ]
+  },
+  {
+    "event": "dpa accepted",
+    "description": "A club admin accepts the versioned processor agreement (DPA) during club registration.",
+    "files": [
+      "functions/api/clubs/register.ts"
     ]
   },
   {
@@ -91,6 +135,20 @@
     ]
   },
   {
+    "event": "import contact emails dropped",
+    "description": "An FA player import carried contact emails but the club has no current email sign-off, so addresses were stripped while registration work continued.",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
+    "event": "import contact emails suppressed",
+    "description": "FA import skipped one or more addresses that were previously purged at this club (salted-hash suppression).",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
     "event": "login failed",
     "description": "A sign-in attempt did not succeed. The reason property distinguishes rejected credentials, a wrong-club account, and a thrown error.",
     "files": [
@@ -106,15 +164,71 @@
     ]
   },
   {
+    "event": "marketing consent granted",
+    "description": "A contact subject grants marketing-email consent under the current policy wording; a withdraw token is issued for one-click unsubscribe.",
+    "files": [
+      "functions/api/consent/grant.ts"
+    ]
+  },
+  {
+    "event": "marketing consent withdrawn",
+    "description": "Marketing consent is withdrawn via the one-click unsubscribe link (or equivalent token path).",
+    "files": [
+      "functions/api/unsubscribe.ts"
+    ]
+  },
+  {
+    "event": "member data deleted",
+    "description": "An admin deletes a member's Direct PII at the club (contacts, consent, anonymised identity) from Manage Users.",
+    "files": [
+      "functions/api/admin/member-data.ts"
+    ]
+  },
+  {
+    "event": "member data exported",
+    "description": "An admin exports a member's club-scoped personal data bundle from Manage Users.",
+    "files": [
+      "functions/api/admin/member-data.ts"
+    ]
+  },
+  {
+    "event": "merge suggestion dismissed",
+    "description": "An admin rules that two of one player's registrations sharing an age group are genuinely separate subs, so the merge suggestion stops being raised \u2014 or restores one they dismissed before, which carries `restored: true`. Counts only \u2014 no FAN numbers and no team names.",
+    "files": [
+      "functions/api/admin/registration-merge-suggestions.ts"
+    ]
+  },
+  {
+    "event": "parent consent link created",
+    "description": "Admin minted a tokenised parent contact-consent URL for a FAN (copy-link flow; mail optional).",
+    "files": [
+      "functions/api/admin/player-contacts.ts"
+    ]
+  },
+  {
+    "event": "parent contact confirmed",
+    "description": "Parent completed the club-scoped consent form without an account; player_contact confirmed.",
+    "files": [
+      "functions/api/consent/form.ts"
+    ]
+  },
+  {
+    "event": "parent contact withdrawn",
+    "description": "Parent withdrew contact consent via the same activation token on the form.",
+    "files": [
+      "functions/api/consent/form.ts"
+    ]
+  },
+  {
     "event": "password reset completed",
-    "description": "Someone sets a new password from a reset or invitation link, completing the flow.",
+    "description": "Someone sets a new password from a reset link, completing the flow.",
     "files": [
       "website/src/pages/ResetPasswordPage.tsx"
     ]
   },
   {
     "event": "password reset failed",
-    "description": "A reset submission was rejected — usually an expired, already-used or malformed token.",
+    "description": "A reset submission was rejected \u2014 usually an expired, already-used or malformed token.",
     "files": [
       "website/src/pages/ResetPasswordPage.tsx"
     ]
@@ -170,7 +284,7 @@
   },
   {
     "event": "payment page viewed",
-    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel.",
+    "description": "A player lands on the public payment setup page \u2014 the top of the subscription payment funnel.",
     "files": [
       "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
     ]
@@ -191,7 +305,7 @@
   },
   {
     "event": "player payment manually marked paid",
-    "description": "An admin records a registration as paid outside Direct Debit — cash, bank transfer or a sponsored place.",
+    "description": "An admin records a registration as paid outside Direct Debit \u2014 cash, bank transfer or a sponsored place.",
     "files": [
       "functions/api/admin/manual-payment.ts"
     ]
@@ -204,8 +318,15 @@
     ]
   },
   {
+    "event": "players import previewed",
+    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind \u2014 no writes happen. Counts only; no FAN numbers.",
+    "files": [
+      "functions/api/admin/import-players.ts"
+    ]
+  },
+  {
     "event": "players imported",
-    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and user accounts.",
+    "description": "An admin bulk-imports players from a spreadsheet, creating or updating player registrations and pending player_contact rows.",
     "files": [
       "functions/api/admin/import-players.ts"
     ]
@@ -228,7 +349,30 @@
     "event": "registrations exported",
     "description": "An admin exports the registrations table to a spreadsheet.",
     "files": [
-      "website/src/pages/RegistrationsPage.tsx"
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
+    ]
+  },
+  {
+    "event": "registrations merged",
+    "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only \u2014 no FAN numbers.",
+    "files": [
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
+    ]
+  },
+  {
+    "event": "registrations read",
+    "description": "A registrations read that was slow or touched a lot of rows, with how long it took, how many rows D1 read and how many it returned. One event across every registrations read \u2014 the `endpoint` property says which one (registrations_page, registrations_summary, registrations_facets, player_registrations_search, my_registrations). Sampled deliberately, not sent on every load: these endpoints are the ones suspected of being killed by a resource limit, so making healthy requests pay for a capture would push them closer to it. Durations and counts only \u2014 no FAN numbers, no emails, no team names.",
+    "files": [
+      "functions/lib/read-cost.ts"
+    ]
+  },
+  {
+    "event": "registrations unmerged",
+    "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only \u2014 no FAN numbers.",
+    "files": [
+      "functions/api/admin/registration-merges.ts",
+      "website/src/pages/registrations/ClubRegistrationsTab.tsx"
     ]
   },
   {
@@ -243,6 +387,13 @@
     "description": "A new user account was created.",
     "files": [
       "website/src/pages/SignUpPage.tsx"
+    ]
+  },
+  {
+    "event": "status report generated",
+    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only \u2014 no names, dates of birth or FAN numbers leave the page.",
+    "files": [
+      "website/src/pages/registrations/StatusReportPanel.tsx"
     ]
   },
   {

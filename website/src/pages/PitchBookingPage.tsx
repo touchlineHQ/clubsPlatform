@@ -9,6 +9,7 @@ import type { LiveTeam } from '../types';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { dedupeOptions } from '../utils/selectOptions';
 
 interface Pitch {
   id: string;
@@ -68,7 +69,6 @@ export function PitchBookingPage({ liveTeams }: Props) {
   const { teamRoles } = useAuth();
   const [pitches, setPitches] = useState<Pitch[]>([]);
   const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
-  const [dynamicTeamOptions, setDynamicTeamOptions] = useState<{ value: string; label: string }[]>([]);
   const [allTeamOptions, setAllTeamOptions] = useState<TeamOption[]>([]);
   const [requests, setRequests] = useState<BookingRequest[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>('request');
@@ -116,12 +116,9 @@ export function PitchBookingPage({ liveTeams }: Props) {
       })).filter(g => g.items.length > 0);
       setTeamOptions(grouped);
 
-      // Set dynamic team options from liveTeams
-      setDynamicTeamOptions(
-        liveTeams
-          .map(t => ({ value: `dynamic:${t.slug}|${t.league}|${t.name}`, label: `${t.name} (${t.league})` }))
-          .sort((a, b) => a.label.localeCompare(b.label))
-      );
+      const dynamic = liveTeams
+        .map(t => ({ value: `dynamic:${t.slug}|${t.league}|${t.name}`, label: `${t.name} (${t.league})` }))
+        .sort((a, b) => a.label.localeCompare(b.label));
 
       // Build combined team options with user's teams at the top
       const userTeamItems = teamRoles
@@ -143,10 +140,12 @@ export function PitchBookingPage({ liveTeams }: Props) {
       // Add defined teams
       allTeamOptions.push(...grouped);
       // Add dynamic teams
-      if (dynamicTeamOptions.length > 0) {
-        allTeamOptions.push({ group: 'Dynamic Teams', items: dynamicTeamOptions });
+      if (dynamic.length > 0) {
+        allTeamOptions.push({ group: 'Dynamic Teams', items: dynamic });
       }
-      setAllTeamOptions(allTeamOptions);
+      // A coached team also appears under its section, so the same value lands in
+      // two groups. First-wins keeps the "Your Teams" copy and its role label.
+      setAllTeamOptions(dedupeOptions(allTeamOptions));
 
       // Pre-fill team if user has exactly one coach/manager assignment
       if (userTeamItems.length === 1) {

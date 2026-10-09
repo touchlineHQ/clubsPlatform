@@ -16,10 +16,10 @@ function makeAssets(data: Record<string, unknown | null>) {
 }
 
 function makeDb(changes = 1) {
-  const batchMock = vi.fn(async () => []);
+  const batchMock = vi.fn(async (_stmts: D1PreparedStatement[]) => [] as unknown[]);
   const runMock = vi.fn(async () => ({ results: [], success: true, meta: { changes } }));
   const prepareMock = vi.fn(() => ({
-    bind: vi.fn(function () { return this; }),
+    bind: vi.fn(function (this: { run: typeof runMock }) { return this; }),
     run: runMock,
   })) as unknown as D1Database['prepare'];
 

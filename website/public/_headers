@@ -1,3 +1,10 @@
+# The sha256 in script-src is Vite's modulePreload polyfill (added in 0eacd39).
+# It looks redundant now: there is no inline <script> in website/index.html or in
+# the built dist/index.html, and in this Vite version the polyfill ships inside
+# the entry chunk, which script-src 'self' already covers. Left in place rather
+# than removed pending verification. Local preview with `wrangler pages dev`
+# serves static assets and processes _headers, so it can be used to check the
+# policy in a browser. Removing the hash is a deliberate follow-up.
 /*
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff

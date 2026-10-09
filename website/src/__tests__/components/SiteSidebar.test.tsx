@@ -280,4 +280,9 @@ describe('SiteSidebar', () => {
 
     expect(mockSignOut).toHaveBeenCalled();
   });
+  it('links to the club privacy notice in the sidebar footer', () => {
+    renderWithMantine(<SiteSidebar {...defaultProps} />, { authValue: mockLoggedOut });
+    expect(screen.getByText('Privacy notice')).toBeTruthy();
+  });
+
 });

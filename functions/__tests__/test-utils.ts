@@ -3,7 +3,14 @@ import type { Env } from '../lib/api-helpers';
 import type { D1Database } from '@cloudflare/workers-types';
 
 // ─── Mock ensure-tables globally ─────────────────────────────────────────────
-vi.mock('../lib/ensure-tables', () => ({ ensureTables: vi.fn(async () => {}) }));
+// Partial: only ensureTables is stubbed, so a handler under test never touches
+// the database on startup. The real TABLE_STATEMENTS stays reachable, which is
+// what sqlite-harness builds its schema from — blanking the module would leave
+// it with a third, drifting copy of the schema.
+vi.mock('../lib/ensure-tables', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/ensure-tables')>()),
+  ensureTables: vi.fn(async () => {}),
+}));
 
 // ─── Env builder ─────────────────────────────────────────────────────────────
 export const TEST_ENCRYPTION_KEY =
@@ -11,7 +18,7 @@ export const TEST_ENCRYPTION_KEY =
 
 export function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
-    DB: makeDb() as unknown as D1Database,
+    DB: makeDb(),
     ASSETS: { fetch: async () => new Response() },
     BETTER_AUTH_SECRET: 'test-secret',
     SECRETS_ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
@@ -28,9 +35,17 @@ export interface DbConfig {
   /** Row returned by .first() — can be a value or a queue. */
   first?: unknown | unknown[];
   /** Meta returned by .run() */
-  run?: { meta?: { changes?: number } };
+  run?: { meta?: { changes?: number } } | { meta?: { changes?: number } }[];
   /** Results returned by .batch() */
   batch?: unknown[][];
+  /**
+   * Meta returned by .all().
+   *
+   * D1 puts `rows_read` here and the read-cost sampler fires on it, so without
+   * a way to set it nothing could assert that a handler passes D1's own count
+   * through rather than leaving the rows arm inert.
+   */
+  allMeta?: { rows_read?: number; duration?: number };
 }
 
 function dequeue<T>(store: T | T[]): () => T {
@@ -39,35 +54,46 @@ function dequeue<T>(store: T | T[]): () => T {
   return () => (q.length > 1 ? (q.shift() as T) : (q[0] as T));
 }
 
-export function makeDb(config: DbConfig = {}): Partial<D1Database> {
+export function makeDb(config: DbConfig = {}): D1Database {
   const nextAll = dequeue(config.all ?? []);
   const nextFirst = dequeue(config.first ?? null);
-  const runMeta = config.run ?? { meta: { changes: 1 } };
+  const defaultRun = { meta: { changes: 1 } };
+  const nextRun = dequeue(config.run ?? defaultRun);
+  const batchRunMeta = Array.isArray(config.run)
+    ? (config.run[0] ?? defaultRun)
+    : (config.run ?? defaultRun);
   const batchResults = config.batch ?? [];
   let batchIdx = 0;
 
+  // Cast once at the boundary: the fake only implements the methods the suite
+  // exercises (prepare/batch/exec). Returning D1Database keeps makeEnv and the
+  // handlers under test honest without Partial<> leaking into every call site.
   return {
-    exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })) as unknown as D1Database['exec'],
+    exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })),
     prepare: vi.fn(() => {
       const boundObj = {
-        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
+        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: config.allMeta ?? {} })),
         first: vi.fn(async () => nextFirst()),
-        run: vi.fn(async () => ({ results: [], success: true, ...runMeta })),
+        run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
       };
       return {
         // Direct (no-bind) calls — forwards to the same queue
-        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: {} })),
+        all: vi.fn(async () => ({ results: nextAll(), success: true, meta: config.allMeta ?? {} })),
         first: vi.fn(async () => nextFirst()),
-        run: vi.fn(async () => ({ results: [], success: true, ...runMeta })),
+        run: vi.fn(async () => ({ results: [], success: true, ...nextRun() })),
         bind: vi.fn(() => boundObj),
       };
-    }) as unknown as D1Database['prepare'],
-    batch: vi.fn(async () => {
-      const r = batchResults[batchIdx] ?? [];
+    }),
+    batch: vi.fn(async (stmts: unknown) => {
+      const configured = batchResults[batchIdx];
       batchIdx++;
-      return r.map((results) => ({ results, success: true, meta: {} }));
-    }) as unknown as D1Database['batch'],
-  };
+      // One empty result per statement carrying run()'s meta — endpoints that
+      // batch guarded writes read meta.changes per statement.
+      const results = configured
+        ?? (Array.isArray(stmts) ? stmts.map(() => [] as unknown[]) : []);
+      return results.map((rows) => ({ results: rows, success: true, ...batchRunMeta }));
+    }),
+  } as unknown as D1Database;
 }
 
 // ─── Session builders ─────────────────────────────────────────────────────────
@@ -94,7 +120,11 @@ export const platformAdminSession = makeSession('admin', null);
 // ─── Context builder ──────────────────────────────────────────────────────────
 export function makeContext(
   request: Request,
-  overrides: Partial<{ env: Partial<Env>; params: Record<string, string> }> = {},
+  overrides: Partial<{
+    env: Partial<Env>;
+    params: Record<string, string>;
+    waitUntil: (p: Promise<unknown>) => void;
+  }> = {},
 ) {
   return {
     request,
@@ -102,18 +132,47 @@ export function makeContext(
     params: overrides.params ?? {},
     data: {},
     next: async () => new Response(),
+    // Real on a Pages context, so handlers may call it — read-cost telemetry
+    // does, for a read slow enough to sample. Without it here a slow test
+    // machine would fail on `waitUntil is not a function` rather than on
+    // anything the test is about.
+    waitUntil: overrides.waitUntil ?? (() => {}),
   };
 }
 
 // ─── Request builders ─────────────────────────────────────────────────────────
+// Club-bound admin fixtures must identify the same club as adminSession. Keep
+// this default in the shared builders so ordinary admin requests exercise the
+// handler rather than failing requireAdmin before their assertions run.
+const DEFAULT_ADMIN_CLUB_SLUG = 'test-club';
+const CLUB_SCOPED_ADMIN_PATHS = new Set([
+  '/api/teams',
+  '/api/news',
+  '/api/gallery',
+  '/api/matchday',
+  '/api/registration',
+  '/api/committee',
+  '/api/content',
+  '/api/my-registrations',
+]);
+
+function requestHeaders(path: string, headers: Record<string, string>): Record<string, string> {
+  const pathname = path.split('?', 1)[0];
+  const isClubScopedAdmin = pathname.startsWith('/api/admin/') || CLUB_SCOPED_ADMIN_PATHS.has(pathname);
+  if (!isClubScopedAdmin || Object.keys(headers).some((key) => key.toLowerCase() === 'x-club-slug')) {
+    return headers;
+  }
+  return { 'X-Club-Slug': DEFAULT_ADMIN_CLUB_SLUG, ...headers };
+}
+
 export function getReq(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`https://example.com${path}`, { headers });
+  return new Request(`https://example.com${path}`, { headers: requestHeaders(path, headers) });
 }
 
 export function postReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }
@@ -121,19 +180,19 @@ export function postReq(path: string, body: unknown, headers: Record<string, str
 export function patchReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }
 
 export function deleteReq(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`https://example.com${path}`, { method: 'DELETE', headers });
+  return new Request(`https://example.com${path}`, { method: 'DELETE', headers: requestHeaders(path, headers) });
 }
 
 export function putReq(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request(`https://example.com${path}`, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...headers },
+    headers: { 'Content-Type': 'application/json', ...requestHeaders(path, headers) },
     body: JSON.stringify(body),
   });
 }

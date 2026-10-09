@@ -1,11 +1,12 @@
-import { invitationMessage } from "../../lib/account-email";
-import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs, isMultiClubMode } from "../../lib/api-helpers";
-import { hashPwd } from "../../lib/auth";
-import { clubLink, getClubIdentity } from "../../lib/club-identity";
-import { getMailer } from "../../lib/email";
+import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
-import { SET_PASSWORD_TOKEN_TTL_MS, createSetPasswordToken } from "../../lib/set-password-token";
+import { normaliseTeamName } from "../../lib/team-name";
+import {
+  currentSignoffAcceptanceId,
+  hasCurrentEmailSignoff,
+} from "../../lib/club-email-signoff";
+import { hashContactEmailForSuppression, normalizeContactEmail } from "../../lib/contact-purge";
 
 export interface ParsedPlayerRow {
   fanId: string;
@@ -17,24 +18,49 @@ export interface ParsedPlayerRow {
   parentEmails: string[]; // split and trimmed
 }
 
-interface ImportResult {
-  ok: boolean;
-  players: { created: number; updated: number };
-  users: { created: number; skipped: number };
-  /**
-   * What happened to the set-password invitations. `configured` is false when
-   * no mail provider is set up, which is the difference between "nobody needed
-   * inviting" and "nothing went out and nobody knows their account exists".
-   */
-  invitations: { configured: boolean; sent: number; failed: number };
-  errors: { fanId: string; reason: string }[];
+/** A registration held in D1 that the uploaded file no longer mentions. */
+export interface StaleRegistration {
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
 }
 
-/** How many invitations are in flight at once. */
-const INVITE_BATCH_SIZE = 10;
+interface ImportResult {
+  ok: boolean;
+  /** Server-generated identifier shared by every part of a chunked import. */
+  runId?: string;
+  /** Player identity rows inserted. A returning player counts in neither field. */
+  players: { created: number };
+  registrations: { created: number; updated: number };
+  contacts: { created: number; skipped: number; dropped: number; suppressed: number };
+  errors: { fanId: string; reason: string }[];
+  stale: { count: number; rows: StaleRegistration[] };
+}
 
 export const IMPORT_LIMITS = {
   maxRows: 5000,
+  /**
+   * Rows one write request may carry.
+   *
+   * Cloudflare counts every D1 round trip as a subrequest, and the Workers Free
+   * plan allows 1,000 to internal services per request. A row costs 9.2 of them
+   * on typical data, so 15 is ~140 — a wide margin, and a sane step for the
+   * progress the admin sees.
+   *
+   * The client batches to this; the server refuses more, so an out-of-date page
+   * fails with a message instead of a killed Worker. A dry run is exempt: it
+   * writes nothing, and only a whole-file pass can find stale registrations.
+   */
+  maxCommitRows: 15,
+  /**
+   * Distinct addresses one write request may carry.
+   *
+   * Each address becomes one or more player_contact rows (one per player it is
+   * attached to). Rows are a poor proxy: a row carries one address typically and
+   * up to maxParentEmails + 1. Cap distinct addresses so a request stays inside
+   * the Workers Free subrequest budget even on an address-heavy file.
+   */
+  maxCommitEmails: 45,
   maxStringLen: 200,
   maxParentEmails: 10,
 } as const;
@@ -66,6 +92,135 @@ function validateImportRow(row: unknown): string | null {
   return null;
 }
 
+/**
+ * What one uploaded row resolves to, worked out without touching the database.
+ *
+ * `createPlayer` / `existingRegId` are decided once, in the read-only planning
+ * pass, so that a dry run and the real import agree on every count. Doing the
+ * decision inline with the writes (as this handler used to) makes that
+ * impossible: the first row's INSERT is what made the second row's SELECT find
+ * the player, so a read-only pass would count the same creation twice.
+ */
+interface RowPlan {
+  fanId: string;
+  playerId: string;
+  createPlayer: boolean;
+  teamName: string;
+  ageGroup: string | null;
+  expiry: string | null;
+  status: string | null;
+  /** Set when the registration already exists (or an earlier row will create it). */
+  existingRegId: string | null;
+  /** Set when this row is the one that inserts the registration. */
+  newRegId: string | null;
+}
+
+interface ContactPlan {
+  email: string;
+  fanId: string;
+  relationship: "self" | "guardian";
+  existingContactId: string | null;
+  /** sourcedAt of an existing row, used to tell "earlier part of this run" from "pre-existing". */
+  existingSourcedAt: number | null;
+  /** state of an existing row; pending contacts may have relationship refreshed. */
+  existingState: string | null;
+  /** relationship currently stored; compared so we only UPDATE when it would change. */
+  existingRelationship: "self" | "guardian" | null;
+  newContactId: string;
+}
+
+/**
+ * One slice of a chunked import.
+ *
+ * A whole-club import in one request exhausts the Worker's per-request budget
+ * and leaves the club half-imported, so the client sends slices. Contact rows
+ * are cheap compared to the old seeded-password path, but D1 round trips are
+ * still subrequests and still need chunking.
+ *
+ * Absent means an unchunked import, which maxCommitRows keeps small.
+ */
+interface ImportPart {
+  index: number;
+  total: number;
+  /** Returned by the server for part zero, then required for every later part. */
+  runId?: string;
+}
+
+/**
+ * Check a supplied import part before any player import writes.
+ * Missing parts are valid for unchunked requests; present parts need a zero-based
+ * index below a positive total; the first part forbids a run ID, and later
+ * parts require a nonempty run ID of at most 200 characters.
+ * Returns an error message for invalid parts, or null otherwise.
+ */
+function validatePart(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object') return 'part must be an object';
+  const p = v as Record<string, unknown>;
+  for (const k of ['index', 'total'] as const) {
+    if (!Number.isInteger(p[k]) || (p[k] as number) < 0) return `part.${k} must be a non-negative integer`;
+  }
+  if ((p.index as number) >= (p.total as number)) return 'part.index must be less than part.total';
+  if (p.index === 0 && p.runId !== undefined) return 'part.runId must be omitted for the first part';
+  if (p.index !== 0 && (typeof p.runId !== 'string' || !p.runId || p.runId.length > 200)) {
+    return 'part.runId is required after the first part';
+  }
+  return null;
+}
+
+interface ImportRunTotals {
+  partCount: number;
+  rowCount: number;
+  playersCreated: number;
+  registrationsCreated: number;
+  registrationsUpdated: number;
+  /** Contact counts; column names retained from the pre-#131 schema. */
+  usersCreated: number;
+  usersSkipped: number;
+  contactsDropped: number;
+  errorCount: number;
+}
+
+/**
+ * D1 caps a query at 100 bound parameters, so an `IN (…)` list over a whole
+ * club's worth of values has to be issued in slices.
+ */
+const MAX_BOUND_PARAMS = 90;
+
+/** Split values into ordered groups of at most 90 for bound-parameter queries. */
+function inSlices<T>(values: T[]): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < values.length; i += MAX_BOUND_PARAMS) {
+    out.push(values.slice(i, i + MAX_BOUND_PARAMS));
+  }
+  return out;
+}
+
+/** A registration as D1 currently holds it. */
+interface HeldRegistration {
+  id: string;
+  playerId: string;
+  fanId: string;
+  teamName: string;
+  registrationStatus: string | null;
+}
+
+/** Key for "this player, this team", on the normalised team name. */
+const regKey = (fanId: string, teamName: string) =>
+  JSON.stringify([fanId, normaliseTeamName(teamName)]);
+
+/**
+ * Preview or commit player rows for the authenticated club administrator.
+ * A whole-file dry run reports projected counts and stale registrations
+ * without writing players; an unchunked write also reports staleness. Chunked
+ * writes return no stale registrations because each part covers only a slice.
+ * They require sequential parts under the server-issued run ID, return
+ * per-part counts with that ID, and attempt the full-import log stamp only
+ * on the final part.
+ * Row-level write failures appear in the response's errors; invalid input
+ * returns 400, and conflicting or incomplete parts return 409. Database and
+ * analytics failures outside the per-row handlers can still reject the request.
+ */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
@@ -76,8 +231,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
   let rows: ParsedPlayerRow[];
+  let dryRun: boolean;
+  let part: ImportPart | null;
   try {
-    const body = await context.request.json() as { rows?: unknown };
+    const body = await context.request.json() as { rows?: unknown; dryRun?: unknown; part?: unknown };
     if (!Array.isArray(body.rows)) {
       return json({ error: "Expected { rows: [] }" }, { status: 400 });
     }
@@ -87,52 +244,221 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         { status: 400 },
       );
     }
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return json({ error: "dryRun must be a boolean" }, { status: 400 });
+    }
+    if (body.dryRun !== true && body.rows.length > IMPORT_LIMITS.maxCommitRows) {
+      return json(
+        {
+          error: `This page is out of date: it sent all ${body.rows.length} rows at once `
+            + `instead of in batches of ${IMPORT_LIMITS.maxCommitRows}. Reload and import again.`,
+        },
+        { status: 400 },
+      );
+    }
+    const partError = validatePart(body.part);
+    if (partError) return json({ error: partError }, { status: 400 });
     for (let i = 0; i < body.rows.length; i++) {
       const err = validateImportRow(body.rows[i]);
       if (err) {
         return json({ error: `Row ${i}: ${err}` }, { status: 400 });
       }
     }
+    if (body.dryRun !== true) {
+      const distinct = new Set<string>();
+      for (const r of body.rows as ParsedPlayerRow[]) {
+        for (const raw of [r.playerEmail, ...(r.parentEmails ?? [])]) {
+          const email = String(raw ?? '').trim().toLowerCase();
+          if (email) distinct.add(email);
+        }
+      }
+      if (distinct.size > IMPORT_LIMITS.maxCommitEmails) {
+        return json(
+          {
+            error: `This page is out of date: it sent ${distinct.size} email addresses at once `
+              + `instead of batching to ${IMPORT_LIMITS.maxCommitEmails}. Reload and import again.`,
+          },
+          { status: 400 },
+        );
+      }
+    }
     rows = body.rows as ParsedPlayerRow[];
+    dryRun = body.dryRun === true;
+    part = (body.part as ImportPart | undefined) ?? null;
   } catch {
     return json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const db = context.env.DB;
+  const adminId = (result.session.user as Record<string, unknown>).id as string;
+  let importRunId: string | null = null;
+  /** When this run began; contacts at least this old are an earlier part's. */
+  let runStartedAt: number | null = null;
+
+  // Claim the part before doing any import work. A later part can advance only
+  // after every preceding claim has produced its immutable part record.
+  if (!dryRun && part) {
+    if (part.index === 0) {
+      importRunId = randomId("imprun");
+      runStartedAt = nowMs();
+      await db
+        .prepare(`INSERT INTO "player_import_run" (id, clubSlug, adminId, totalParts, nextPart, createdAt) VALUES (?, ?, ?, ?, 1, ?)`)
+        .bind(importRunId, clubSlug, adminId, part.total, runStartedAt)
+        .run();
+    } else {
+      importRunId = part.runId!;
+      const claim = await db
+        .prepare(
+          `UPDATE "player_import_run"
+              SET nextPart = nextPart + 1
+            WHERE id = ? AND clubSlug = ? AND adminId = ? AND totalParts = ?
+              AND nextPart = ? AND completedAt IS NULL
+              AND (SELECT COUNT(*) FROM "player_import_run_part" WHERE runId = ?) = ?`,
+        )
+        .bind(importRunId, clubSlug, adminId, part.total, part.index, importRunId, part.index)
+        .run();
+      if (claim.meta.changes !== 1) {
+        return json(
+          { error: "Import part does not belong to this run or arrived out of sequence" },
+          { status: 409 },
+        );
+      }
+      const run = await db
+        .prepare(`SELECT createdAt FROM "player_import_run" WHERE id = ? AND clubSlug = ?`)
+        .bind(importRunId, clubSlug)
+        .first<{ createdAt: number }>();
+      runStartedAt = run?.createdAt ?? null;
+    }
+  }
+
+  /** The slice that stamps the import and reports the run to analytics. */
+  const isFinalPart = !part || part.index === part.total - 1;
   const importResult: ImportResult = {
     ok: true,
-    players: { created: 0, updated: 0 },
-    users: { created: 0, skipped: 0 },
-    invitations: { configured: false, sent: 0, failed: 0 },
+    players: { created: 0 },
+    registrations: { created: 0, updated: 0 },
+    contacts: { created: 0, skipped: 0, dropped: 0, suppressed: 0 },
     errors: [],
+    stale: { count: 0, rows: [] },
   };
+  if (importRunId) importResult.runId = importRunId;
 
-  // ── 1. Pre-process: build email→player maps ──────────────────────────────
-  // email → Map<fanId, relationship>
-  const emailRelMap = new Map<string, Map<string, "self" | "guardian">>();
+  // ── 1. Pre-process: (fanId, email) → relationship ────────────────────────
+  // One contact row per player×address at this club. The same parent of two
+  // siblings therefore yields two rows — that is intentional (UNIQUE is on
+  // clubSlug+playerId+email, not on email alone).
+  //
+  // Gate (#130): without a current club email sign-off, strip every address.
+  // Registration work (FAN / team) is contract-basis and still runs; we only
+  // refuse to collect Direct PII the club has not certified a basis for.
+  const hasSignoff = await hasCurrentEmailSignoff(db, clubSlug);
+  const signoffAcceptanceId = hasSignoff
+    ? await currentSignoffAcceptanceId(db, clubSlug)
+    : null;
 
+  const contactKey = (fanId: string, email: string) => `${fanId}\0${email}`;
+  const contactRelMap = new Map<string, { fanId: string; email: string; relationship: "self" | "guardian" }>();
+
+  let addressesInFile = 0;
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
     if (!fanId) continue;
 
     const playerEmail = String(row.playerEmail ?? "").trim().toLowerCase();
+    if (playerEmail) addressesInFile++;
+
+    for (const raw of row.parentEmails ?? []) {
+      if (raw.trim()) addressesInFile++;
+    }
+
+    if (!hasSignoff) continue;
+
     if (playerEmail) {
-      if (!emailRelMap.has(playerEmail)) emailRelMap.set(playerEmail, new Map());
-      emailRelMap.get(playerEmail)!.set(fanId, "self");
+      contactRelMap.set(contactKey(fanId, playerEmail), {
+        fanId, email: playerEmail, relationship: "self",
+      });
     }
 
     for (const raw of row.parentEmails ?? []) {
       const pe = raw.trim().toLowerCase();
       if (!pe) continue;
-      if (!emailRelMap.has(pe)) emailRelMap.set(pe, new Map());
-      // Only set guardian if not already marked self for this fanId
-      if (!emailRelMap.get(pe)!.has(fanId)) {
-        emailRelMap.get(pe)!.set(fanId, "guardian");
+      const key = contactKey(fanId, pe);
+      // Only set guardian if not already marked self for this fanId+email
+      if (!contactRelMap.has(key)) {
+        contactRelMap.set(key, { fanId, email: pe, relationship: "guardian" });
       }
     }
   }
 
-  // ── 2. Upsert players + registrations ────────────────────────────────────
+  if (!hasSignoff && addressesInFile > 0) {
+    importResult.contacts.dropped = addressesInFile;
+  }
+
+  // Suppression (#134): a purged address must not come back as pending via FA
+  // import. Drop those keys from the map before planning / writing contacts.
+  const hashesByEmail = new Map<string, string>();
+  if (hasSignoff && contactRelMap.size > 0) {
+    const distinctEmails = new Set([...contactRelMap.values()].map((entry) => entry.email));
+    for (const email of distinctEmails) {
+      if (!normalizeContactEmail(email)) continue;
+      const { emailHash } = await hashContactEmailForSuppression(clubSlug, email);
+      hashesByEmail.set(email, emailHash);
+    }
+    const suppressedHashes = new Set<string>();
+    for (const slice of inSlices([...hashesByEmail.values()])) {
+      const { results } = await db
+        .prepare(
+          `SELECT emailHash FROM "contact_email_suppression"
+            WHERE clubSlug = ? AND emailHash IN (${slice.map(() => "?").join(",")})`,
+        )
+        .bind(clubSlug, ...slice)
+        .all<{ emailHash: string }>();
+      for (const row of results ?? []) suppressedHashes.add(row.emailHash);
+    }
+    for (const [key, entry] of contactRelMap) {
+      const emailHash = hashesByEmail.get(entry.email);
+      if (emailHash && suppressedHashes.has(emailHash)) {
+        contactRelMap.delete(key);
+        importResult.contacts.suppressed++;
+      }
+    }
+  }
+
+  // ── 2. Read what the club already holds ──────────────────────────────────
+  // One query serves two jobs: it is the index the upsert matches against, and
+  // it is the set the stale list is subtracted from. Doing both from the same
+  // rows is what keeps the two consistent — matching registrations on the raw
+  // team name while computing staleness on the normalised one would quietly
+  // create a duplicate registration for every "Under  13"/"Under 13" variant
+  // and then report neither as stale.
+  const heldRegistrations = await db
+    .prepare(
+      `SELECT pr.id AS id, pr.playerId AS playerId, p.fanId AS fanId,
+              pr.teamName AS teamName, pr.registrationStatus AS registrationStatus
+         FROM "player_registration" pr
+         JOIN "player" p ON p.id = pr.playerId
+        WHERE pr.clubSlug = ?
+        ORDER BY pr.teamName ASC, p.fanId ASC`,
+    )
+    .bind(clubSlug)
+    .all<HeldRegistration>();
+
+  const held = heldRegistrations.results ?? [];
+  const heldByKey = new Map<string, HeldRegistration>();
   const fanIdToPlayerId = new Map<string, string>();
+  for (const reg of held) {
+    heldByKey.set(regKey(reg.fanId, reg.teamName), reg);
+    // A player with a registration at this club certainly exists, so this saves
+    // a per-row SELECT for the common case of a returning squad.
+    fanIdToPlayerId.set(reg.fanId, reg.playerId);
+  }
+
+  // ── 3. Plan players + registrations (reads only) ─────────────────────────
+  const rowPlans: RowPlan[] = [];
+  // Registrations an earlier row has already decided to insert. Consulting
+  // these is what keeps a file that lists the same FAN and team twice from
+  // counting one creation twice.
+  const plannedRegIds = new Map<string, string>();
 
   for (const row of rows) {
     const fanId = String(row.fanId ?? "").trim();
@@ -142,189 +468,449 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     try {
-      // Upsert player (identity — no club, no registration info)
-      const existingPlayer = await context.env.DB
-        .prepare(`SELECT id FROM "player" WHERE fanId = ? LIMIT 1`)
-        .bind(fanId)
-        .first<{ id: string }>();
+      // Resolve the player identity (no club, no registration info)
+      let playerId = fanIdToPlayerId.get(fanId);
+      let createPlayer = false;
+      if (!playerId) {
+        const existingPlayer = await db
+          .prepare(`SELECT id FROM "player" WHERE fanId = ? LIMIT 1`)
+          .bind(fanId)
+          .first<{ id: string }>();
 
-      let playerId: string;
-      if (existingPlayer) {
-        playerId = existingPlayer.id;
-        await context.env.DB
-          .prepare(`UPDATE "player" SET updatedAt = ? WHERE id = ?`)
-          .bind(nowMs(), playerId)
-          .run();
-      } else {
-        playerId = randomId("player");
-        await context.env.DB
-          .prepare(`INSERT INTO "player" (id, fanId, createdAt, updatedAt) VALUES (?, ?, ?, ?)`)
-          .bind(playerId, fanId, nowMs(), nowMs())
-          .run();
-        importResult.players.created++;
+        if (existingPlayer) {
+          playerId = existingPlayer.id;
+        } else {
+          playerId = randomId("player");
+          createPlayer = true;
+          importResult.players.created++;
+        }
+        fanIdToPlayerId.set(fanId, playerId);
       }
-      fanIdToPlayerId.set(fanId, playerId);
 
-      // Upsert player_registration
       const teamName = String(row.teamName ?? "").trim();
       const ageGroup = String(row.ageGroup ?? "").trim() || null;
       const expiry = String(row.registrationExpiry ?? "").trim() || null;
       const status = String(row.registrationStatus ?? "").trim() || null;
 
-      const existingReg = await context.env.DB
-        .prepare(`SELECT id FROM "player_registration" WHERE clubSlug = ? AND playerId = ? AND teamName = ? LIMIT 1`)
-        .bind(clubSlug, playerId, teamName)
-        .first<{ id: string }>();
+      const key = regKey(fanId, teamName);
+      const existingRegId =
+        heldByKey.get(key)?.id ?? plannedRegIds.get(key) ?? null;
 
-      if (existingReg) {
-        await context.env.DB
-          .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
-          .bind(ageGroup, expiry, status, nowMs(), existingReg.id)
-          .run();
-        importResult.players.updated++;
+      let newRegId: string | null = null;
+      if (existingRegId) {
+        importResult.registrations.updated++;
       } else {
-        await context.env.DB
-          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(randomId("preg"), clubSlug, playerId, teamName, ageGroup, expiry, status, nowMs(), nowMs())
-          .run();
+        newRegId = randomId("preg");
+        plannedRegIds.set(key, newRegId);
+        importResult.registrations.created++;
       }
+
+      rowPlans.push({
+        fanId, playerId, createPlayer, teamName,
+        ageGroup, expiry, status, existingRegId, newRegId,
+      });
     } catch (err) {
       importResult.errors.push({ fanId, reason: String(err) });
     }
   }
 
-  // ── 3. Upsert users + user_player links ──────────────────────────────────
-  // Accounts created here are invited afterwards, in one batched pass.
-  const invitees: { email: string; userId: string }[] = [];
-
-  for (const [email, fanMap] of emailRelMap) {
+  // ── 4. Plan contacts (reads only) ────────────────────────────────────────
+  // One query per 90 emails rather than one per contact: a 300-row file carries
+  // hundreds of addresses, and that was hundreds of sequential round trips.
+  // Lookups are club-scoped; matching on (playerId, email) happens in memory
+  // once fanIds have been resolved to playerIds above.
+  const existingContacts: {
+    id: string; playerId: string; email: string; sourcedAt: number;
+    state: string; relationship: "self" | "guardian";
+  }[] = [];
+  const emails = [...new Set([...contactRelMap.values()].map((c) => c.email))];
+  for (const slice of inSlices(emails)) {
     try {
-      // Find or create user
-      let userRow = await context.env.DB
-        .prepare(`SELECT id FROM "user" WHERE email = ? LIMIT 1`)
-        .bind(email)
-        .first<{ id: string }>();
+      const { results } = await db
+        .prepare(
+          `SELECT id, playerId, email, sourcedAt, state, relationship FROM "player_contact"
+            WHERE clubSlug = ? AND email IN (${slice.map(() => '?').join(',')})`,
+        )
+        .bind(clubSlug, ...slice)
+        .all<{
+          id: string; playerId: string; email: string; sourcedAt: number;
+          state: string; relationship: "self" | "guardian";
+        }>();
+      existingContacts.push(...results);
+    } catch (err) {
+      for (const email of slice) importResult.errors.push({ fanId: email, reason: String(err) });
+    }
+  }
 
-      if (userRow) {
-        importResult.users.skipped++;
-      } else {
-        const userId = randomId("user");
-        // An unguessable placeholder nobody is expected to know or use. This
-        // used to be the player's FAN ID, which is printed on team sheets and
-        // known to every coach in the age group — a guessable password on an
-        // account its owner had never been told about. The invitation below is
-        // how the account is actually reached.
-        const hashedPassword = await hashPwd(`${crypto.randomUUID()}${crypto.randomUUID()}`);
+  const existingByPlayerEmail = new Map<string, {
+    id: string; sourcedAt: number; state: string; relationship: "self" | "guardian";
+  }>();
+  for (const row of existingContacts) {
+    existingByPlayerEmail.set(`${row.playerId}\0${row.email}`, {
+      id: row.id,
+      sourcedAt: row.sourcedAt,
+      state: row.state,
+      relationship: row.relationship,
+    });
+  }
 
-        await context.env.DB
-          .prepare(`INSERT INTO "user" (id, name, email, emailVerified, role, clubSlug, createdAt, updatedAt) VALUES (?, '', ?, 0, 'member', ?, ?, ?)`)
-          .bind(userId, email, clubSlug, nowMs(), nowMs())
-          .run();
+  const contactPlans: ContactPlan[] = [];
+  for (const { fanId, email, relationship } of contactRelMap.values()) {
+    const playerId = fanIdToPlayerId.get(fanId);
+    // A fanId that failed player planning has no playerId yet; skip the contact
+    // rather than insert against a missing FK. The player error is already listed.
+    if (!playerId) continue;
 
-        await context.env.DB
-          .prepare(`INSERT INTO "account" (id, accountId, providerId, userId, password, createdAt, updatedAt) VALUES (?, ?, 'credential', ?, ?, ?, ?)`)
-          .bind(randomId("acc"), email, userId, hashedPassword, nowMs(), nowMs())
-          .run();
+    const existing = existingByPlayerEmail.get(`${playerId}\0${email}`) ?? null;
 
-        userRow = { id: userId };
-        importResult.users.created++;
-        invitees.push({ email, userId });
+    // A contact an earlier part of this run created counts as neither: the
+    // client sums the parts, so calling it "already existed" here would report
+    // one address as both created and pre-existing across a batch boundary.
+    const madeByThisRun =
+      existing !== null && runStartedAt !== null && existing.sourcedAt >= runStartedAt;
+
+    if (!existing) importResult.contacts.created++;
+    else if (!madeByThisRun) importResult.contacts.skipped++;
+
+    contactPlans.push({
+      email,
+      fanId,
+      relationship,
+      existingContactId: existing?.id ?? null,
+      existingSourcedAt: existing?.sourcedAt ?? null,
+      existingState: existing?.state ?? null,
+      existingRelationship: existing?.relationship ?? null,
+      newContactId: randomId("pcontact"),
+    });
+  }
+
+  // ── 5. Work out what the file leaves behind ──────────────────────────────
+  // Only teams the file actually covers can go stale. Without that guard a
+  // single-team export would report every other team in the club as missing —
+  // which is exactly what a chunk is, so a chunked import skips this entirely
+  // and the page shows the whole-file dry run's list instead.
+  const submittedTeams = new Set<string>();
+  const submittedKeys = new Set<string>();
+  for (const row of part ? [] : rows) {
+    const fanId = String(row.fanId ?? "").trim();
+    if (!fanId) continue;
+    const team = normaliseTeamName(String(row.teamName ?? ""));
+    submittedTeams.add(team);
+    submittedKeys.add(regKey(fanId, team));
+  }
+
+  for (const reg of held) {
+    const team = normaliseTeamName(reg.teamName ?? "");
+    if (!submittedTeams.has(team)) continue;
+    if (submittedKeys.has(regKey(reg.fanId, team))) continue;
+    importResult.stale.rows.push({
+      fanId: reg.fanId,
+      teamName: reg.teamName,
+      registrationStatus: reg.registrationStatus ?? null,
+    });
+  }
+  importResult.stale.count = importResult.stale.rows.length;
+
+  const posthog = getPostHog(context.env);
+
+  // ── 6. Preview stops here — nothing above this line writes ───────────────
+  if (dryRun) {
+    if (posthog) {
+      await posthog.captureImmediate({
+        distinctId: adminId,
+        event: 'players import previewed',
+        ...clubGroups(clubSlug),
+        properties: {
+          club_slug: clubSlug,
+          rows_submitted: rows.length,
+          to_create: importResult.registrations.created,
+          to_update: importResult.registrations.updated,
+          stale_count: importResult.stale.count,
+          contacts_dropped: importResult.contacts.dropped,
+        },
+      });
+      if (importResult.contacts.dropped > 0) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'import contact emails dropped',
+          ...clubGroups(clubSlug),
+          properties: {
+            club_slug: clubSlug,
+            contacts_dropped: importResult.contacts.dropped,
+            dry_run: true,
+            reason: 'club_email_signoff_missing',
+          },
+        });
       }
+      if (importResult.contacts.suppressed > 0) {
+        await posthog.captureImmediate({
+          distinctId: adminId,
+          event: 'import contact emails suppressed',
+          ...clubGroups(clubSlug),
+          properties: {
+            club_slug: clubSlug,
+            contacts_suppressed: importResult.contacts.suppressed,
+            dry_run: true,
+          },
+        });
+      }
+    }
+    return json(importResult);
+  }
 
-      // Upsert user_player links
-      for (const [fanId, relationship] of fanMap) {
-        const playerId = fanIdToPlayerId.get(fanId);
-        if (!playerId) continue;
-        await context.env.DB
-          .prepare(`INSERT OR IGNORE INTO "user_player" (id, userId, playerId, relationship, createdAt) VALUES (?, ?, ?, ?, ?)`)
-          .bind(randomId("up"), userRow.id, playerId, relationship, nowMs())
+  // ── 7. Apply players + registrations ─────────────────────────────────────
+  for (const plan of rowPlans) {
+    // The counters are a forecast made while planning. A write that fails has to
+    // take its own count back down, or the totals contradict the error list
+    // printed beside them.
+    const uncountRegistration = () => {
+      if (plan.existingRegId) importResult.registrations.updated--;
+      else importResult.registrations.created--;
+    };
+
+    try {
+      if (plan.createPlayer) {
+        await db
+          .prepare(`INSERT INTO "player" (id, fanId, createdAt, updatedAt) VALUES (?, ?, ?, ?)`)
+          .bind(plan.playerId, plan.fanId, nowMs(), nowMs())
+          .run();
+      } else {
+        await db
+          .prepare(`UPDATE "player" SET updatedAt = ? WHERE id = ?`)
+          .bind(nowMs(), plan.playerId)
           .run();
       }
     } catch (err) {
-      importResult.errors.push({ fanId: email, reason: String(err) });
+      if (plan.createPlayer) {
+        importResult.players.created--;
+        // The player row was never written, so drop the mapping too: otherwise
+        // the contact pass would insert against a missing player FK and report
+        // a second, spurious failure for the same row.
+        fanIdToPlayerId.delete(plan.fanId);
+      }
+      // Its registration never gets attempted below.
+      uncountRegistration();
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
+      continue;
+    }
+
+    try {
+      if (plan.existingRegId) {
+        await db
+          .prepare(`UPDATE "player_registration" SET ageGroup = ?, registrationExpiry = ?, registrationStatus = ?, updatedAt = ? WHERE id = ?`)
+          .bind(plan.ageGroup, plan.expiry, plan.status, nowMs(), plan.existingRegId)
+          .run();
+      } else {
+        await db
+          .prepare(`INSERT INTO "player_registration" (id, clubSlug, playerId, teamName, ageGroup, registrationExpiry, registrationStatus, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .bind(plan.newRegId, clubSlug, plan.playerId, plan.teamName, plan.ageGroup, plan.expiry, plan.status, nowMs(), nowMs())
+          .run();
+      }
+    } catch (err) {
+      uncountRegistration();
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
     }
   }
 
-  const adminId = (result.session.user as Record<string, unknown>).id as string;
-  const posthog = getPostHog(context.env);
-
-  // ── 4. Invite the accounts just created ──────────────────────────────────
-  // A provider failure here is recorded and reported back, never raised: the
-  // players and registrations are already written, and losing that work
-  // because a mail relay was down would be the worse outcome by far.
-  const mailer = getMailer(context.env);
-  importResult.invitations.configured = mailer !== null;
-
-  if (mailer && invitees.length > 0) {
-    const identity = await getClubIdentity(context.env.DB, clubSlug);
-    const clubName = identity?.name ?? "Your club";
-    const baseURL = context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
-    const multiClub = isMultiClubMode(context.env);
-    const expiryDays = Math.round(SET_PASSWORD_TOKEN_TTL_MS / (24 * 60 * 60 * 1000));
-
-    // Batched rather than one big Promise.all: an import can create hundreds of
-    // accounts, and firing that many outbound requests at once is how a worker
-    // hits its subrequest ceiling mid-import.
-    for (let i = 0; i < invitees.length; i += INVITE_BATCH_SIZE) {
-      const batch = invitees.slice(i, i + INVITE_BATCH_SIZE);
-      const outcomes = await Promise.allSettled(
-        batch.map(async ({ email, userId }) => {
-          const token = await createSetPasswordToken(context.env.DB, userId);
-          const link = clubLink(
-            baseURL,
-            clubSlug,
-            `/reset-password?token=${encodeURIComponent(token)}`,
-            multiClub,
-          );
-          const message = invitationMessage(clubName, link, expiryDays);
-          await mailer.send({
-            to: email,
-            subject: message.subject,
-            html: message.html,
-            text: message.text,
-            fromName: clubName,
-            ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
-          });
-        }),
-      );
-
-      for (const outcome of outcomes) {
-        if (outcome.status === "fulfilled") {
-          importResult.invitations.sent++;
-        } else {
-          importResult.invitations.failed++;
+  // ── 8. Apply player_contact rows ─────────────────────────────────────────
+  // Addresses land as pending and nothing else. Account creation moves to the
+  // parent activation flow (#132); import must not create user / account /
+  // user_player rows from CSV addresses.
+  for (const plan of contactPlans) {
+    if (plan.existingContactId) {
+      // Refresh relationship from the CSV while the contact is still pending.
+      // Once confirmed / withdrawn / bounced, leave relationship alone — the
+      // parent (or bounce handling) owns that field after activation.
+      if (
+        plan.existingState === 'pending'
+        && plan.existingRelationship !== null
+        && plan.relationship !== plan.existingRelationship
+      ) {
+        try {
+          await db
+            .prepare(
+              `UPDATE "player_contact" SET relationship = ?
+                WHERE id = ? AND clubSlug = ? AND state = 'pending'`,
+            )
+            .bind(plan.relationship, plan.existingContactId, clubSlug)
+            .run();
+        } catch (err) {
+          importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
         }
       }
+      continue;
     }
-
-    if (importResult.invitations.failed > 0 && posthog) {
-      await posthog.captureExceptionImmediate(
-        new Error(`${importResult.invitations.failed} import invitation(s) could not be sent`),
-        adminId,
-        { source: "import-players-invite", club_slug: clubSlug },
-      );
+    const playerId = fanIdToPlayerId.get(plan.fanId);
+    if (!playerId) {
+      // Player write failed (mapping dropped); take the contact count back.
+      importResult.contacts.created--;
+      continue;
+    }
+    try {
+      const inserted = await db
+        .prepare(
+          `INSERT INTO "player_contact"
+             (id, clubSlug, playerId, email, relationship, state,
+              operationalOptIn, marketingOptIn, sourcedBy, sourcedAt, signoffId,
+              confirmedAt, withdrawnAt, activationTokenHash, activationExpiresAt)
+           SELECT ?, ?, ?, ?, ?, 'pending', 0, 0, ?, ?, ?, NULL, NULL, NULL, NULL
+            WHERE NOT EXISTS (
+              SELECT 1 FROM "contact_email_suppression"
+               WHERE clubSlug = ? AND emailHash = ?
+            )`,
+        )
+        .bind(
+          plan.newContactId,
+          clubSlug,
+          playerId,
+          plan.email,
+          plan.relationship,
+          adminId,
+          nowMs(),
+          signoffAcceptanceId,
+          clubSlug,
+          hashesByEmail.get(plan.email) ?? null,
+        )
+        .run();
+      // A purge may have suppressed the address after the planning read.
+      if (inserted.meta.changes === 0) {
+        importResult.contacts.created--;
+        importResult.contacts.suppressed++;
+      }
+    } catch (err) {
+      importResult.contacts.created--;
+      importResult.errors.push({ fanId: plan.fanId, reason: String(err) });
     }
   }
 
-  if (posthog) {
+  // ── 9. Stamp the import so the Registrations page can age the data ───────
+  let runTotals: ImportRunTotals | null = null;
+  if (part && importRunId) {
+    await db
+      .prepare(
+        `INSERT INTO "player_import_run_part"
+           (runId, partIndex, rowCount, playersCreated, registrationsCreated,
+            registrationsUpdated, usersCreated, usersSkipped, contactsDropped, errorCount, recordedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        importRunId,
+        part.index,
+        rows.length,
+        importResult.players.created,
+        importResult.registrations.created,
+        importResult.registrations.updated,
+        importResult.contacts.created,
+        importResult.contacts.skipped,
+        importResult.contacts.dropped,
+        importResult.errors.length,
+        nowMs(),
+      )
+      .run();
+
+    if (isFinalPart) {
+      runTotals = await db
+        .prepare(
+          `SELECT COUNT(*) AS partCount,
+                  COALESCE(SUM(rowCount), 0) AS rowCount,
+                  COALESCE(SUM(playersCreated), 0) AS playersCreated,
+                  COALESCE(SUM(registrationsCreated), 0) AS registrationsCreated,
+                  COALESCE(SUM(registrationsUpdated), 0) AS registrationsUpdated,
+                  COALESCE(SUM(usersCreated), 0) AS usersCreated,
+                  COALESCE(SUM(usersSkipped), 0) AS usersSkipped,
+                  COALESCE(SUM(contactsDropped), 0) AS contactsDropped,
+                  COALESCE(SUM(errorCount), 0) AS errorCount
+             FROM "player_import_run_part" WHERE runId = ?`,
+        )
+        .bind(importRunId)
+        .first<ImportRunTotals>();
+
+      if (!runTotals || runTotals.partCount !== part.total) {
+        return json({ error: "Cannot finalize an import before every part is recorded" }, { status: 409 });
+      }
+
+      const finalized = await db
+        .prepare(
+          `UPDATE "player_import_run" SET completedAt = ?
+            WHERE id = ? AND clubSlug = ? AND adminId = ? AND totalParts = ?
+              AND nextPart = totalParts AND completedAt IS NULL`,
+        )
+        .bind(nowMs(), importRunId, clubSlug, adminId, part.total)
+        .run();
+      if (finalized.meta.changes !== 1) {
+        return json({ error: "Import run could not be finalized" }, { status: 409 });
+      }
+    }
+  }
+
+  // Once per import, not once per chunk. Chunked row counts come only from the
+  // part records above, never from a client-claimed whole-file total.
+  if (isFinalPart) {
+    try {
+      await db
+        .prepare(`INSERT INTO "club_import_log" (id, clubSlug, importedAt, rowCount, adminId) VALUES (?, ?, ?, ?, ?)`)
+        .bind(randomId("imp"), clubSlug, nowMs(), runTotals?.rowCount ?? rows.length, adminId)
+        .run();
+    } catch (err) {
+      // A missing stamp is not worth failing an otherwise good import over.
+      importResult.errors.push({ fanId: "(import log)", reason: String(err) });
+    }
+  }
+
+  // One event per import, not per chunk — otherwise a 300-row file reports as
+  // twelve small imports and the funnel counts are meaningless. The per-chunk
+  // counts stay in the response for the client to sum.
+  const contactsDropped = runTotals?.contactsDropped ?? importResult.contacts.dropped;
+  if (posthog && isFinalPart) {
     await posthog.captureImmediate({
       distinctId: adminId,
       event: 'players imported',
       ...clubGroups(clubSlug),
       properties: {
         club_slug: clubSlug,
-        rows_submitted: rows.length,
-        players_created: importResult.players.created,
-        players_updated: importResult.players.updated,
-        users_created: importResult.users.created,
-        users_skipped: importResult.users.skipped,
-        invitations_sent: importResult.invitations.sent,
-        invitations_failed: importResult.invitations.failed,
-        mail_configured: importResult.invitations.configured,
-        error_count: importResult.errors.length,
+        rows_submitted: runTotals?.rowCount ?? rows.length,
+        chunked: part !== null,
+        players_created: runTotals?.playersCreated ?? importResult.players.created,
+        registrations_created: runTotals?.registrationsCreated ?? importResult.registrations.created,
+        registrations_updated: runTotals?.registrationsUpdated ?? importResult.registrations.updated,
+        contacts_created: runTotals?.usersCreated ?? importResult.contacts.created,
+        contacts_skipped: runTotals?.usersSkipped ?? importResult.contacts.skipped,
+        contacts_dropped: contactsDropped,
+        error_count: runTotals?.errorCount ?? importResult.errors.length,
+        stale_count: importResult.stale.count,
+      },
+    });
+  }
+
+  if (posthog && contactsDropped > 0 && isFinalPart) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'import contact emails dropped',
+      ...clubGroups(clubSlug),
+      properties: {
+        club_slug: clubSlug,
+        contacts_dropped: contactsDropped,
+        dry_run: false,
+        reason: 'club_email_signoff_missing',
+      },
+    });
+  }
+
+  // Per-request: each chunk filters its own addresses; do not wait for the
+  // final part or a suppressed address in an earlier chunk is invisible.
+  if (posthog && importResult.contacts.suppressed > 0) {
+    await posthog.captureImmediate({
+      distinctId: adminId,
+      event: 'import contact emails suppressed',
+      ...clubGroups(clubSlug),
+      properties: {
+        club_slug: clubSlug,
+        contacts_suppressed: importResult.contacts.suppressed,
+        dry_run: false,
       },
     });
   }
 
   return json(importResult);
 };
+

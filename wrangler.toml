@@ -3,6 +3,15 @@ compatibility_date = "2024-09-23"
 pages_build_output_dir = "website/dist"
 compatibility_flags = [ "nodejs_compat" ]
 
+# NO [observability] block here, on purpose. Cloudflare Pages rejects the key in
+# every form (top-level or [env.*]) and fails the build with:
+#   Configuration file for Pages projects does not support "observability"
+# Pages Functions only get real-time logs, which are not persisted: dashboard →
+# Workers & Pages → clubsplatform → deployment → View details → Functions →
+# Real-time logs, or
+#   npx wrangler pages deployment tail --project-name clubsplatform --environment production
+# Persisted Workers Logs means moving to Workers + static assets (see #138).
+
 # ---------------------------------------------------------------------------
 # Default vars (used by `wrangler pages dev` without --env, and inherited
 # only where not overridden in an env block below). For Cloudflare Pages
@@ -19,6 +28,7 @@ compatibility_flags = [ "nodejs_compat" ]
 # ---------------------------------------------------------------------------
 [vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 # GoCardless environment: "sandbox" for testing, "live" for production.
 # The flip to "live" in [env.production.vars] is the final manual go-live toggle.
 GC_ENVIRONMENT = "sandbox"
@@ -26,8 +36,8 @@ GC_ENVIRONMENT = "sandbox"
 # the copies in the [env.*] blocks below, not this one. Pair it with
 # POSTHOG_API_KEY in .dev.vars to send events from a local worker.
 POSTHOG_HOST = "https://p.touchlinehq.co.uk"
-# Transactional email (password resets, sign-up verification, import
-# invitations). The matching RESEND_API_KEY is a secret, set the same way as
+# Transactional email (password resets and sign-up verification).
+# The matching RESEND_API_KEY is a secret, set the same way as
 # POSTHOG_API_KEY. getMailer() returns null unless BOTH are set, which disables
 # outgoing mail silently — a club without it keeps working, it just cannot send.
 FROM_EMAIL = "noreply@touchlinehq.co.uk"
@@ -56,6 +66,7 @@ migrations_dir = "migrations"
 
 [env.production.vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 # Final manual go-live toggle: flip to "live" via Cloudflare dashboard or by
 # editing this line once all other go-live checks have passed.
 GC_ENVIRONMENT = "live"
@@ -84,6 +95,7 @@ migrations_dir = "migrations"
 
 [env.preview.vars]
 MULTI_CLUB = "true"
+ALLOW_CLUB_SELF_REGISTER = "false"
 GC_ENVIRONMENT = "sandbox"
 # Repeated rather than inherited: `vars` is non-inheritable for Pages, and this
 # block overrides the top-level [vars], so anything omitted here is simply

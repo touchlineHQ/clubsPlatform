@@ -29,7 +29,7 @@ vi.mock('@mantine/core', async (importOriginal) => {
 import { TeamPage } from '../../pages/TeamPage';
 
 const liveTeams: LiveTeam[] = [
-  { slug: 'first-xi', name: 'First XI', league: 'sunday-league', leagueUrl: null, leagueName: 'Sunday League', contact: null },
+  { slug: 'first-xi', name: 'First XI', league: 'sunday-league' },
 ];
 
 describe('TeamPage', () => {

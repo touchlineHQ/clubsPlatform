@@ -1,19 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Anchor, Badge, Box, Button, Container, Group, Menu, Modal, Paper,
   SimpleGrid, Stack, Text, TextInput, PasswordInput,
-  Title, Alert,
+  Title, Alert, Checkbox,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconArrowRight, IconBallFootball, IconCalendar, IconCheck, IconChevronRight,
   IconExternalLink, IconLogout, IconMail, IconMapPin, IconPlus,
-  IconShield, IconUser, IconUsers,
+  IconBrandGithub, IconShield, IconUser, IconUsers,
 } from '@tabler/icons-react';
 import type { ClubEntry } from '../types';
 import { signUp, signOut } from '../auth-client';
 import { LoginForm } from '../components/LoginForm';
 import { useAuth, type AuthUser } from '../context/AuthContext';
+import {
+  EmailSignoffCheckboxes,
+  allSignoffTicksSet,
+  type EmailSignoffLiability,
+  type EmailSignoffTicks,
+} from '../components/EmailSignoffCheckboxes';
 
 const DEMO_SLUG = 'demo';
 
@@ -39,14 +45,17 @@ const scrollTo = (id: string) => {
 // ─────────────────────────────────────────────────────────────────────────────
 interface LandingPageProps {
   clubs: ClubEntry[];
+  /** Driven by GET /api/clubs `selfRegister` — when false, hide self-serve signup CTAs. */
+  selfRegister?: boolean;
 }
 
-export const LandingPage = ({ clubs }: LandingPageProps) => (
+export const LandingPage = ({ clubs, selfRegister = false }: LandingPageProps) => (
   <div style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-    <LandingHeader clubs={clubs} />
-    <HeroSection />
-    <ClubDirectorySection clubs={clubs} />
-    <GetStartedSection />
+    <LandingHeader clubs={clubs} selfRegister={selfRegister} />
+    <HeroSection selfRegister={selfRegister} />
+    <ClubDirectorySection clubs={clubs} selfRegister={selfRegister} />
+    <FeaturesSection />
+    {selfRegister ? <GetStartedSection /> : <HowToGetThisSection />}
     <ContactSection />
     <LandingFooter />
   </div>
@@ -55,7 +64,7 @@ export const LandingPage = ({ clubs }: LandingPageProps) => (
 // ─────────────────────────────────────────────────────────────────────────────
 // LandingHeader
 // ─────────────────────────────────────────────────────────────────────────────
-const LandingHeader = ({ clubs }: { clubs: ClubEntry[] }) => {
+const LandingHeader = ({ clubs, selfRegister }: { clubs: ClubEntry[]; selfRegister: boolean }) => {
   const { user, loading: authLoading } = useAuth();
   const [loginOpen, { open: openLogin, close: closeLogin }] = useDisclosure(false);
 
@@ -98,7 +107,9 @@ const LandingHeader = ({ clubs }: { clubs: ClubEntry[] }) => {
             {[
               { label: 'Directory', icon: <IconBallFootball size={14} />, href: '#clubs' },
               { label: 'Features', icon: <IconShield size={14} />, href: '#features' },
-              { label: 'Get Started', icon: <IconUsers size={14} />, href: '#getstarted' },
+              ...(selfRegister
+                ? [{ label: 'Get Started', icon: <IconUsers size={14} />, href: '#getstarted' }]
+                : [{ label: 'How to get this', icon: <IconUsers size={14} />, href: '#get-this' }]),
               { label: 'Contact', icon: <IconMail size={14} />, href: '#contact' },
             ].map(({ label, icon, href }) => (
               <Button
@@ -176,23 +187,25 @@ const LandingHeader = ({ clubs }: { clubs: ClubEntry[] }) => {
               </Menu>
             )}
 
-            <Button
-              component="a"
-              href="#getstarted"
-              variant="light"
-              color="orange"
-              size="compact-sm"
-              leftSection={<IconBallFootball size={14} />}
-              onClick={e => { e.preventDefault(); scrollTo('getstarted'); }}
-              visibleFrom="xs"
-            >
-              Create your club
-            </Button>
+            {selfRegister && (
+              <Button
+                component="a"
+                href="#getstarted"
+                variant="light"
+                color="orange"
+                size="compact-sm"
+                leftSection={<IconBallFootball size={14} />}
+                onClick={e => { e.preventDefault(); scrollTo('getstarted'); }}
+                visibleFrom="xs"
+              >
+                Create your club
+              </Button>
+            )}
           </Group>
         </Group>
       </Container>
 
-      <LoginModal opened={loginOpen} onClose={closeLogin} />
+      <LoginModal opened={loginOpen} onClose={closeLogin} selfRegister={selfRegister} />
     </Box>
   );
 };
@@ -208,7 +221,7 @@ const LandingHeader = ({ clubs }: { clubs: ClubEntry[] }) => {
  * whole origin, so once signed in the user can walk straight into their club,
  * private or not.
  */
-const LoginModal = ({ opened, onClose }: { opened: boolean; onClose: () => void }) => {
+const LoginModal = ({ opened, onClose, selfRegister }: { opened: boolean; onClose: () => void; selfRegister: boolean }) => {
   const handleSuccess = async (user: AuthUser | null): Promise<string | null> => {
     // Straight to the club they came for. A platform admin (clubSlug === null)
     // has no single club to land on, so they stay here with the menu.
@@ -224,17 +237,36 @@ const LoginModal = ({ opened, onClose }: { opened: boolean; onClose: () => void 
     <Modal opened={opened} onClose={onClose} title="Log in" centered radius="md">
       <Stack gap="md">
         <LoginForm onSuccess={handleSuccess} />
-        <Text size="sm" ta="center" c="dimmed">
-          Don't have a club yet?{' '}
-          <Anchor
-            href="#getstarted"
-            fw={600}
-            c={O6}
-            onClick={e => { e.preventDefault(); onClose(); scrollTo('getstarted'); }}
-          >
-            Create one
-          </Anchor>
-        </Text>
+        {selfRegister ? (
+          <Text size="sm" ta="center" c="dimmed">
+            Don't have a club yet?{' '}
+            <Anchor
+              href="#getstarted"
+              fw={600}
+              c={O6}
+              onClick={e => { e.preventDefault(); onClose(); scrollTo('getstarted'); }}
+            >
+              Create one
+            </Anchor>
+          </Text>
+        ) : (
+          <Text size="sm" ta="center" c="dimmed">
+            Want this for your club?{' '}
+            <Anchor
+              href="#contact"
+              fw={600}
+              c={O6}
+              onClick={e => { e.preventDefault(); onClose(); scrollTo('contact'); }}
+            >
+              Contact us
+            </Anchor>
+            {' '}or{' '}
+            <Anchor href={`/${DEMO_SLUG}/`} fw={600} c={O6}>
+              view the demo
+            </Anchor>
+            .
+          </Text>
+        )}
       </Stack>
     </Modal>
   );
@@ -243,7 +275,7 @@ const LoginModal = ({ opened, onClose }: { opened: boolean; onClose: () => void 
 // ─────────────────────────────────────────────────────────────────────────────
 // HeroSection
 // ─────────────────────────────────────────────────────────────────────────────
-const HeroSection = () => (
+const HeroSection = ({ selfRegister }: { selfRegister: boolean }) => (
   <Box
     style={{
       background: `linear-gradient(160deg, var(--mantine-color-gray-0) 0%, ${O0} 100%)`,
@@ -258,51 +290,92 @@ const HeroSection = () => (
           <div>
             <Title order={1} fw={800} style={{ fontSize: '3.25rem', lineHeight: 1.08, marginBottom: 20, textWrap: 'balance' } as React.CSSProperties}>
               Your club's{' '}
-              <span style={{ color: O5 }}>digital home,</span>{' '}
-              ready in minutes.
+              <span style={{ color: O5 }}>digital home</span>
+              {selfRegister ? ', ready in minutes.' : '.'}
             </Title>
             <Text size="xl" c="dimmed" maw={480} lh={1.65}>
-              A fully branded club website with live fixtures, team pages, news, and a built-in admin — powered by the FA Full-Time feed.
+              {selfRegister
+                ? 'A fully branded club website with live fixtures, team pages, news, and a built-in admin — powered by the FA Full-Time feed.'
+                : 'A fully branded club website with live fixtures, team pages, news, and a built-in admin. Explore the demo, log in if you already have a club, or contact us to get set up.'}
             </Text>
           </div>
 
           <Group gap="sm" wrap="wrap">
-            <Button
-              size="lg"
-              radius="xl"
-              color="orange"
-              leftSection={<IconUsers size={18} />}
-              onClick={() => scrollTo('getstarted')}
-              style={{ transition: 'filter 0.15s, transform 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.92)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.filter = ''; e.currentTarget.style.transform = ''; }}
-            >
-              Get Your Club Online
-            </Button>
-            <Button
-              component="a" 
-              href={`/${DEMO_SLUG}/`}
-              target="_blank"
-              rel="noopener noreferrer"
-              size="lg"
-              radius="xl"
-              variant="outline"
-              color="orange"
-              leftSection={<IconBallFootball size={18} />}
-              style={{ transition: 'background 0.15s, transform 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.background = O0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.transform = ''; }}
-            >
-              View Demo Club
-            </Button>
+            {selfRegister ? (
+              <Button
+                size="lg"
+                radius="xl"
+                color="orange"
+                leftSection={<IconUsers size={18} />}
+                onClick={() => scrollTo('getstarted')}
+                style={{ transition: 'filter 0.15s, transform 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.92)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.filter = ''; e.currentTarget.style.transform = ''; }}
+              >
+                Get Your Club Online
+              </Button>
+            ) : (
+              <Button
+                component="a"
+                href={`/${DEMO_SLUG}/`}
+                size="lg"
+                radius="xl"
+                color="orange"
+                leftSection={<IconBallFootball size={18} />}
+                style={{ transition: 'filter 0.15s, transform 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(0.92)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.filter = ''; e.currentTarget.style.transform = ''; }}
+              >
+                View Demo Club
+              </Button>
+            )}
+            {selfRegister ? (
+              <Button
+                component="a"
+                href={`/${DEMO_SLUG}/`}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="lg"
+                radius="xl"
+                variant="outline"
+                color="orange"
+                leftSection={<IconBallFootball size={18} />}
+                style={{ transition: 'background 0.15s, transform 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.background = O0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.transform = ''; }}
+              >
+                View Demo Club
+              </Button>
+            ) : (
+              <Button
+                size="lg"
+                radius="xl"
+                variant="outline"
+                color="orange"
+                leftSection={<IconMail size={18} />}
+                onClick={() => scrollTo('contact')}
+                style={{ transition: 'background 0.15s, transform 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.background = O0; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = ''; e.currentTarget.style.transform = ''; }}
+              >
+                Contact us
+              </Button>
+            )}
           </Group>
 
           <Group gap="xl" mt="xs">
-            {[
-              { num: 'Live', lbl: 'FA fixture feed' },
-              { num: 'Free', lbl: 'Open source' },
-              { num: '10 min', lbl: 'To go live' },
-            ].map(({ num, lbl }) => (
+            {(selfRegister
+              ? [
+                  { num: 'Live', lbl: 'FA fixture feed' },
+                  { num: 'Free', lbl: 'Open source' },
+                  { num: '10 min', lbl: 'To go live' },
+                ]
+              : [
+                  { num: 'Live', lbl: 'FA fixture feed' },
+                  { num: 'Free', lbl: 'Open source' },
+                  { num: 'Demo', lbl: 'Try it first' },
+                ]
+            ).map(({ num, lbl }) => (
               <Stack key={lbl} gap={4}>
                 <Text fw={800} size="xl">{num}</Text>
                 <Text size="sm" c="dimmed">{lbl}</Text>
@@ -311,7 +384,7 @@ const HeroSection = () => (
           </Group>
         </Stack>
 
-        {/* Right — visual card */}
+        {/* Right — visual card (unchanged decorative preview) */}
         <div style={{ position: 'relative' }}>
           <Paper radius="xl" shadow="lg" withBorder style={{ overflow: 'hidden' }}>
             {/* Dark header */}
@@ -416,15 +489,13 @@ const HeroSection = () => (
   </Box>
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ClubDirectorySection
 // ─────────────────────────────────────────────────────────────────────────────
-const ClubDirectorySection = ({ clubs }: { clubs: ClubEntry[] }) => {
+const ClubDirectorySection = ({ clubs, selfRegister }: { clubs: ClubEntry[]; selfRegister: boolean }) => {
   const demoClub = clubs.find(c => c.slug === DEMO_SLUG);
   // published === false means the club's site isn't live yet — /api/clubs still
   // lists it so its admins can reach their own login page, but it has no place
-  // in the public directory. Applied here, not where the cards render, so the
-  // TODO below can be uncommented without leaking a club that isn't ready.
+  // in the public directory.
   const realClubs = clubs.filter(c => c.slug !== DEMO_SLUG && c.published !== false);
 
   return (
@@ -436,9 +507,15 @@ const ClubDirectorySection = ({ clubs }: { clubs: ClubEntry[] }) => {
             <Title order={2} fw={800} style={{ fontSize: '2.1rem', marginBottom: 12 }}>Clubs on the platform.</Title>
             <Text size="md" c="dimmed" maw={560}>Every club gets a fully branded site, their own space, and admin access. Browse what's already live.</Text>
           </div>
-          <Button color="orange" radius="xl" leftSection={<IconPlus size={14} />} onClick={() => scrollTo('getstarted')}>
-            Add your club
-          </Button>
+          {selfRegister ? (
+            <Button color="orange" radius="xl" leftSection={<IconPlus size={14} />} onClick={() => scrollTo('getstarted')}>
+              Add your club
+            </Button>
+          ) : (
+            <Button color="orange" radius="xl" leftSection={<IconMail size={14} />} onClick={() => scrollTo('contact')}>
+              Contact us
+            </Button>
+          )}
         </Group>
 
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
@@ -453,7 +530,6 @@ const ClubDirectorySection = ({ clubs }: { clubs: ClubEntry[] }) => {
               href={`/${DEMO_SLUG}/`}
             />
           )}
-          {/* TODO: Add featured clubs functionality so only a select few are displayed on the homepage
           {realClubs.map(club => (
             <ClubCard
               key={club.slug}
@@ -464,10 +540,11 @@ const ClubDirectorySection = ({ clubs }: { clubs: ClubEntry[] }) => {
               badgeEmoji="🏆"
               href={`/${club.slug}/`}
             />
-          ))} */}
+          ))}
 
-          {/* Add your club dashed card */}
-          <AddClubCard onClick={() => scrollTo('getstarted')} />
+          {selfRegister && (
+            <AddClubCard onClick={() => scrollTo('getstarted')} />
+          )}
         </SimpleGrid>
       </Container>
     </Box>
@@ -571,7 +648,148 @@ const AddClubCard = ({ onClick }: { onClick: () => void }) => {
   );
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
+// FeaturesSection — honest data copy (#146); no "zero personal data" claims
+// ─────────────────────────────────────────────────────────────────────────────
+const FEATURES = [
+  {
+    icon: <IconUsers size={22} />,
+    title: 'Team pages & fixtures',
+    desc: 'Squad pages with live FA Full-Time fixtures and results, plus committee contacts the club chooses to publish.',
+    points: ['Coach & manager contacts the club publishes', 'Daily fixture sync', 'Scores hidden for younger age groups'],
+  },
+  {
+    icon: <IconCalendar size={22} />,
+    title: 'Membership & payments',
+    desc: 'Registrations keyed by FA Number (FAN). Subscriptions collected via GoCardless — payment references only, not card numbers.',
+    points: ['FAN / team / registration refs', 'GoCardless payment references', 'Admin tools for the club'],
+  },
+  {
+    icon: <IconShield size={22} />,
+    title: 'Privacy-aware by design',
+    desc: 'Each club is the data controller. The site holds admin logins and the membership refs needed to run the club — not player name, DOB, address, phone, medical, or safeguarding notes.',
+    points: ['Club named as controller on its privacy notice', 'No player name / DOB / medical in membership records', 'See each club\'s privacy notice for details'],
+  },
+] as const;
+
+function FeaturesSection() {
+  return (
+    <Box id="features" style={{ background: DARK, padding: '80px 24px' }}>
+      <Container size="xl">
+        <Stack gap={8} mb={40} style={{ textAlign: 'center' }}>
+          <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5 }}>Features</Text>
+          <Title order={2} fw={800} c="white" style={{ fontSize: '2rem' }}>
+            Built for grassroots clubs
+          </Title>
+          <Text c="gray.4" maw={640} mx="auto">
+            Open-source club sites with live fixtures, registrations, and an admin panel.
+            Personal data is limited to what the club needs — and each club publishes its own privacy notice.
+          </Text>
+        </Stack>
+        <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="lg">
+          {FEATURES.map(({ icon, title, desc, points }) => (
+            <Paper
+              key={title}
+              radius="lg"
+              p="xl"
+              style={{
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.1)',
+              }}
+            >
+              <Group gap={12} mb="md">
+                <Box style={{
+                  width: 44, height: 44, borderRadius: 12,
+                  background: 'rgba(240,120,32,0.15)', color: O5,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {icon}
+                </Box>
+                <Text fw={700} c="white" size="lg">{title}</Text>
+              </Group>
+              <Text size="sm" c="gray.4" mb="md" lh={1.6}>{desc}</Text>
+              <Stack gap={6}>
+                {points.map((p) => (
+                  <Group key={p} gap={8} wrap="nowrap" align="flex-start">
+                    <IconCheck size={14} color={G5} style={{ marginTop: 3, flexShrink: 0 }} />
+                    <Text size="sm" c="gray.3">{p}</Text>
+                  </Group>
+                ))}
+              </Stack>
+            </Paper>
+          ))}
+        </SimpleGrid>
+      </Container>
+    </Box>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HowToGetThisSection (shown when self-register is off)
+// ─────────────────────────────────────────────────────────────────────────────
+const HowToGetThisSection = () => (
+  <Box
+    id="get-this"
+    style={{
+      background: `linear-gradient(160deg, var(--mantine-color-gray-0) 0%, ${O0} 60%)`,
+      borderTop: '1px solid var(--mantine-color-gray-2)',
+      padding: '80px 24px',
+    }}
+  >
+    <Container size="md">
+      <Stack gap="xl" align="center" style={{ textAlign: 'center' }}>
+        <div>
+          <Text size="xs" fw={700} tt="uppercase" style={{ letterSpacing: '0.07em', color: O5, marginBottom: 10 }}>How to get this</Text>
+          <Title order={2} fw={800} style={{ fontSize: '2rem', marginBottom: 12 }}>
+            Not offering self-serve signup right now.
+          </Title>
+          <Text c="gray.6" maw={560} mx="auto">
+            Explore the demo club, log in if you already administer a club on this deploy,
+            contact us if you want a hosted setup, or fork the open-source project to self-host.
+          </Text>
+        </div>
+
+        <Group gap="sm" justify="center" wrap="wrap">
+          <Button
+            component="a"
+            href={`/${DEMO_SLUG}/`}
+            size="md"
+            radius="xl"
+            color="orange"
+            leftSection={<IconBallFootball size={16} />}
+          >
+            View Demo Club
+          </Button>
+          <Button
+            size="md"
+            radius="xl"
+            variant="outline"
+            color="orange"
+            leftSection={<IconMail size={16} />}
+            onClick={() => scrollTo('contact')}
+          >
+            Contact us
+          </Button>
+          <Button
+            component="a"
+            href="https://github.com/touchlineHQ/clubsPlatform"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="md"
+            radius="xl"
+            variant="light"
+            color="gray"
+            leftSection={<IconBrandGithub size={16} />}
+          >
+            Self-host on GitHub
+          </Button>
+        </Group>
+      </Stack>
+    </Container>
+  </Box>
+);
+
 // GetStartedSection
 // ─────────────────────────────────────────────────────────────────────────────
 const GetStartedSection = () => (
@@ -637,11 +855,72 @@ const AuthCard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [liabilities, setLiabilities] = useState<EmailSignoffLiability[]>([]);
+  const [policyVersion, setPolicyVersion] = useState<string | null>(null);
+  const [signoffTicks, setSignoffTicks] = useState<EmailSignoffTicks>({});
+  const [dpaAccepted, setDpaAccepted] = useState(false);
+  const [dpaPolicyVersion, setDpaPolicyVersion] = useState<string | null>(null);
+  const [dpaWording, setDpaWording] = useState<string>('');
+  const [dpaWordingHash, setDpaWordingHash] = useState<string>('');
+  const [dpaIcoNote, setDpaIcoNote] = useState<string>('');
+  const [dpaLoadError, setDpaLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const signoffRes = await fetch('/api/email-signoff-policy');
+        if (signoffRes.ok) {
+          const data = await signoffRes.json() as { policyVersion?: string; liabilities?: EmailSignoffLiability[] };
+          if (!cancelled && data.liabilities && data.policyVersion) {
+            setPolicyVersion(data.policyVersion);
+            setLiabilities(data.liabilities);
+            const initial: EmailSignoffTicks = {};
+            for (const l of data.liabilities) initial[l.id] = false;
+            setSignoffTicks(initial);
+          }
+        }
+
+      } catch {
+        // Register will still require the ticks server-side.
+      }
+    })();
+    (async () => {
+      try {
+        const response = await fetch('/api/dpa-policy');
+        if (!response.ok) throw new Error('Policy request failed');
+        const data = await response.json() as Record<string, unknown> | null;
+        if (
+          !data
+          || typeof data.policyVersion !== 'string' || !data.policyVersion.trim()
+          || typeof data.wording !== 'string' || !data.wording.trim()
+          || typeof data.wordingHash !== 'string' || !data.wordingHash.trim()
+        ) throw new Error('Invalid policy response');
+        if (!cancelled) {
+          setDpaPolicyVersion(data.policyVersion);
+          setDpaWording(data.wording);
+          setDpaWordingHash(data.wordingHash);
+          setDpaIcoNote(typeof data.icoFeeNote === 'string' ? data.icoFeeNote : '');
+        }
+      } catch {
+        if (!cancelled) setDpaLoadError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccess('');
+    if (liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks)) {
+      setError('Please independently accept each contact-email liability before creating your club.');
+      return;
+    }
+    if (!dpaAccepted || !dpaPolicyVersion || !dpaWordingHash) {
+      setError('Please accept the processor agreement (DPA) before creating your club.');
+      return;
+    }
     setLoading(true);
     try {
       const result = await signUp.email({ name, email, password });
@@ -650,10 +929,25 @@ const AuthCard = () => {
         return;
       }
 
+      const signoffLiabilities: Record<string, boolean> = {};
+      const wordingHashes: Record<string, string> = {};
+      for (const l of liabilities) {
+        signoffLiabilities[l.id] = signoffTicks[l.id] === true;
+        wordingHashes[l.id] = l.wordingHash;
+      }
+
       const res = await fetch('/api/clubs/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clubName }),
+        body: JSON.stringify({
+          clubName,
+          emailSignoff: { liabilities: signoffLiabilities, policyVersion, wordingHashes },
+          dpaAcceptance: {
+            accepted: true,
+            policyVersion: dpaPolicyVersion,
+            wordingHash: dpaWordingHash,
+          },
+        }),
       });
       const data = await res.json() as { ok?: boolean; slug?: string; error?: string };
       if (!res.ok) {
@@ -713,7 +1007,58 @@ const AuthCard = () => {
               onChange={e => setPassword(e.currentTarget.value)}
               styles={{ label: { fontSize: '0.8rem', fontWeight: 600, color: 'var(--mantine-color-gray-8)' } }}
             />
-            <Button type="submit" fullWidth color="orange" radius="md" size="md" loading={loading} mt={4}>
+            {liabilities.length > 0 && (
+              <Stack gap="sm">
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+                  Contact-email liabilities
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Required before the club can collect contact emails. Each liability
+                  must be accepted separately — there is no accept-all.
+                </Text>
+                <EmailSignoffCheckboxes
+                  liabilities={liabilities}
+                  ticks={signoffTicks}
+                  onChange={setSignoffTicks}
+                  disabled={loading}
+                />
+              </Stack>
+            )}
+            {dpaLoadError && (
+              <Text role="alert" size="sm" c="red">
+                Unable to load the processor agreement. Reload the page to try again.
+              </Text>
+            )}
+            {dpaWording && (
+              <Stack gap="xs">
+                <Text size="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+                  Processor agreement
+                </Text>
+                <Text size="xs" c="dimmed">{dpaWording}</Text>
+                {dpaIcoNote && (
+                  <Text size="xs" c="dimmed">{dpaIcoNote}</Text>
+                )}
+                <Checkbox
+                  label="I accept the processor agreement on behalf of this club"
+                  checked={dpaAccepted}
+                  onChange={(e) => setDpaAccepted(e.currentTarget.checked)}
+                  disabled={loading}
+                />
+              </Stack>
+            )}
+            <Button
+              type="submit"
+              fullWidth
+              color="orange"
+              radius="md"
+              size="md"
+              loading={loading}
+              mt={4}
+              disabled={
+                (liabilities.length > 0 && !allSignoffTicksSet(liabilities, signoffTicks))
+                || !dpaAccepted
+              }
+            >
               Create my club site →
             </Button>
           </Stack>
@@ -782,9 +1127,15 @@ const LandingFooter = () => (
         </Text>
       </Box>
 
-      <Text size="xs" c="gray.5" m="auto">© {new Date().getFullYear()} touchlineHQ. Made in the UK.</Text>
+      <Text size="xs" c="gray.5" m="auto" style={{ maxWidth: 420, textAlign: 'center' }}>
+        © {new Date().getFullYear()} touchlineHQ. Each club is the data controller of its site —
+        see that club's privacy notice (e.g.{' '}
+        <Anchor href={`/${DEMO_SLUG}/#/privacy`} size="xs" style={{ color: G5 }}>demo</Anchor>
+        ).
+      </Text>
 
       <Group gap={16} wrap="nowrap" style={{ flexShrink: 0, margin: 'auto' }}>
+        <Anchor href={`/${DEMO_SLUG}/#/privacy`} size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>Privacy</Anchor>
         <Anchor href="https://touchlinehq.co.uk" target="_blank" size="xs" style={{ color: G5, textDecoration: 'none', transition: 'color 0.15s' }} onMouseEnter={e => (e.currentTarget.style.color = G6)} onMouseLeave={e => (e.currentTarget.style.color = G5)}>touchlineHQ.co.uk ↗</Anchor>
       </Group>
     </div>

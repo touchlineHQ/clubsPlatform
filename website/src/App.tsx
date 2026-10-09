@@ -23,6 +23,8 @@ import { NewsPage } from './pages/NewsPage';
 import { GalleryPage } from './pages/GalleryPage';
 import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
+import { PrivacyNoticePage } from './pages/PrivacyNoticePage';
+import { ParentConsentPage } from './pages/ParentConsentPage';
 import { pageview } from './lib/posthog';
 import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
@@ -65,7 +67,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
 
 function AppRoutes() {
   const { user, loading: authLoading, isAdmin, isPlatformAdmin } = useAuth();
-  const [registry, setRegistry] = useState<{ multiClub: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
+  const [registry, setRegistry] = useState<{ multiClub: boolean; selfRegister: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
@@ -162,9 +164,25 @@ function AppRoutes() {
 
   // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
+    // Platform admins have no club, so their recovery links are prefix-less
+    // (`/#/reset-password`). Mount just those routes here or they hit the
+    // landing page.
+    const rootHash = window.location.hash.replace(/^#/, '').split('?')[0];
+    if (rootHash === '/forgot-password' || rootHash === '/reset-password') {
+      return (
+        <MantineProvider theme={createLandingTheme()}>
+          <HashRouter>
+            <Routes>
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+            </Routes>
+          </HashRouter>
+        </MantineProvider>
+      );
+    }
     return (
       <MantineProvider theme={createLandingTheme()}>
-        <LandingPage clubs={registry.clubs} />
+        <LandingPage clubs={registry.clubs} selfRegister={registry.selfRegister} />
       </MantineProvider>
     );
   }
@@ -189,6 +207,8 @@ function AppRoutes() {
               <Route path="/signup" element={<SignUpPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/privacy" element={<PrivacyNoticePage />} />
+              <Route path="/consent/:token" element={<ParentConsentPage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>
@@ -269,13 +289,15 @@ function AppRoutes() {
                 <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
               </>
             )}
-            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />})
+            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />}
             {data.visibility['/register'] && <Route path="/register" element={<RegisterPage items={data.registration} />} />}
             {data.visibility['/committee'] && <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />}
             {data.visibility['/news'] && <Route path="/news" element={<NewsPage items={data.news} />} />}
             {data.visibility['/gallery'] && <Route path="/gallery" element={<GalleryPage items={data.gallery} />} />}
             {data.visibility['/matchday'] && <Route path="/matchday" element={<MatchdayPage items={data.matchday} club={data.club} />} />}
             {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
+            <Route path="/privacy" element={<PrivacyNoticePage />} />
+            <Route path="/consent/:token" element={<ParentConsentPage />} />
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />

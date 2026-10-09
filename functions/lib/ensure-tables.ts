@@ -1,6 +1,13 @@
 import { D1Database } from "@cloudflare/workers-types";
 
-const TABLE_STATEMENTS = [
+/**
+ * The full current schema, idempotent.
+ *
+ * Exported so the SQLite-backed tests can stand up a real database from the
+ * same source the Worker uses, rather than keeping a third copy of the schema
+ * that would drift from this one and from migrations/.
+ */
+export const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user" ("id" TEXT PRIMARY KEY NOT NULL, "name" TEXT NOT NULL, "email" TEXT NOT NULL UNIQUE, "emailVerified" INTEGER NOT NULL DEFAULT 0, "image" TEXT, "role" TEXT NOT NULL DEFAULT 'member', "clubSlug" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "session" ("id" TEXT PRIMARY KEY NOT NULL, "expiresAt" INTEGER NOT NULL, "token" TEXT NOT NULL UNIQUE, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, "ipAddress" TEXT, "userAgent" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE)`,
   `CREATE TABLE IF NOT EXISTS "account" ("id" TEXT PRIMARY KEY NOT NULL, "accountId" TEXT NOT NULL, "providerId" TEXT NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "accessToken" TEXT, "refreshToken" TEXT, "idToken" TEXT, "accessTokenExpiresAt" INTEGER, "refreshTokenExpiresAt" INTEGER, "scope" TEXT, "password" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
@@ -37,14 +44,28 @@ const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "player_registration" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "ageGroup" TEXT, "registrationExpiry" TEXT, "registrationStatus" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "playerId", "teamName"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_clubSlug" ON "player_registration" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_playerId" ON "player_registration" ("playerId")`,
+  // COLLATE NOCASE is load-bearing: a BINARY index cannot serve a NOCASE ORDER BY.
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_team" ON "player_registration" ("clubSlug", "teamName" COLLATE NOCASE, "id")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_status" ON "player_registration" ("clubSlug", "registrationStatus" COLLATE NOCASE)`,
+  // Orders the merge-suggestion candidate walk, so grouping on (playerId,
+  // ageKey) does not need a temp B-tree over the club's registrations.
+  `CREATE INDEX IF NOT EXISTS "idx_player_registration_club_player_age" ON "player_registration" ("clubSlug", "playerId", "ageGroup")`,
   `CREATE TABLE IF NOT EXISTS "user_player" ("id" TEXT PRIMARY KEY NOT NULL, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "playerId"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_userId" ON "user_player" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
+  // Contact email held separately from the auth identity — see #131 / epic #128.
+  // state defaults pending; opt-ins default off; marketing never settable by admin.
+  `CREATE TABLE IF NOT EXISTS "player_contact" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "email" TEXT NOT NULL, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "state" TEXT NOT NULL DEFAULT 'pending' CHECK("state" IN ('pending', 'confirmed', 'withdrawn', 'bounced')), "operationalOptIn" INTEGER NOT NULL DEFAULT 0, "marketingOptIn" INTEGER NOT NULL DEFAULT 0, "sourcedBy" TEXT, "sourcedAt" INTEGER NOT NULL, "signoffId" TEXT, "confirmedAt" INTEGER, "withdrawnAt" INTEGER, "activationTokenHash" TEXT, "activationExpiresAt" INTEGER, UNIQUE("clubSlug", "playerId", "email"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_clubSlug" ON "player_contact" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_playerId" ON "player_contact" ("playerId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_email" ON "player_contact" ("email")`,
   `CREATE TABLE IF NOT EXISTS "club_secret" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "key" TEXT NOT NULL, "encryptedValue" TEXT NOT NULL, "iv" TEXT NOT NULL, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "uq_club_secret_slug_key" ON "club_secret" (COALESCE("clubSlug",''), "key")`,
   `CREATE TABLE IF NOT EXISTS "player_payment" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE CASCADE, "reference" TEXT NOT NULL, "mandateId" TEXT NOT NULL, "subscriptionId" TEXT, "status" TEXT NOT NULL DEFAULT 'active', "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "reference"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_registrationId" ON "player_payment" ("registrationId")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_payment_mandateId" ON "player_payment" ("mandateId")`,
+  // Carries "status" so the merge-resolved payment-status probe is index-only.
+  `CREATE INDEX IF NOT EXISTS "idx_player_payment_reg_status" ON "player_payment" ("registrationId", "status")`,
   `CREATE TABLE IF NOT EXISTS "subscription_level" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "name" TEXT NOT NULL, "yearlyPriceInPence" INTEGER NOT NULL, "intervalCount" INTEGER NOT NULL DEFAULT 1, "intervalUnit" TEXT NOT NULL DEFAULT 'yearly' CHECK ("intervalUnit" IN ('weekly', 'monthly', 'yearly')), "startDate" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE ("clubSlug", "name"))`,
   `CREATE INDEX IF NOT EXISTS "idx_subscription_level_clubSlug" ON "subscription_level" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "team_subscription_level" ("clubSlug" TEXT NOT NULL, "teamName" TEXT NOT NULL, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamName"))`,
@@ -54,6 +75,16 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_team_status_sub_level_clubTeam" ON "team_status_subscription_level" ("clubSlug", "teamName")`,
   `CREATE TABLE IF NOT EXISTS "registration_subscription_level" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "subscriptionLevelId" TEXT NOT NULL REFERENCES "subscription_level"("id") ON DELETE CASCADE, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_registration_subscription_level_levelId" ON "registration_subscription_level" ("subscriptionLevelId")`,
+  `CREATE TABLE IF NOT EXISTS "registration_merge" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "primaryRegistrationId" TEXT NOT NULL REFERENCES "player_registration"("id") ON DELETE RESTRICT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, CHECK ("registrationId" <> "primaryRegistrationId"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_registration_merge_primary" ON "registration_merge" ("primaryRegistrationId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_registration_merge_clubSlug" ON "registration_merge" ("clubSlug")`,
+  // An admin's "no" to a merge suggestion. ageKey is LOWER(TRIM(ageGroup)) and
+  // must stay equivalent to normaliseAgeGroup in lib/merge-suggestions.ts.
+  // setSize re-raises the suggestion once the candidate set grows past what was
+  // dismissed. See migrations/0028 for the full reasoning.
+  `CREATE TABLE IF NOT EXISTS "registration_merge_suggestion_dismissal" ("clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "ageKey" TEXT NOT NULL, "setSize" INTEGER NOT NULL, "dismissedBy" TEXT NOT NULL, "dismissedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "playerId", "ageKey"))`,
+  `CREATE TABLE IF NOT EXISTS "registration_payment_state" ("clubSlug" TEXT NOT NULL, "registrationId" TEXT NOT NULL PRIMARY KEY REFERENCES "player_registration"("id") ON DELETE CASCADE, "generation" INTEGER NOT NULL DEFAULT 0, "claimId" TEXT NOT NULL DEFAULT '', "confirmationId" TEXT, "confirmationExpiresAt" INTEGER, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_registration_payment_state_clubSlug" ON "registration_payment_state" ("clubSlug")`,
   `CREATE TABLE IF NOT EXISTS "gc_webhook_event" ("id" TEXT PRIMARY KEY NOT NULL, "resourceType" TEXT NOT NULL, "action" TEXT NOT NULL, "mandateId" TEXT, "subscriptionId" TEXT, "paymentId" TEXT, "rawBody" TEXT NOT NULL, "receivedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_mandateId" ON "gc_webhook_event" ("mandateId")`,
   `CREATE INDEX IF NOT EXISTS "idx_gc_webhook_event_subscriptionId" ON "gc_webhook_event" ("subscriptionId")`,
@@ -62,6 +93,40 @@ const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_clubSlug" ON "admin_audit_log" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_targetId" ON "admin_audit_log" ("targetId")`,
   `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_createdAt" ON "admin_audit_log" ("createdAt")`,
+  // The three above are separate single-column indexes and SQLite does not
+  // intersect them, so the manual-attribution lookup could use only one of its
+  // three predicates. This composite serves the join probe and both residuals.
+  `CREATE INDEX IF NOT EXISTS "idx_admin_audit_log_target" ON "admin_audit_log" ("targetId", "clubSlug", "action", "createdAt")`,
+  `CREATE TABLE IF NOT EXISTS "club_import_log" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "importedAt" INTEGER NOT NULL, "rowCount" INTEGER NOT NULL, "adminId" TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_import_log_clubSlug_importedAt" ON "club_import_log" ("clubSlug", "importedAt")`,
+  `CREATE TABLE IF NOT EXISTS "player_import_run" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "adminId" TEXT NOT NULL, "totalParts" INTEGER NOT NULL, "nextPart" INTEGER NOT NULL DEFAULT 0, "createdAt" INTEGER NOT NULL, "completedAt" INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_import_run_club_createdAt" ON "player_import_run" ("clubSlug", "createdAt")`,
+  `CREATE TABLE IF NOT EXISTS "player_import_run_part" ("runId" TEXT NOT NULL REFERENCES "player_import_run"("id") ON DELETE CASCADE, "partIndex" INTEGER NOT NULL, "rowCount" INTEGER NOT NULL, "playersCreated" INTEGER NOT NULL, "registrationsCreated" INTEGER NOT NULL, "registrationsUpdated" INTEGER NOT NULL, "usersCreated" INTEGER NOT NULL, "usersSkipped" INTEGER NOT NULL, "contactsDropped" INTEGER NOT NULL DEFAULT 0, "errorCount" INTEGER NOT NULL, "recordedAt" INTEGER NOT NULL, PRIMARY KEY ("runId", "partIndex"))`,
+  // Club email sign-off (#130): one row per liability under a policy version.
+  // acceptanceId groups the liability ticks; player_contact.signoffId references it.
+  // parental_consent remains in the CHECK for historical v1 rows (#148 removed it from current policy).
+  `CREATE TABLE IF NOT EXISTS "club_email_signoff" ("id" TEXT PRIMARY KEY NOT NULL, "acceptanceId" TEXT NOT NULL, "clubSlug" TEXT NOT NULL, "liability" TEXT NOT NULL CHECK("liability" IN ('parental_consent', 'operational_split', 'right_to_object')), "userId" TEXT NOT NULL, "acceptedAt" INTEGER NOT NULL, "ipAddress" TEXT, "policyVersion" TEXT NOT NULL, "wordingHash" TEXT NOT NULL, UNIQUE("clubSlug", "liability", "policyVersion"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_email_signoff_clubSlug" ON "club_email_signoff" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_email_signoff_acceptanceId" ON "club_email_signoff" ("acceptanceId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_email_signoff_club_version" ON "club_email_signoff" ("clubSlug", "policyVersion")`,
+  // Consent records + DPA acceptance (#75).
+  // purpose includes operational for parent-form agreement evidence (#149).
+  `CREATE TABLE IF NOT EXISTS "consent_record" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "subjectType" TEXT NOT NULL CHECK("subjectType" IN ('player_contact', 'user')), "subjectId" TEXT NOT NULL, "purpose" TEXT NOT NULL CHECK("purpose" IN ('marketing', 'operational')), "channel" TEXT NOT NULL CHECK("channel" IN ('email')), "state" TEXT NOT NULL CHECK("state" IN ('granted', 'withdrawn')), "recordedAt" INTEGER NOT NULL, "ipAddress" TEXT, "policyVersion" TEXT NOT NULL, "wordingHash" TEXT NOT NULL, "withdrawTokenHash" TEXT, "supersedesId" TEXT)`,
+  `CREATE INDEX IF NOT EXISTS "idx_consent_record_lookup" ON "consent_record" ("clubSlug", "subjectType", "subjectId", "purpose", "channel", "recordedAt")`,
+  `CREATE INDEX IF NOT EXISTS "idx_consent_record_token" ON "consent_record" ("withdrawTokenHash")`,
+  `CREATE INDEX IF NOT EXISTS "idx_consent_record_clubSlug" ON "consent_record" ("clubSlug")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_activation_token" ON "player_contact" ("activationTokenHash")`,
+  `CREATE TABLE IF NOT EXISTS "club_dpa_acceptance" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "userId" TEXT NOT NULL, "acceptedAt" INTEGER NOT NULL, "ipAddress" TEXT, "policyVersion" TEXT NOT NULL, "wordingHash" TEXT NOT NULL, UNIQUE("clubSlug", "policyVersion"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_club_dpa_acceptance_clubSlug" ON "club_dpa_acceptance" ("clubSlug")`,
+  // Outbound send / drop audit (#133). Addresses are not stored — contactId only.
+  `CREATE TABLE IF NOT EXISTS "email_send_event" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "batchId" TEXT NOT NULL, "purpose" TEXT NOT NULL CHECK("purpose" IN ('transactional', 'operational', 'marketing')), "contactId" TEXT NOT NULL, "outcome" TEXT NOT NULL CHECK("outcome" IN ('sent', 'dropped', 'skipped_unconfigured')), "dropReason" TEXT CHECK("dropReason" IS NULL OR "dropReason" IN ('pending', 'withdrawn', 'bounced', 'not_confirmed', 'missing_marketing_consent', 'lapsed_registration', 'no_operational_opt_in', 'not_found', 'duplicate_email', 'provider_rejected')), "contactState" TEXT, "operationalOptIn" INTEGER, "marketingOptIn" INTEGER, "marketingConsentState" TEXT, "registrationStatus" TEXT, "audienceType" TEXT NOT NULL, "audienceKey" TEXT, "initiatedBy" TEXT, "providerMessageId" TEXT, "createdAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_email_send_event_club_createdAt" ON "email_send_event" ("clubSlug", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "idx_email_send_event_club_outcome" ON "email_send_event" ("clubSlug", "outcome", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "idx_email_send_event_batchId" ON "email_send_event" ("batchId")`,
+  `CREATE INDEX IF NOT EXISTS "idx_email_send_event_contactId" ON "email_send_event" ("contactId")`,
+  // Contact email suppression (#134): salted hash only — never plaintext.
+  `CREATE TABLE IF NOT EXISTS "contact_email_suppression" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "emailHash" TEXT NOT NULL, "salt" TEXT NOT NULL, "hashVersion" INTEGER NOT NULL DEFAULT 1, "createdAt" INTEGER NOT NULL, UNIQUE("clubSlug", "emailHash"))`,
+  `CREATE INDEX IF NOT EXISTS "idx_contact_email_suppression_clubSlug" ON "contact_email_suppression" ("clubSlug")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [
