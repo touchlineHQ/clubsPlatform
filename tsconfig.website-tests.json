@@ -16,7 +16,7 @@
     // Pinned deliberately — same reason as e2e/tsconfig.json. Leaving this
     // unset auto-includes every @types/* under root node_modules, which pulls
     // in @cloudflare/workers-types and redeclares DOM globals.
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "types": ["vitest/globals", "@testing-library/jest-dom", "node"]
   },
   "include": [
     "website/src/**/*.test.ts",

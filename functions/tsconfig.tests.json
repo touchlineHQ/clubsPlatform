@@ -6,7 +6,7 @@
   "compilerOptions": {
     // Keep workers-types (inherited exclude of DOM), add vitest for the
     // describe/it/expect/vi globals and the vi mock helpers the suite uses.
-    "types": ["@cloudflare/workers-types", "vitest/globals"]
+    "types": ["@cloudflare/workers-types", "vitest/globals", "node"]
   },
   "include": ["**/*.ts", "../scripts/posthog-events.d.mts"],
   // Drop the source project's __tests__ exclude so the suite is checked.
