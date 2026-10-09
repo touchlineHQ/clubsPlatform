@@ -97,7 +97,9 @@ const sourcemapPlugins = posthogApiKey
           releaseVersion: process.env.GITHUB_SHA,
           deleteAfterUpload: true,
         },
-      })),
+        // Vite 8 types plugins against Rolldown, @posthog/rollup-plugin against
+        // Rollup; the hooks used here are compatible at runtime.
+      }) as unknown as Plugin),
     ]
   : [];
 
