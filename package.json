@@ -42,7 +42,7 @@
     "dayjs": "^1.11.20",
     "jsdom": "^30.1.2",
     "react-router-dom": "^7.18.4",
-    "typescript": "^5.4.0",
+    "typescript": "^7.0.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0",
     "xlsx": "^0.18.5"
