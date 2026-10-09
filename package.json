@@ -29,7 +29,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261005.1",
-    "@mantine/core": "^9.0.0",
+    "@mantine/core": "^9.7.1",
     "@mantine/dates": "^9.7.0",
     "@mantine/hooks": "^9.0.0",
     "@playwright/test": "1.63.0",
