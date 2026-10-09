@@ -10,7 +10,7 @@ vi.mock('../../lib/auth', () => ({
 // call to the fake host, so the assertion passes while the test does I/O.
 const mockCaptureImmediate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('posthog-node', () => ({
-  PostHog: vi.fn(() => ({ captureImmediate: mockCaptureImmediate })),
+  PostHog: vi.fn(function () { return { captureImmediate: mockCaptureImmediate }; }),
 }));
 
 import { onRequestGet, onRequestDelete } from '../../api/my-registrations';
