@@ -44,7 +44,6 @@
     "react-router-dom": "^7.18.4",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.147.0",
-    "xlsx": "^0.18.5"
+    "wrangler": "^4.147.0"
   }
 }
