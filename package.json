@@ -23,7 +23,7 @@
     "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
-    "better-auth": "~1.6.33",
+    "better-auth": "^1.7.7",
     "hono": "^4.13.13",
     "posthog-node": "^5.55.0"
   },
@@ -32,10 +32,10 @@
     "@mantine/core": "^9.0.0",
     "@mantine/dates": "^9.7.0",
     "@mantine/hooks": "^9.0.0",
-    "@playwright/test": "1.56.0",
-    "@tabler/icons-react": "^3.44.0",
+    "@playwright/test": "1.63.0",
+    "@tabler/icons-react": "^3.49.0",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^26.6.4",
     "@vitejs/plugin-react": "^4.7.0",
     "@vitest/coverage-v8": "^4.1.11",
