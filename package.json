@@ -39,7 +39,7 @@
     "@types/node": "^26.6.4",
     "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^4.1.11",
-    "dayjs": "^1.11.20",
+    "dayjs": "^1.11.23",
     "jsdom": "^30.1.2",
     "react-router-dom": "^7.18.4",
     "typescript": "^7.0.2",
