@@ -1,21 +1,22 @@
 name: Dependabot auto-merge
 
-# Squash-merges Dependabot's patch and minor updates once CI has passed on them.
-# It only ever touches pull requests opened by dependabot[bot]. No ruleset or
-# branch protection is involved, so nobody else's pull requests or pushes are
-# gated by anything here. Major updates are never labelled, so they stay open
-# for a manual review.
+# Squash-merges Dependabot's updates (patch, minor AND major) once CI has passed
+# on them; CI is the only gate. It only ever touches pull requests opened by
+# dependabot[bot]. No ruleset or branch protection is involved, so nobody else's
+# pull requests or pushes are gated by anything here. GitHub Actions bumps are
+# the one exception and stay manual (see below).
 #
 # Two jobs:
 #
-#   label  (pull_request_target) reads the update type with
-#          dependabot/fetch-metadata and adds the `automerge:ok` label to patch
-#          and minor updates, removing it again if a later push makes the PR a
-#          major. For grouped PRs update-type is the largest bump in the group,
-#          so one major anywhere keeps the whole group manual. GitHub Actions
-#          bumps (package-ecosystem github_actions) are never labelled and stay
-#          manual too: they edit .github/workflows/, and GITHUB_TOKEN cannot be
-#          granted the `workflows` permission needed to merge such a change.
+#   label  (pull_request_target) reads the PR with dependabot/fetch-metadata
+#          and adds the `automerge:ok` label to every update, whatever its
+#          update-type: patch, minor, major, or empty/unknown (which some
+#          security updates report). That is deliberate, since the merge job
+#          still requires CI to pass. The one exception is GitHub Actions bumps
+#          (package-ecosystem github_actions): they are never labelled, and the
+#          label is removed if present, because they edit .github/workflows/
+#          and GITHUB_TOKEN cannot be granted the `workflows` permission needed
+#          to merge such a change.
 #
 #   merge  (workflow_run, after Test, E2E or CodeQL completes for a PR) merges
 #          only when the PR is still open, authored by dependabot[bot], carries
@@ -51,7 +52,7 @@ permissions: {}
 
 jobs:
   label:
-    name: Label patch/minor updates
+    name: Label for auto-merge
     if: >-
       github.event_name == 'pull_request_target' &&
       github.event.pull_request.user.login == 'dependabot[bot]'
@@ -67,10 +68,8 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Add automerge:ok
-        if: >-
-          steps.metadata.outputs.package-ecosystem != 'github_actions' &&
-          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
-           steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        # Any update type, majors and empty/unknown included: CI is the gate.
+        if: steps.metadata.outputs.package-ecosystem != 'github_actions'
         run: gh api "repos/$REPO/issues/$PR_NUMBER/labels" -f 'labels[]=automerge:ok' --silent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -80,9 +79,7 @@ jobs:
       - name: Remove automerge:ok
         if: >-
           contains(github.event.pull_request.labels.*.name, 'automerge:ok') &&
-          (steps.metadata.outputs.package-ecosystem == 'github_actions' ||
-           (steps.metadata.outputs.update-type != 'version-update:semver-patch' &&
-            steps.metadata.outputs.update-type != 'version-update:semver-minor'))
+          steps.metadata.outputs.package-ecosystem == 'github_actions'
         run: gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/automerge%3Aok" --silent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
