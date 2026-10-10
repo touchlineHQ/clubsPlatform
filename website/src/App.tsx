@@ -30,7 +30,10 @@ import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
 import { CustomizePage } from './pages/CustomizePage';
 import { LoginPage } from './pages/LoginPage';
+import { PlatformLoginPage } from './pages/PlatformLoginPage';
 import { SignUpPage } from './pages/SignUpPage';
+import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { RegistrationsPage } from './pages/RegistrationsPage';
 import { PitchBookingPage } from './pages/PitchBookingPage';
@@ -162,6 +165,23 @@ function AppRoutes() {
 
   // Multi-club platform root: no club in URL path → show landing page
   if (registry.multiClub && !clubSlug) {
+    // Platform admins have no club, so their recovery links are prefix-less
+    // (`/#/reset-password`), and sign in at `/#/login`. Mount just those routes here or they hit the
+    // landing page.
+    const rootHash = window.location.hash.replace(/^#/, '').split('?')[0];
+    if (rootHash === '/login' || rootHash === '/forgot-password' || rootHash === '/reset-password') {
+      return (
+        <MantineProvider theme={createLandingTheme()}>
+          <HashRouter>
+            <Routes>
+              <Route path="/login" element={<PlatformLoginPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+            </Routes>
+          </HashRouter>
+        </MantineProvider>
+      );
+    }
     return (
       <MantineProvider theme={createLandingTheme()}>
         <LandingPage clubs={registry.clubs} selfRegister={registry.selfRegister} />
@@ -187,6 +207,8 @@ function AppRoutes() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/privacy" element={<PrivacyNoticePage />} />
               <Route path="/consent/:token" element={<ParentConsentPage />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
@@ -281,6 +303,8 @@ function AppRoutes() {
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/registrations" element={
               <ProtectedRoute>
                 <RegistrationsPage />

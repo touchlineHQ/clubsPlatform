@@ -42,6 +42,7 @@ export function createResendMailer(
 
       const res = await doFetch(RESEND_ENDPOINT, {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
