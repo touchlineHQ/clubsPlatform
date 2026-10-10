@@ -33,6 +33,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The generator is isolated in website/tools/openapi (TS 5.x); fail if
+      # the committed schema.d.ts is out of sync with openapi.yaml.
+      - name: Check API schema is up to date
+        run: |
+          npm run api:gen
+          git diff --exit-code -- src/api/schema.d.ts
+        working-directory: website
+
       - name: Run tests with coverage
         run: npm run test:coverage
 
