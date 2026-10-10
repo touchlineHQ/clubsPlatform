@@ -30,6 +30,9 @@ updates:
           - "react-dom"
           - "@types/react"
           - "@types/react-dom"
+      mantine:
+        patterns:
+          - "@mantine/*"
     ignore:
       - dependency-name: "@vitejs/plugin-react"
         update-types: ["version-update:semver-major"]

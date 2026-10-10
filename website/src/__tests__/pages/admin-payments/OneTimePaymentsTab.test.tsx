@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, waitFor, fireEvent } from '@testing-library/react';
+import { screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { renderWithMantine, mockAdmin, mockSingleClub } from '../../test-utils';
 
 const mockFetch = vi.fn();
@@ -16,6 +16,13 @@ beforeEach(() => {
 });
 
 import { OneTimePaymentsTab } from '../../../pages/admin-payments/OneTimePaymentsTab';
+
+// Mantine 9.7 treats a change on an unfocused input as external (autofill) and
+// ignores it, so focus the input first as a real user would.
+function changeFocused(el: HTMLElement, init: { target: { value: string } }) {
+  act(() => el.focus());
+  fireEvent.change(el, init);
+}
 
 const clubHeaders: HeadersInit = { 'x-club-slug': 'test-club' };
 
@@ -89,7 +96,7 @@ describe('OneTimePaymentsTab', () => {
       clubValue: mockSingleClub,
     });
 
-    fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+    changeFocused(screen.getByPlaceholderText(/Search by FAN number or team/i), {
       target: { value: 'Under' },
     });
 

@@ -38,6 +38,13 @@ beforeEach(() => {
 
 import { PlayerSubscriptionsTab } from '../../../pages/admin-payments/PlayerSubscriptionsTab';
 
+// Mantine 9.7 treats a change on an unfocused input as external (autofill) and
+// ignores it, so focus the input first as a real user would.
+function changeFocused(el: HTMLElement, init: { target: { value: string } }) {
+  act(() => el.focus());
+  fireEvent.change(el, init);
+}
+
 const clubHeaders: HeadersInit = { 'x-club-slug': 'test-club' };
 
 const sampleRegistration = {
@@ -72,7 +79,7 @@ const samplePayment = {
  * wait real rather than vacuous.
  */
 async function pickPlayer(search: string, option: RegExp) {
-  fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+  changeFocused(screen.getByPlaceholderText(/Search by FAN number or team/i), {
     target: { value: search },
   });
   await waitFor(() => expect(screen.getByText(option)).toBeTruthy());
@@ -117,7 +124,7 @@ describe('PlayerSubscriptionsTab', () => {
     await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
 
     // One character is below the threshold, so it must not reach the server.
-    fireEvent.change(input, { target: { value: 'U' } });
+    changeFocused(input, { target: { value: 'U' } });
     await waitFor(() => expect(screen.getByText(/Type 2 or more characters/i)).toBeTruthy());
     expect(mockFetch.mock.calls.some(
       c => String(c[0]).startsWith('/api/admin/player-registrations?q='),
@@ -147,10 +154,10 @@ describe('PlayerSubscriptionsTab', () => {
 
     const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
     fireEvent.click(input);
-    fireEvent.change(input, { target: { value: 'Un' } });
+    changeFocused(input, { target: { value: 'Un' } });
     await waitFor(() => expect(release).toBeTruthy());
 
-    fireEvent.change(input, { target: { value: 'U' } });
+    changeFocused(input, { target: { value: 'U' } });
     // Released inside act so the response's continuation has run by the time the
     // assertions do. A bare waitFor on the prompt would settle on its first tick
     // — the prompt is already on screen — and could assert before the hook saw
@@ -196,7 +203,7 @@ describe('PlayerSubscriptionsTab', () => {
     await waitFor(() => expect(paymentsCall).toBe(2));
 
     const input = screen.getByPlaceholderText(/Search by FAN number or team/i);
-    fireEvent.change(input, { target: { value: '12345' } });
+    changeFocused(input, { target: { value: '12345' } });
     await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
     fireEvent.click(screen.getByText(/FAN 12345/i));
 
@@ -269,7 +276,7 @@ describe('PlayerSubscriptionsTab', () => {
 
     // Open the select dropdown and pick the registration
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
-    fireEvent.change(selectInput, { target: { value: '12345' } });
+    changeFocused(selectInput, { target: { value: '12345' } });
 
     await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
     fireEvent.click(screen.getByText(/FAN 12345/i));
@@ -302,7 +309,7 @@ describe('PlayerSubscriptionsTab', () => {
     });
 
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
-    fireEvent.change(selectInput, { target: { value: '12345' } });
+    changeFocused(selectInput, { target: { value: '12345' } });
 
     await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
     fireEvent.click(screen.getByText(/FAN 12345/i));
@@ -340,7 +347,7 @@ describe('PlayerSubscriptionsTab', () => {
 
     // Select a registration so the Generate button becomes enabled
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
-    fireEvent.change(selectInput, { target: { value: '12345' } });
+    changeFocused(selectInput, { target: { value: '12345' } });
 
     await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
     fireEvent.click(screen.getByText(/FAN 12345/i));
@@ -384,7 +391,7 @@ describe('PlayerSubscriptionsTab', () => {
     });
 
     const selectInput = screen.getByPlaceholderText(/Search by FAN number or team/i);
-    fireEvent.change(selectInput, { target: { value: '12345' } });
+    changeFocused(selectInput, { target: { value: '12345' } });
 
     await waitFor(() => expect(screen.getByText(/FAN 12345/i)).toBeTruthy());
     fireEvent.click(screen.getByText(/FAN 12345/i));
@@ -413,7 +420,7 @@ describe('PlayerSubscriptionsTab', () => {
       { authValue: mockAdmin, clubValue: mockSingleClub },
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/Search by FAN number or team/i), {
+    changeFocused(screen.getByPlaceholderText(/Search by FAN number or team/i), {
       target: { value: 'Under' },
     });
 
