@@ -1,0 +1,9 @@
+{
+  "name": "openapi-typegen",
+  "private": true,
+  "description": "Isolated toolchain for `npm run api:gen`. openapi-typescript uses the TypeScript JS compiler API, which TypeScript 7 (native) does not provide, so it is pinned to TypeScript 5 here, separate from the app's TypeScript 7.",
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.9.3"
+  }
+}
