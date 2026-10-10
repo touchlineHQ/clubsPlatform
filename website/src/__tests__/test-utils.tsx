@@ -1,5 +1,5 @@
 import { render, type RenderOptions } from '@testing-library/react';
-import { MantineProvider } from '@mantine/core';
+import { MantineProvider, createTheme } from '@mantine/core';
 import { MemoryRouter, type MemoryRouterProps } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthContext, type AuthUser } from '../context/AuthContext';
@@ -9,6 +9,12 @@ import type { UserTeamRole, ClubEntry } from '../types';
 import { vi } from 'vitest';
 
 // ─── Standard context values ──────────────────────────────────────────────────
+
+// Mantine 9.7 keeps Combobox dropdown options mounted (display: none), which duplicates
+// text in the DOM and breaks getByText queries; unmount them when closed in tests.
+const testTheme = createTheme({
+  components: { Combobox: { defaultProps: { keepMounted: false } } },
+});
 
 export const mockLoggedOut = {
   user: null as AuthUser | null,
@@ -79,7 +85,7 @@ export function renderWithProviders(
 ) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <MantineProvider>
+      <MantineProvider theme={testTheme}>
         <MemoryRouter {...routerProps}>
           <AuthContext.Provider value={authValue}>
             <ClubContext.Provider value={clubValue}>
@@ -111,7 +117,7 @@ export function renderWithMantine(
 ) {
   function Wrapper({ children }: { children: ReactNode }) {
     return (
-      <MantineProvider>
+      <MantineProvider theme={testTheme}>
         <AuthContext.Provider value={authValue}>
           <ClubContext.Provider value={clubValue}>
             <SectionContext.Provider value={sectionValue}>
