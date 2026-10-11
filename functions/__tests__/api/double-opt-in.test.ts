@@ -348,6 +348,25 @@ describe('double opt-in (#132)', () => {
       expect((await formGet(makeContext(getReq('/api/consent/form?token=live'), { env: { DB: d1 } }) as any)).status).toBe(404);
     });
 
+    it('a failed resend or reminder leaves the link the parent already holds working', async () => {
+      importContact(sqlite, 1, { hash: await hashToken('held'), expiresAt: NOW + DAY, activationSentAt: NOW - 20 * DAY });
+      failMail = true;
+      await resend('held');
+      await sweep(); // 20 days after the mail: a reminder is due, and fails too
+      const row = sqlite.prepare(`SELECT activationTokenHash AS h, activationSentAt AS s, reminderSentAt AS r FROM "player_contact"`).get() as any;
+      expect(row.h).toBe(await hashToken('held'));
+      expect(row.s).toBe(NOW - 20 * DAY);
+      expect(row.r).toBeNull();
+      expect((await formGet(makeContext(getReq('/api/consent/form?token=held'), { env: { DB: d1 } }) as any)).status).toBe(200);
+    });
+
+    it('the decline page can open an expired link; activation cannot', async () => {
+      importContact(sqlite, 1, { hash: await hashToken('old'), expiresAt: NOW - 1000, activationSentAt: NOW - 40 * DAY });
+      const get = (q: string) => formGet(makeContext(getReq(`/api/consent/form?token=old${q}`), { env: { DB: d1 } }) as any);
+      expect((await get('')).status).toBe(404);
+      expect((await get('&mode=decline')).status).toBe(200);
+    });
+
     it('rate-limits repeated requests per contact', async () => {
       importContact(sqlite, 1, { hash: await hashToken('live'), activationSentAt: Date.now() - RESEND_COOLDOWN_MS - 1000 });
       expect((await resend('live')).res.status).toBe(202);

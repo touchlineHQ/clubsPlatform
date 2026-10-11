@@ -28,8 +28,8 @@ import { purgeLapsedPendingContacts } from "./contact-purge";
 
 /** Reminder goes out this long after the activation mail. */
 export const ACTIVATION_REMINDER_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
-/** Contacts per invocation: 1 select + 1 identity + <=1 write each + 1 audit < 50. */
-export const ACTIVATION_BATCH_LIMIT = 20;
+/** Contacts per invocation: select, identity, count, audit + up to 2 writes each (mint, restore) stays well under 50. */
+export const ACTIVATION_BATCH_LIMIT = 15;
 /** A parent cannot trigger another mail to the same contact inside this window. */
 export const RESEND_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -40,6 +40,10 @@ type Candidate = {
   email: string;
   fanId: string;
   teamName: string | null;
+  /** Token state before this send, restored if delivery fails. */
+  prevHash: string | null;
+  prevExpiresAt: number | null;
+  prevStampedAt: number | null;
 };
 
 export type ActivationBatchResult = {
@@ -136,10 +140,19 @@ async function mintAndSend(
 
   const ok = await deliver(mailer, identity, ctx, clubSlug, candidate, token, kind);
   if (!ok) {
-    // Un-stamp so the next batch retries; the unsent token is harmless.
+    // Put back the previous token, expiry and stamp, but only while the row
+    // still holds the token we minted: the link the parent already has keeps
+    // working, and the next batch retries (a null stamp is "not yet sent").
     await db
-      .prepare(`UPDATE "player_contact" SET ${stampColumn} = NULL WHERE id = ? AND clubSlug = ?`)
-      .bind(candidate.id, clubSlug)
+      .prepare(
+        `UPDATE "player_contact"
+            SET ${stampColumn} = ?, activationTokenHash = ?, activationExpiresAt = ?
+          WHERE id = ? AND clubSlug = ? AND activationTokenHash = ?`,
+      )
+      .bind(
+        candidate.prevStampedAt, candidate.prevHash, candidate.prevExpiresAt,
+        candidate.id, clubSlug, tokenHash,
+      )
       .run();
   }
   return ok;
@@ -153,7 +166,10 @@ function candidateWhere(kind: ActivationKind): string {
 }
 
 function candidateSql(kind: ActivationKind): string {
-  return `SELECT pc.id AS id, pc.email AS email, p.fanId AS fanId, ${TEAM_SQL} AS teamName
+  const stamp = kind === "reminder" ? "pc.reminderSentAt" : "pc.activationSentAt";
+  return `SELECT pc.id AS id, pc.email AS email, p.fanId AS fanId, ${TEAM_SQL} AS teamName,
+                 pc.activationTokenHash AS prevHash, pc.activationExpiresAt AS prevExpiresAt,
+                 ${stamp} AS prevStampedAt
             FROM "player_contact" pc
             JOIN "player" p ON p.id = pc.playerId
            WHERE ${candidateWhere(kind)}
@@ -249,7 +265,10 @@ export async function emailActivationLink(
   const identity = await getClubIdentity(db, clubSlug);
   const ok = await deliver(
     mailer, identity, ctx, clubSlug,
-    { id: contactId, email, fanId: row.fanId, teamName: row.teamName },
+    {
+      id: contactId, email, fanId: row.fanId, teamName: row.teamName,
+      prevHash: null, prevExpiresAt: null, prevStampedAt: null,
+    },
     token, "activation",
   );
   if (!ok) return "failed";
@@ -277,14 +296,16 @@ export async function resendActivationForToken(
   const row = await db
     .prepare(
       `SELECT pc.id AS id, pc.clubSlug AS clubSlug, pc.email AS email,
-              p.fanId AS fanId, ${TEAM_SQL} AS teamName, pc.activationSentAt AS sentAt
+              p.fanId AS fanId, ${TEAM_SQL} AS teamName,
+              pc.activationTokenHash AS prevHash, pc.activationExpiresAt AS prevExpiresAt,
+              pc.activationSentAt AS prevStampedAt
          FROM "player_contact" pc JOIN "player" p ON p.id = pc.playerId
         WHERE pc.activationTokenHash = ? AND pc.state = 'pending'`,
     )
     .bind(tokenHash)
-    .first<Candidate & { clubSlug: string; sentAt: number | null }>();
+    .first<Candidate & { clubSlug: string }>();
   if (!row) return false;
-  if (row.sentAt != null && row.sentAt > now - RESEND_COOLDOWN_MS) return false;
+  if (row.prevStampedAt != null && row.prevStampedAt > now - RESEND_COOLDOWN_MS) return false;
   const mailer = getMailer(ctx.env);
   if (!mailer) return false;
   const identity = await getClubIdentity(db, row.clubSlug);
@@ -317,7 +338,7 @@ export async function sweepUnactivatedContacts(
   const reminders = lapse.purged.length > 5
     ? { configured: true, sent: 0, failed: 0, remaining: 0 }
     : await sendActivationBatch(db, ctx, {
-        clubSlug, actorId, kind: "reminder", limit: 10, now,
+        clubSlug, actorId, kind: "reminder", limit: 8, now,
       });
   return { reminders, lapsed: lapse.purged.length, lapsedRemaining: lapse.remaining };
 }

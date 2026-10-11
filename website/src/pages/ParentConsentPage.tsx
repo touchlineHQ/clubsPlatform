@@ -61,7 +61,9 @@ export function ParentConsentPage({ mode = 'activate' }: { mode?: 'activate' | '
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/consent/form?token=${encodeURIComponent(token)}`);
+      const query = new URLSearchParams({ token });
+      if (mode === 'decline') query.set('mode', 'decline');
+      const res = await fetch(`/api/consent/form?${query.toString()}`);
       const data = await res.json() as FormPayload & { error?: string };
       if (!res.ok) {
         setError(data.error || 'Could not load this consent form.');
@@ -84,7 +86,7 @@ export function ParentConsentPage({ mode = 'activate' }: { mode?: 'activate' | '
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [mode, token]);
 
   useEffect(() => { void load(); }, [load]);
 

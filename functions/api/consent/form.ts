@@ -53,14 +53,18 @@ async function clubName(db: Env["DB"], clubSlug: string): Promise<string> {
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const token = new URL(context.request.url).searchParams.get("token")?.trim() ?? "";
+  const requestUrl = new URL(context.request.url);
+  const token = requestUrl.searchParams.get("token")?.trim() ?? "";
+  // The decline page may open an expired-but-unspent link: honouring an
+  // objection never depends on the link being fresh. Activation still expires.
+  const declineMode = requestUrl.searchParams.get("mode") === "decline";
   if (!token) return json({ error: "token is required" }, { status: 400 });
 
   const contact = await findContactByActivationToken(context.env.DB, token);
   if (
     !contact
     || contact.state !== "pending"
-    || (contact.activationExpiresAt != null && contact.activationExpiresAt < Date.now())
+    || (!declineMode && contact.activationExpiresAt != null && contact.activationExpiresAt < Date.now())
   ) {
     return linkUnavailable();
   }

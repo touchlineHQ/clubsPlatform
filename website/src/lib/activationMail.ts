@@ -62,15 +62,23 @@ export interface SweepTotals {
 export async function sweepUnactivatedContacts(clubSlug: string): Promise<SweepTotals> {
   const totals: SweepTotals = { remindersSent: 0, lapsed: 0 };
   try {
-    const res = await fetch('/api/admin/activation-mail', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
-      body: JSON.stringify({ action: 'sweep' }),
-    });
-    if (!res.ok) return totals;
-    const data = await res.json() as { reminders: { sent: number }; lapsed: number };
-    totals.remindersSent = data.reminders.sent;
-    totals.lapsed = data.lapsed;
+    // One call deletes a capped chunk; keep going until nothing lapsed remains.
+    for (let i = 0; i < MAX_BATCHES; i++) {
+      const res = await fetch('/api/admin/activation-mail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug },
+        body: JSON.stringify({ action: 'sweep' }),
+      });
+      if (!res.ok) return totals;
+      const data = await res.json() as {
+        reminders: { sent: number };
+        lapsed: number;
+        lapsedRemaining: number;
+      };
+      totals.remindersSent += data.reminders.sent;
+      totals.lapsed += data.lapsed;
+      if (!data.lapsedRemaining || data.lapsed === 0) return totals;
+    }
   } catch {
     // Housekeeping retries on the next visit.
   }
