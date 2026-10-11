@@ -211,6 +211,7 @@ function AppRoutes() {
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/privacy" element={<PrivacyNoticePage />} />
               <Route path="/consent/:token" element={<ParentConsentPage />} />
+            <Route path="/consent/:token/decline" element={<ParentConsentPage mode="decline" />} />
               <Route path="*" element={<PrivateClubNotice multiClub={registry.multiClub} />} />
             </Routes>
           </HashRouter>
@@ -300,6 +301,7 @@ function AppRoutes() {
             {data.visibility['/contact'] && <Route path="/contact" element={<ContactPage club={data.club} />} />}
             <Route path="/privacy" element={<PrivacyNoticePage />} />
             <Route path="/consent/:token" element={<ParentConsentPage />} />
+            <Route path="/consent/:token/decline" element={<ParentConsentPage mode="decline" />} />
 
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignUpPage />} />

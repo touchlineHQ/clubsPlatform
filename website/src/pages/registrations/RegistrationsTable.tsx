@@ -229,6 +229,27 @@ function RelationshipBadge({ value }: { value: string | null }) {
   );
 }
 
+const CONTACT_STATE_INFO: Record<string, { color: string; label: string; hint: string }> = {
+  confirmed: { color: 'green', label: 'Confirmed', hint: 'The parent activated this address; it can be used for club messages.' },
+  pending: { color: 'yellow', label: 'Pending', hint: 'Waiting for the parent to activate. You cannot message this address yet.' },
+  withdrawn: { color: 'gray', label: 'Declined', hint: 'The parent declined or withdrew. You cannot message this address.' },
+  bounced: { color: 'red', label: 'Bounced', hint: 'Mail to this address bounced. You cannot message it.' },
+};
+
+/** Whether a parent can be messaged (#132): shows why a family cannot be reached. */
+function ContactStateBadge({ value }: { value: RegistrationRow['contactState'] }) {
+  if (!value) return <Text size="sm" c="dimmed">None</Text>;
+  const info = CONTACT_STATE_INFO[value];
+  if (!info) return <Text size="sm">—</Text>;
+  return (
+    <Tooltip label={info.hint} withArrow multiline w={240}>
+      <Badge size="sm" variant="light" color={info.color} radius="xl" styles={BADGE_STYLES}>
+        {info.label}
+      </Badge>
+    </Tooltip>
+  );
+}
+
 interface ManualPaymentProps {
   busyId: string | null;
   onMark: (row: RegistrationRow) => void;
@@ -406,6 +427,7 @@ export function RegistrationsTable({
                 <StatusBadge value={r.registrationStatus} />
                 <SubscriptionBadge row={r} showManualMarker={!!manualPayment} />
                 <MergedTeamsBadge row={r} />
+                {contactConsent && <ContactStateBadge value={r.contactState} />}
               </Group>
               <Group gap="xs" wrap="wrap">
                 {manualPayment && <ManualPaymentAction row={r} {...manualPayment} />}
@@ -439,7 +461,7 @@ export function RegistrationsTable({
 
   const miw = (canDelete
     ? (editableLevels ? 1060 : 880)
-    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0) + (merge ? 140 : 0) + (contactConsent ? 110 : 0);
+    : (editableLevels ? 1000 : 820)) + (manualPayment ? 120 : 0) + (merge ? 140 : 0) + (contactConsent ? 190 : 0);
 
   return (
     <Paper withBorder radius="md" style={{ overflow: 'auto' }}>
@@ -456,6 +478,7 @@ export function RegistrationsTable({
             )}
             <Table.Th><SortHeader label="Subscription" sortKey="subscription" {...headerProps} /></Table.Th>
             <Table.Th>{sixthHeader}</Table.Th>
+            {contactConsent && <Table.Th>Contact</Table.Th>}
             {canDelete && <Table.Th aria-label="Actions" />}
           </Table.Tr>
         </Table.Thead>
@@ -499,6 +522,7 @@ export function RegistrationsTable({
                   ? <LinkedAccountsCell row={r} />
                   : <RelationshipBadge value={r.relationship} />}
               </Table.Td>
+              {contactConsent && <Table.Td><ContactStateBadge value={r.contactState} /></Table.Td>}
               {canDelete && onDelete && (
                 <Table.Td style={{ width: 1 }}>
                   <Group gap="xs" wrap="nowrap" justify="flex-end">

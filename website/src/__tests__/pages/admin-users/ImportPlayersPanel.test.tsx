@@ -253,12 +253,14 @@ describe('ImportPlayersPanel chunked commit', () => {
   }
 
   it('sends a big file in slices, so one request cannot exhaust the CPU budget', async () => {
-    // Two full slices and a part one: preview, then three writes.
+    // Two full slices and a part one: preview, three writes, then the
+    // activation-mail send (#132).
     await commitFileOf(BIG_FILE);
 
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(5));
+    expect(mockFetch.mock.calls[4][0]).toBe('/api/admin/activation-mail');
 
-    const writes = mockFetch.mock.calls.slice(1).map(c => JSON.parse(c[1].body));
+    const writes = mockFetch.mock.calls.slice(1, 4).map(c => JSON.parse(c[1].body));
     expect(writes.map(w => w.rows.length)).toEqual([IMPORT_CHUNK_ROWS, IMPORT_CHUNK_ROWS, 10]);
     expect(writes.map(w => w.part)).toEqual([
       { index: 0, total: 3 },
@@ -292,13 +294,20 @@ describe('ImportPlayersPanel chunked commit', () => {
     expect(screen.getByText(/^Contact emails:/)).toHaveTextContent('3 pending, 3 already held');
   });
 
+  it('sends activation mail after the import and reports it; a mail failure does not fail the import', async () => {
+    await commitFileOf(2);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(mockFetch.mock.calls[2][1].body)).toEqual({ action: 'send' });
+    expect(await screen.findByText(/Import successful|Import completed/)).toBeInTheDocument();
+  });
+
   it('keeps the stale list from the whole-file preview, not from a slice', async () => {
     // A slice covers only its own teams, so the server sends back no stale rows
     // for one; taking the slice's answer would report "0 no longer in file" and
     // quietly lose the warning.
     await commitFileOf(BIG_FILE, previewBody({ stale: { count: 0, rows: [] } }));
 
-    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(5));
     expect(await screen.findByText(/No longer in the file:/)).toHaveTextContent('1');
   });
 

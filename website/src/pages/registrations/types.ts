@@ -26,6 +26,8 @@ export interface RegistrationRow {
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
   manualNote?: string | null;
+  /** Best contact state at this club (#132); null/absent = no contact held. Admin club rows only. */
+  contactState?: 'pending' | 'confirmed' | 'withdrawn' | 'bounced' | null;
 }
 
 export interface SubscriptionLevel {

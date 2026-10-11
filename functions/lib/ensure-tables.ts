@@ -55,7 +55,7 @@ export const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_user_player_playerId" ON "user_player" ("playerId")`,
   // Contact email held separately from the auth identity — see #131 / epic #128.
   // state defaults pending; opt-ins default off; marketing never settable by admin.
-  `CREATE TABLE IF NOT EXISTS "player_contact" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "email" TEXT NOT NULL, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "state" TEXT NOT NULL DEFAULT 'pending' CHECK("state" IN ('pending', 'confirmed', 'withdrawn', 'bounced')), "operationalOptIn" INTEGER NOT NULL DEFAULT 0, "marketingOptIn" INTEGER NOT NULL DEFAULT 0, "sourcedBy" TEXT, "sourcedAt" INTEGER NOT NULL, "signoffId" TEXT, "confirmedAt" INTEGER, "withdrawnAt" INTEGER, "activationTokenHash" TEXT, "activationExpiresAt" INTEGER, UNIQUE("clubSlug", "playerId", "email"))`,
+  `CREATE TABLE IF NOT EXISTS "player_contact" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "email" TEXT NOT NULL, "relationship" TEXT NOT NULL CHECK("relationship" IN ('self', 'guardian')), "state" TEXT NOT NULL DEFAULT 'pending' CHECK("state" IN ('pending', 'confirmed', 'withdrawn', 'bounced')), "operationalOptIn" INTEGER NOT NULL DEFAULT 0, "marketingOptIn" INTEGER NOT NULL DEFAULT 0, "sourcedBy" TEXT, "sourcedAt" INTEGER NOT NULL, "signoffId" TEXT, "confirmedAt" INTEGER, "withdrawnAt" INTEGER, "activationTokenHash" TEXT, "activationExpiresAt" INTEGER, "activationSentAt" INTEGER, "reminderSentAt" INTEGER, UNIQUE("clubSlug", "playerId", "email"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_contact_clubSlug" ON "player_contact" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_contact_playerId" ON "player_contact" ("playerId")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_contact_email" ON "player_contact" ("email")`,
@@ -116,6 +116,7 @@ export const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_consent_record_token" ON "consent_record" ("withdrawTokenHash")`,
   `CREATE INDEX IF NOT EXISTS "idx_consent_record_clubSlug" ON "consent_record" ("clubSlug")`,
   `CREATE INDEX IF NOT EXISTS "idx_player_contact_activation_token" ON "player_contact" ("activationTokenHash")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_contact_pending_sweep" ON "player_contact" ("clubSlug", "state", "activationSentAt")`,
   `CREATE TABLE IF NOT EXISTS "club_dpa_acceptance" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "userId" TEXT NOT NULL, "acceptedAt" INTEGER NOT NULL, "ipAddress" TEXT, "policyVersion" TEXT NOT NULL, "wordingHash" TEXT NOT NULL, UNIQUE("clubSlug", "policyVersion"))`,
   `CREATE INDEX IF NOT EXISTS "idx_club_dpa_acceptance_clubSlug" ON "club_dpa_acceptance" ("clubSlug")`,
   // Outbound send / drop audit (#133). Addresses are not stored — contactId only.

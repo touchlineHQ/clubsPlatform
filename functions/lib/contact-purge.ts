@@ -22,7 +22,7 @@ export type ContactPurgeActor = {
   /** Acting user id (admin or parent). Stored in admin_audit_log.adminId. */
   actorId: string;
   /** Distinguishes audit action / note without recording the address. */
-  source: "admin" | "parent" | "admin_bulk_team" | "admin_bulk_club";
+  source: "admin" | "parent" | "admin_bulk_team" | "admin_bulk_club" | "retention_lapse";
 };
 
 export type ContactPurgeResult = {
@@ -183,6 +183,8 @@ function auditActionFor(source: ContactPurgeActor["source"]): string {
       return "contact_purged_bulk_team";
     case "admin_bulk_club":
       return "contact_purged_bulk_club";
+    case "retention_lapse":
+      return "contact_lapsed_unactivated";
     default:
       return "contact_purged";
   }
@@ -212,7 +214,9 @@ async function preparePurgeStatements(
       .bind(contact.id, clubSlug),
   ];
 
-  if (normalizeContactEmail(contact.email)) {
+  // A lapsed (never-activated) invitation is silence, not an objection, so it
+  // is deleted without suppression; a later club re-import may invite again.
+  if (actor.source !== "retention_lapse" && normalizeContactEmail(contact.email)) {
     const { emailHash, salt, hashVersion } = await hashContactEmailForSuppression(
       clubSlug,
       contact.email,
@@ -433,4 +437,39 @@ export async function purgeContactsMatchingEmail(
     [clubSlug, normalised, afterId, afterId],
   );
   return purgeContactChunk(db, clubSlug, contacts, { actorId, source });
+}
+
+/** Pending invitations are held without consent for this long at most (docs/DATA_PROTECTION.md). */
+export const PENDING_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Delete `pending` contacts whose activation mail was sent more than the
+ * retention period ago (#132). Not suppressed. Never-mailed contacts are left
+ * alone: the clock starts when the parent is actually asked, so contacts that
+ * predate activation mail (backfilled by #131) get their invitation first
+ * instead of being deleted unasked.
+ * One chunk per call — call again while `remaining` > 0.
+ */
+export async function purgeLapsedPendingContacts(
+  db: D1Database,
+  {
+    clubSlug,
+    actorId,
+    now = nowMs(),
+  }: { clubSlug: string; actorId: string; now?: number },
+): Promise<BulkContactPurgeResult> {
+  const contacts = await loadPurgeCandidates(
+    db,
+    `SELECT id, clubSlug, playerId, email FROM "player_contact"
+      WHERE clubSlug = ?
+        AND state = 'pending'
+        AND activationSentAt IS NOT NULL
+        AND activationSentAt < ?
+      ORDER BY id`,
+    [clubSlug, now - PENDING_RETENTION_MS],
+  );
+  return purgeContactChunk(db, clubSlug, contacts, {
+    actorId,
+    source: "retention_lapse",
+  });
 }

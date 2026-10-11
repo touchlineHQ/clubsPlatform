@@ -94,3 +94,51 @@ export function verifyEmailMessage(clubName: string, link: string): BuiltMessage
     ].join("\n"),
   };
 }
+
+/**
+ * Activation mail to a parent whose address a club has entered (#132).
+ *
+ * The only mail a `pending` contact ever receives (plus at most one reminder).
+ * Names the club and identifies the player by FAN and team — we hold no name.
+ * Nothing here is consent: the parent gives it on the page the link opens.
+ * `declineLink` lets them say "I did not agree to this" without contacting
+ * anyone.
+ */
+export function activationMessage(
+  clubName: string,
+  player: { fanId: string; teamName: string | null },
+  links: { activate: string; decline: string },
+  reminder = false,
+): BuiltMessage {
+  const who = player.teamName
+    ? `FAN ${player.fanId} (${player.teamName})`
+    : `FAN ${player.fanId}`;
+  const lead = reminder
+    ? `A reminder: ${clubName} entered this email address as a contact for ${who}, and it has not been activated. If you don't activate it, the address will be deleted after a while.`
+    : `${clubName} entered this email address as a contact for ${who}. Nothing will be sent to you until you activate it.`;
+  return {
+    subject: reminder
+      ? `Reminder: activate your contact details for ${clubName}`
+      : `Activate your contact details for ${clubName}`,
+    html: layout(
+      clubName,
+      `<p style="margin:0 0 20px;font-size:15px;line-height:1.5;">${escapeHtml(lead)}</p>
+      <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">
+        You'll see what you're agreeing to, and you can choose whether to also hear about club news and offers (that's a separate, optional tick). You don't need a password.
+      </p>
+      ${button(links.activate, "Activate & accept")}
+      <p style="margin:0;font-size:13px;color:#555;">
+        Didn't agree to this? <a href="${escapeHtml(links.decline)}" style="color:#1a1a1a;">I did not agree to this</a> — we'll stop using the address and tell the club.
+      </p>`,
+    ),
+    text: [
+      lead,
+      ``,
+      `Activate & accept (no password needed):`,
+      links.activate,
+      ``,
+      `Didn't agree to this? Tell us here and we'll stop using the address and tell the club:`,
+      links.decline,
+    ].join("\n"),
+  };
+}

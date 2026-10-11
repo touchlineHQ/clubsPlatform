@@ -13,6 +13,7 @@ import {
   consentFormUrl,
   listContactsForFan,
 } from "../../lib/parent-consent";
+import { emailActivationLink } from "../../lib/activation-mail";
 
 /**
  * Admin: list player_contact rows for a FAN, and mint a parent consent link
@@ -93,6 +94,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       isMultiClubMode(context.env),
     );
 
+    // Welcome / activation mail to the parent. A provider failure is not an
+    // error here: the admin still gets the link to pass on by hand.
+    const emailed = await emailActivationLink(
+      context.env.DB,
+      { env: context.env, origin, multiClub: isMultiClubMode(context.env) },
+      {
+        clubSlug,
+        contactId: result.contactId,
+        email: result.email,
+        token: result.token,
+      },
+    );
+
     const posthog = getPostHog(context.env);
     if (posthog) {
       await posthog.captureImmediate({
@@ -103,6 +117,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
           club_slug: clubSlug,
           contact_id: result.contactId,
           created: result.created,
+          email_status: emailed,
         },
       });
     }
@@ -118,6 +133,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       consentUrl,
       token: result.token,
       created: result.created,
+      emailed,
     }, { status: result.created ? 201 : 200 });
   } catch (err) {
     if (err instanceof ParentConsentError) {
