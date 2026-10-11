@@ -128,6 +128,15 @@ describe('double opt-in (#132)', () => {
       expect(sent).toHaveLength(0);
     });
 
+    it('two overlapping batches mail a contact once and leave its link intact', async () => {
+      importContact(sqlite, 1);
+      await Promise.all([sendBatch(), sendBatch()]);
+      expect(sent).toHaveLength(1);
+      const token = tokenOf(sent[0].text);
+      const row = sqlite.prepare(`SELECT activationTokenHash AS h FROM "player_contact"`).get() as any;
+      expect(row.h).toBe(await hashToken(token));
+    });
+
     it('never mails confirmed, withdrawn or bounced contacts', async () => {
       importContact(sqlite, 1, { state: 'confirmed' });
       importContact(sqlite, 2, { state: 'withdrawn' });

@@ -126,13 +126,14 @@ async function mintAndSend(
   const expiry = kind === "reminder" ? "activationExpiresAt" : "?";
   const binds: unknown[] = [tokenHash];
   if (kind !== "reminder") binds.push(now + ACTIVATION_TOKEN_TTL_MS);
-  binds.push(now, candidate.id, clubSlug, ...stampBinds);
+  binds.push(now, candidate.id, clubSlug, candidate.prevStampedAt, candidate.prevHash, ...stampBinds);
   const minted = await db
     .prepare(
       `UPDATE "player_contact"
           SET activationTokenHash = ?, activationExpiresAt = ${expiry},
               ${stampColumn} = ?
-        WHERE id = ? AND clubSlug = ? AND state = 'pending' ${stampGuard}`,
+        WHERE id = ? AND clubSlug = ? AND state = 'pending'
+          AND ${stampColumn} IS ? AND activationTokenHash IS ? ${stampGuard}`,
     )
     .bind(...binds)
     .run();
