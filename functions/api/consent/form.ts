@@ -10,6 +10,7 @@ import {
 import {
   ParentConsentError,
   findContactByActivationToken,
+  declineActivationByToken,
   submitParentConsentForm,
   withdrawParentConsentByToken,
 } from "../../lib/parent-consent";
@@ -18,6 +19,29 @@ import {
  * Public parent consent form API (#149). No auth — the activation token is the
  * credential. Club is resolved from the token, not from X-Club-Slug.
  */
+
+/**
+ * One response for every token that cannot be activated: unknown, expired,
+ * spent (already activated), declined. Same status and body so the link tells
+ * a stranger nothing; the page offers a fresh link in all of these cases.
+ */
+function linkUnavailable() {
+  return json(
+    { error: "This link is no longer valid", code: "link_unavailable" },
+    { status: 404 },
+  );
+}
+
+async function teamFor(db: Env["DB"], clubSlug: string, playerId: string): Promise<string | null> {
+  const row = await db
+    .prepare(
+      `SELECT teamName FROM "player_registration"
+        WHERE clubSlug = ? AND playerId = ? ORDER BY updatedAt DESC LIMIT 1`,
+    )
+    .bind(clubSlug, playerId)
+    .first<{ teamName: string }>();
+  return row?.teamName ?? null;
+}
 
 async function clubName(db: Env["DB"], clubSlug: string): Promise<string> {
   const row = await db
@@ -29,27 +53,27 @@ async function clubName(db: Env["DB"], clubSlug: string): Promise<string> {
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const token = new URL(context.request.url).searchParams.get("token")?.trim() ?? "";
+  const requestUrl = new URL(context.request.url);
+  const token = requestUrl.searchParams.get("token")?.trim() ?? "";
+  // The decline page may open an expired-but-unspent link: honouring an
+  // objection never depends on the link being fresh. Activation still expires.
+  const declineMode = requestUrl.searchParams.get("mode") === "decline";
   if (!token) return json({ error: "token is required" }, { status: 400 });
 
   const contact = await findContactByActivationToken(context.env.DB, token);
-  if (!contact) {
-    // Quiet — do not confirm whether a token existed beyond a generic miss.
-    return json({ error: "Consent link not found or expired" }, { status: 404 });
-  }
-
   if (
-    contact.state === "pending"
-    && contact.activationExpiresAt != null
-    && contact.activationExpiresAt < Date.now()
+    !contact
+    || contact.state !== "pending"
+    || (!declineMode && contact.activationExpiresAt != null && contact.activationExpiresAt < Date.now())
   ) {
-    return json({ error: "This consent link has expired" }, { status: 410 });
+    return linkUnavailable();
   }
 
-  const [operational, marketing, name] = await Promise.all([
+  const [operational, marketing, name, teamName] = await Promise.all([
     currentOperationalConsentPolicy(),
     currentMarketingConsentPolicy(),
     clubName(context.env.DB, contact.clubSlug),
+    teamFor(context.env.DB, contact.clubSlug, contact.playerId),
   ]);
 
   return json({
@@ -66,6 +90,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       operationalOptIn: contact.operationalOptIn === 1,
       marketingOptIn: contact.marketingOptIn === 1,
       fanId: contact.fanId,
+      teamName,
     },
     operational,
     marketing,
@@ -87,6 +112,25 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!token) return json({ error: "token is required" }, { status: 400 });
 
   const ip = requestIp(context.request);
+
+  if (action === "decline") {
+    try {
+      const result = await declineActivationByToken(context.env.DB, token);
+      const posthog = getPostHog(context.env);
+      if (posthog) {
+        await posthog.captureImmediate({
+          distinctId: `consent:${result.contactId}`,
+          event: "parent contact declined",
+          ...clubGroups(result.clubSlug),
+          properties: { club_slug: result.clubSlug, source: "activation_email" },
+        });
+      }
+      return json({ ok: true, declined: true });
+    } catch (err) {
+      if (err instanceof ParentConsentError) return linkUnavailable();
+      throw err;
+    }
+  }
 
   if (action === "withdraw") {
     try {
@@ -174,13 +218,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     });
   } catch (err) {
     if (err instanceof ParentConsentError) {
-      const status =
-        err.code === "not_found" ? 404
-          : err.code === "expired" ? 410
-            : err.code === "policy_mismatch" ? 409
-              : err.code === "invalid_state" ? 409
-                : err.code === "invalid_email" ? 400
-                  : 400;
+      // Unknown / expired / spent are one response (see linkUnavailable).
+      if (err.code === "not_found" || err.code === "expired" || err.code === "invalid_state") {
+        return linkUnavailable();
+      }
+      const status = err.code === "policy_mismatch" ? 409 : 400;
       return json({ error: err.message, code: err.code }, { status });
     }
     throw err;

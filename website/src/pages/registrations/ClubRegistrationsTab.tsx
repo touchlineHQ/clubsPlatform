@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Box, Button, Center, Checkbox, CopyButton, Group, Loader, Modal, Radio, Select, Stack, Text, Textarea, TextInput, Badge,
 } from '@mantine/core';
@@ -6,6 +6,7 @@ import {
   IconArrowsJoin, IconClipboardList, IconFileSpreadsheet, IconFileUpload, IconMailOff,
 } from '@tabler/icons-react';
 import { captureEvent } from '../../lib/posthog';
+import { sweepUnactivatedContacts } from '../../lib/activationMail';
 import { getSubscriptionStatus } from '../../utils/subscriptionStatus';
 import { ClubFilterBar } from './ClubFilterBar';
 import { EmptyState } from './EmptyState';
@@ -40,6 +41,16 @@ export function ClubRegistrationsTab({
   clubSlug, levels, onOpenImport, onOpenReport, reloadToken,
 }: ClubRegistrationsTabProps) {
   const club = useClubRegistrations(clubSlug, true, reloadToken);
+  // Pages has no cron: opening this tab sends the one reminder and deletes
+  // pending contacts that never activated (#132). Told to the club below.
+  const [lapsedCount, setLapsedCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void sweepUnactivatedContacts(clubSlug).then((t) => {
+      if (!cancelled && t.lapsed > 0) setLapsedCount((n) => n + t.lapsed);
+    });
+    return () => { cancelled = true; };
+  }, [clubSlug]);
   // Two instances, not one: the export and the status report each walk the
   // filtered set, and sharing a loader would let the report's walk put the
   // Export to Excel button into "Exporting …" with no export in progress.
@@ -717,6 +728,12 @@ export function ClubRegistrationsTab({
         onRestore={handleRestoreSuggestion}
       />
 
+      {lapsedCount > 0 && (
+        <Alert color="yellow" variant="light" title="Unactivated contacts removed">
+          {lapsedCount} contact email{lapsedCount === 1 ? '' : 's'} never activated within 30 days and
+          {lapsedCount === 1 ? ' was' : ' were'} deleted. Re-import or add the address again to invite the parent once more.
+        </Alert>
+      )}
       {levelError && <Alert color="red" variant="light">{levelError}</Alert>}
       {unmarkPaidError && <Alert color="red" variant="light">{unmarkPaidError}</Alert>}
       {mergeError && <Alert color="red" variant="light">{mergeError}</Alert>}

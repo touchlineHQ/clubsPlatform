@@ -4,6 +4,7 @@ import {
   Paper, ScrollArea, Stack, Table, Text, Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconUsers } from '@tabler/icons-react';
+import { sendPendingActivationMail, type ActivationTotals } from '../../lib/activationMail';
 import { useClub } from '../../context/ClubContext';
 import { clubDesign } from '../../theme';
 import { FileDropzone } from '../../components/club/FileDropzone';
@@ -145,6 +146,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
   /** Batches are uneven — an address-heavy row can close one early. */
   const batches = useMemo(() => (rows ? batchRows(rows) : []), [rows]);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [activation, setActivation] = useState<ActivationTotals | null>(null);
   const [apiError, setApiError] = useState('');
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -285,6 +287,10 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
         setImportedSoFar(chunks.slice(0, index + 1).reduce((n, c) => n + c.length, 0));
       }
 
+      // Import writes pending contacts only; the activation mail is sent here,
+      // in capped batches. A mail failure never fails the import.
+      setActivation(null);
+      setActivation(await sendPendingActivationMail(clubSlug));
       setResult(totals);
       setRows(null);
       clearPreview();
@@ -469,6 +475,14 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
               <Text size="sm">New players: <b>{result.players.created}</b></Text>
               <Text size="sm">Registrations: <b>{result.registrations.created}</b> created, <b>{result.registrations.updated}</b> updated</Text>
               <Text size="sm">Contact emails: <b>{result.contacts.created}</b> pending, <b>{result.contacts.skipped}</b> already held{(result.contacts.dropped ?? 0) > 0 ? <>, <b>{result.contacts.dropped}</b> dropped (no club sign-off)</> : null}</Text>
+              {activation && (
+                <Text size="sm">
+                  Activation emails: <b>{activation.sent}</b> sent
+                  {activation.failed > 0 ? <>, <b>{activation.failed}</b> failed (they will be retried; nothing was lost)</> : null}
+                  {!activation.configured ? ' — email is not configured, so no activation emails went out' : null}
+                  . Parents are not contactable until they activate.
+                </Text>
+              )}
               <Text size="sm">No longer in the file: <b>{result.stale.count}</b></Text>
             </Stack>
           </Alert>
@@ -498,7 +512,7 @@ export function ImportPlayersPanel({ onImported }: ImportPlayersPanelProps) {
           )}
 
           <Box>
-            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setFileName(''); clearPreview(); }}>
+            <Button variant="subtle" size="xs" radius="xl" onClick={() => { setResult(null); setActivation(null); setFileName(''); clearPreview(); }}>
               Import another file
             </Button>
           </Box>

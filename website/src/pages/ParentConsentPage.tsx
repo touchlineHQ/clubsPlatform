@@ -24,6 +24,7 @@ type FormPayload = {
     operationalOptIn: boolean;
     marketingOptIn: boolean;
     fanId: string | null;
+    teamName?: string | null;
   };
   operational: Policy;
   marketing: Policy;
@@ -35,7 +36,7 @@ type FormPayload = {
  * No account / password. The activation token in the URL is the credential.
  * Names the club as controller; marketing stays off unless the parent ticks it.
  */
-export function ParentConsentPage() {
+export function ParentConsentPage({ mode = 'activate' }: { mode?: 'activate' | 'decline' }) {
   const { token: rawToken } = useParams<{ token: string }>();
   const token = rawToken ?? '';
   const { clubSlug } = useClub();
@@ -47,7 +48,8 @@ export function ParentConsentPage() {
   const [operationalAgreed, setOperationalAgreed] = useState(false);
   const [marketingOptIn, setMarketingOptIn] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [done, setDone] = useState<'confirmed' | 'withdrawn' | null>(null);
+  const [done, setDone] = useState<'confirmed' | 'withdrawn' | 'declined' | null>(null);
+  const [resendNote, setResendNote] = useState('');
   const [submitError, setSubmitError] = useState('');
 
   const load = useCallback(async () => {
@@ -59,7 +61,9 @@ export function ParentConsentPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`/api/consent/form?token=${encodeURIComponent(token)}`);
+      const query = new URLSearchParams({ token });
+      if (mode === 'decline') query.set('mode', 'decline');
+      const res = await fetch(`/api/consent/form?${query.toString()}`);
       const data = await res.json() as FormPayload & { error?: string };
       if (!res.ok) {
         setError(data.error || 'Could not load this consent form.');
@@ -82,7 +86,7 @@ export function ParentConsentPage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [mode, token]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -119,8 +123,13 @@ export function ParentConsentPage() {
         setSubmitError(data.error || 'Could not save your choices.');
         return;
       }
+      // The link is spent once activated, so show the outcome locally instead
+      // of reloading it.
+      setPayload((p) => p && {
+        ...p,
+        contact: { ...p.contact, email, state: 'confirmed', marketingOptIn },
+      });
       setDone('confirmed');
-      await load();
     } catch {
       setSubmitError('Could not save your choices.');
     } finally {
@@ -144,12 +153,49 @@ export function ParentConsentPage() {
         return;
       }
       setDone('withdrawn');
-      await load();
     } catch {
       setSubmitError('Could not withdraw.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const decline = async () => {
+    if (!token) return;
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      const res = await fetch('/api/consent/form', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decline', token }),
+      });
+      if (!res.ok) {
+        setSubmitError('This link is no longer valid.');
+        return;
+      }
+      setDone('declined');
+    } catch {
+      setSubmitError('Could not record your choice.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // The server answers the same for an unknown, expired or spent link, so the
+  // offer of a fresh one is the same too.
+  const requestFreshLink = async () => {
+    setResendNote('');
+    try {
+      await fetch('/api/consent/resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    } catch {
+      // Same message either way.
+    }
+    setResendNote('If that link was valid, a new one is on its way to the same address.');
   };
 
   if (loading) {
@@ -160,6 +206,14 @@ export function ParentConsentPage() {
     return (
       <Stack maw={560} mx="auto" py="xl" px="md" gap="md">
         <Alert color="red" variant="light">{error || 'Consent form unavailable.'}</Alert>
+        <Text size="sm">
+          Links work once and expire. If yours has expired or was already used, we can send a fresh one
+          to the address the club entered.
+        </Text>
+        <Button variant="light" radius="xl" onClick={() => void requestFreshLink()}>
+          Send me a fresh link
+        </Button>
+        {resendNote && <Alert color="blue" variant="light">{resendNote}</Alert>}
       </Stack>
     );
   }
@@ -175,6 +229,7 @@ export function ParentConsentPage() {
         <Text size="sm" c="dimmed" mt={4}>
           For {clubName}
           {payload.contact.fanId ? ` · player FAN ${payload.contact.fanId}` : ''}
+          {payload.contact.teamName ? ` · ${payload.contact.teamName}` : ''}
           {clubSlug && clubSlug !== payload.club.slug
             ? ` · opened under /${clubSlug}/`
             : ''}
@@ -202,6 +257,25 @@ export function ParentConsentPage() {
         </Alert>
       )}
 
+      {done === 'declined' && (
+        <Alert color="orange" variant="light" title="Thanks for letting us know">
+          You don't need to do anything else. This address will not be contacted, and the club can see that
+          you declined.
+        </Alert>
+      )}
+
+      {mode === 'decline' && done === null && payload.contact.state === 'pending' && (
+        <Paper p="md" withBorder radius="md">
+          <Text size="sm" lh={1.55} mb="sm">
+            Confirm that you did not agree to {clubName} holding this email address. We will stop using
+            it and the club will see that you declined. You don't need to contact anybody.
+          </Text>
+          <Button color="orange" radius="xl" loading={submitting} onClick={() => void decline()}>
+            I did not agree to this
+          </Button>
+        </Paper>
+      )}
+
       {done === 'withdrawn' && (
         <Alert color="orange" variant="light" title="Withdrawn">
           This address will not be used for club contact from this record.
@@ -211,7 +285,7 @@ export function ParentConsentPage() {
 
       {submitError && <Alert color="red" variant="light">{submitError}</Alert>}
 
-      {done === null && payload.contact.state === 'pending' && (
+      {mode === 'activate' && done === null && payload.contact.state === 'pending' && (
         <Stack gap="md">
           <TextInput
             label="Email the club should use"
@@ -249,7 +323,7 @@ export function ParentConsentPage() {
             loading={submitting}
             onClick={() => void submit()}
           >
-            Save my choices
+            Activate &amp; accept
           </Button>
         </Stack>
       )}

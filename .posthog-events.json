@@ -1,5 +1,19 @@
 [
   {
+    "event": "activation emails sent",
+    "description": "An admin's session sends a capped batch of activation (or the single reminder) mail to pending parent contacts. Counts only: sent_count, failed_count and kind. No FAN numbers and no addresses.",
+    "files": [
+      "functions/api/admin/activation-mail.ts"
+    ]
+  },
+  {
+    "event": "activation link resent",
+    "description": "A parent asks for a fresh activation link from an expired or spent link, and one was sent. No properties \u2014 no FAN, no email, no contact id.",
+    "files": [
+      "functions/api/consent/resend.ts"
+    ]
+  },
+  {
     "event": "booking deleted",
     "description": "An admin deletes a confirmed pitch booking.",
     "files": [
@@ -208,6 +222,13 @@
   {
     "event": "parent contact confirmed",
     "description": "Parent completed the club-scoped consent form without an account; player_contact confirmed.",
+    "files": [
+      "functions/api/consent/form.ts"
+    ]
+  },
+  {
+    "event": "parent contact declined",
+    "description": "A parent uses the 'I did not agree to this' link in the activation mail; the pending contact is withdrawn. Club slug and source only.",
     "files": [
       "functions/api/consent/form.ts"
     ]
@@ -459,6 +480,13 @@
     "description": "A user unsubscribes from following a team.",
     "files": [
       "functions/api/team-subscriptions.ts"
+    ]
+  },
+  {
+    "event": "unactivated contacts lapsed",
+    "description": "Pending contacts that never activated were deleted after the 30-day retention period. A count only \u2014 no FAN numbers and no addresses.",
+    "files": [
+      "functions/api/admin/activation-mail.ts"
     ]
   },
   {

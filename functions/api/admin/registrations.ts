@@ -57,8 +57,43 @@ interface RegistrationRow {
   manualPaidBy?: string | null;
   manualPaidAt?: number | null;
   manualNote?: string | null;
+  /** Best contact state for the player at this club (#132); null = no contact held. */
+  contactState?: string | null;
   /** The sort key, carried out of SQL so the cursor is never re-derived in JS. */
   __cursor?: string;
+}
+
+/** Most useful state first: one confirmed contact is enough to reach the family. */
+const CONTACT_STATE_RANK = ["confirmed", "pending", "bounced", "withdrawn"];
+
+/**
+ * Per-player contact state for the admin table (#132). One query bounded by the
+ * page's own FANs (<= page size), so it does not reintroduce a club scan.
+ */
+async function attachContactState(
+  db: D1Database,
+  clubSlug: string,
+  rows: RegistrationRow[],
+): Promise<RegistrationRow[]> {
+  const fanIds = [...new Set(rows.map((r) => r.fanId))];
+  if (fanIds.length === 0) return rows;
+  const { results } = await db
+    .prepare(
+      `SELECT p."fanId" AS fanId, pc."state" AS state
+         FROM "player_contact" pc
+         JOIN "player" p ON p."id" = pc."playerId"
+        WHERE pc."clubSlug" = ? AND p."fanId" IN (${fanIds.map(() => "?").join(",")})`,
+    )
+    .bind(clubSlug, ...fanIds)
+    .all<{ fanId: string; state: string }>();
+  const best = new Map<string, string>();
+  for (const { fanId, state } of results ?? []) {
+    const current = best.get(fanId);
+    if (!current || CONTACT_STATE_RANK.indexOf(state) < CONTACT_STATE_RANK.indexOf(current)) {
+      best.set(fanId, state);
+    }
+  }
+  return rows.map((r) => ({ ...r, contactState: best.get(r.fanId) ?? null }));
 }
 
 /** As api/my-registrations.ts: one pass, no database access. */
@@ -183,8 +218,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // audit-log scan that made the old endpoint degrade with admin activity.
   const withAttribution = await attachManualAttribution(context.env.DB, clubSlug, items);
 
+  const withContactState = await attachContactState(context.env.DB, clubSlug, withAttribution);
+
   return json({
-    rows: omitMergeFieldsWhenUnmerged(withAttribution),
+    rows: omitMergeFieldsWhenUnmerged(withContactState),
     nextCursor,
     limit: page.limit,
   });

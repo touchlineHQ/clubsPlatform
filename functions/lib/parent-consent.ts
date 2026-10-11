@@ -1,5 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import { nowMs, randomId } from "./api-helpers";
+import { prepareAuditLog } from "./audit-log";
 import {
   type ConsentPolicySubmission,
   hashToken,
@@ -561,3 +562,42 @@ export async function withdrawParentConsentByToken(
   return { contactId: contact.id, clubSlug: contact.clubSlug };
 }
 
+
+/**
+ * "I did not agree to this" (#132). Only a still-pending invitation can be
+ * declined here; a spent, expired-and-cleared or unknown token is reported as
+ * not_found so the caller's response does not distinguish them. Sets
+ * `withdrawn`, drops the token, and leaves an address-free audit row so the
+ * club can see the decline without anyone being contacted.
+ */
+export async function declineActivationByToken(
+  db: D1Database,
+  token: string,
+): Promise<{ contactId: string; clubSlug: string }> {
+  const contact = await findContactByActivationToken(db, token);
+  if (!contact || contact.state !== "pending") {
+    throw new ParentConsentError("Consent link not found", "not_found");
+  }
+  const at = nowMs();
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE "player_contact"
+            SET state = 'withdrawn', operationalOptIn = 0, marketingOptIn = 0,
+                withdrawnAt = ?, activationTokenHash = NULL, activationExpiresAt = NULL
+          WHERE id = ? AND clubSlug = ? AND state = 'pending'`,
+      )
+      .bind(at, contact.id, contact.clubSlug),
+    prepareAuditLog(db, {
+      clubSlug: contact.clubSlug,
+      adminId: `contact:${contact.id}`,
+      action: "contact_declined_by_parent",
+      targetTable: "player_contact",
+      targetId: contact.id,
+      oldStatus: "pending",
+      newStatus: "withdrawn",
+      note: `playerId=${contact.playerId}`,
+    }),
+  ]);
+  return { contactId: contact.id, clubSlug: contact.clubSlug };
+}
