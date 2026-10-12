@@ -92,11 +92,25 @@
     ]
   },
   {
+    "event": "contact delivery feedback applied",
+    "description": "A signed Resend webhook marks a contact bounced (hard bounce) or withdrawn (spam complaint). Properties: club_slug and kind (bounce | complaint) only \u2014 no contact id, message id or address.",
+    "files": [
+      "functions/api/webhooks/resend.ts"
+    ]
+  },
+  {
     "event": "contact email purged",
     "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only \u2014 never the address.",
     "files": [
       "functions/api/admin/contact-purge.ts",
       "functions/api/me/contact-purge.ts"
+    ]
+  },
+  {
+    "event": "contact unsubscribed",
+    "description": "A parent withdraws from club mail via the unsubscribe link or a mail client's one-click (RFC 8058) control. Properties: club_slug, scope (marketing | all | purge), source (link | one_click) and the purpose of the mail it came from. No contact id, FAN, token or address.",
+    "files": [
+      "functions/api/unsubscribe.ts"
     ]
   },
   {

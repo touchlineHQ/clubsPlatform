@@ -19,6 +19,8 @@ export interface Env {
   RESEND_API_KEY?: string;
   /** Verified from-address for outbound mail. */
   FROM_EMAIL?: string;
+  /** Resend webhook signing secret (whsec_…) — enables bounce/complaint handling (#135). */
+  RESEND_WEBHOOK_SECRET?: string;
 }
 
 /**

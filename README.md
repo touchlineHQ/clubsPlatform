@@ -287,6 +287,25 @@ Links point into the club's own site, including the `/<slug>/` prefix in
 multi-club mode and the `#` the HashRouter needs. Without the prefix a reset
 link lands the recipient on the platform directory instead of their club.
 
+**Every message carries the shared footer (#135).** `getMailer()` wraps the
+provider in `lib/mail-layout.ts`, and `footer` is a required field on every
+send, so a template cannot leave it out. Operational and marketing mail gets a
+per-recipient one-click link plus `List-Unsubscribe` /
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers pointing at
+`/api/unsubscribe`; transactional mail says plainly that it has no
+unsubscribe.
+
+Bounces and spam complaints arrive at `/api/webhooks/resend`. Add a webhook in
+the Resend dashboard for `email.bounced` and `email.complained` pointing at
+`https://<site>/api/webhooks/resend`, then store its signing secret:
+
+```sh
+npx wrangler pages secret put RESEND_WEBHOOK_SECRET --project-name clubsplatform
+npx wrangler pages secret put RESEND_WEBHOOK_SECRET --project-name clubsplatform --env preview
+```
+
+Without it the webhook answers 503 and bounces are not recorded.
+
 **Email verification is recorded but not enforced.** `requireEmailVerification`
 is deliberately off: every account that exists today has `emailVerified = 0`,
 including every parent created by the FA import, so turning it on would lock

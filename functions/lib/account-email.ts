@@ -28,6 +28,8 @@ export function escapeHtml(value: string): string {
  * No images and no external stylesheet: club mail goes to parents on phones,
  * through filters that distrust both, and a link that survives is worth more
  * than a design that might not render.
+ *
+ * The footer is not here: lib/mail-layout.ts adds it on every send (#135).
  */
 function layout(clubName: string, bodyHtml: string): string {
   return `<!doctype html>
@@ -37,9 +39,6 @@ function layout(clubName: string, bodyHtml: string): string {
       <h1 style="margin:0 0 20px;font-size:20px;font-weight:700;">${escapeHtml(clubName)}</h1>
       ${bodyHtml}
     </div>
-    <p style="max-width:520px;margin:16px auto 0;font-size:12px;color:#777;">
-      Sent by ${escapeHtml(clubName)}. If you weren't expecting this, you can ignore it.
-    </p>
   </body>
 </html>`;
 }
