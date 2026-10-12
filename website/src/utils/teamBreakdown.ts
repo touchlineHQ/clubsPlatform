@@ -17,22 +17,19 @@ export interface TeamBreakdown extends RegistrationSummary {
   issues: number;
 }
 
-/** FA statuses that count as a league-registered player. "Active" is the documented value;
- *  real exports have been seen with other spellings, so match a small set of likely ones.
- *  Anything that is neither training-only nor clearly inactive/cancelled is treated as league. */
-const LEAGUE_STATUSES = new Set(['active', 'registered', 'full', 'full registration', 'playing', 'active registration']);
-const TRAINING_STATUSES = new Set(['training only', 'training-only', 'training only.']);
+/** FA statuses: real exports use several spellings for league-registered players, so any
+ *  non-blank status that is neither training-only nor clearly inactive counts as league. */
+const TRAINING_STATUSES = new Set(['training only', 'training-only', 'training']);
 const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'lapsed', 'inactive', 'expired', 'deleted', 'not registered']);
 
 function norm(v: string | null | undefined): string {
-  return (v ?? '').trim().toLowerCase();
+  return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.]+$/, '');
 }
 
 function isLeague(status: string | null | undefined): boolean {
   const n = norm(status);
   if (!n) return false;
-  if (TRAINING_STATUSES.has(n) || INACTIVE_STATUSES.has(n)) return false;
-  return LEAGUE_STATUSES.has(n) || true; // non-training, non-inactive → league
+  return !TRAINING_STATUSES.has(n) && !INACTIVE_STATUSES.has(n);
 }
 
 function isTraining(status: string | null | undefined): boolean {

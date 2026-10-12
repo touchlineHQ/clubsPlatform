@@ -42,6 +42,24 @@ describe('breakdownByTeam', () => {
   });
 });
 
+describe('breakdownByTeam status classification', () => {
+  it('counts any non-training, non-inactive status as league and dedupes players', () => {
+    const rows = [
+      row({ fanId: 'a', registrationStatus: 'Registered' }),
+      row({ fanId: 'b', registrationStatus: ' ACTIVE ' }),
+      row({ fanId: 'b', registrationStatus: 'Active' }),
+      row({ fanId: 'c', registrationStatus: 'Training Only.' }),
+      row({ fanId: 'd', registrationStatus: 'training-only' }),
+      row({ fanId: 'e', registrationStatus: 'Cancelled' }),
+      row({ fanId: 'f', registrationStatus: 'Lapsed' }),
+      row({ fanId: 'g', registrationStatus: '' }),
+      row({ fanId: 'h', registrationStatus: null }),
+    ];
+    const [t] = breakdownByTeam(rows, NOW);
+    expect(t).toMatchObject({ league: 3, training: 2, players: 4 });
+  });
+});
+
 describe('breakdownByTeam with configured teams', () => {
   it('seeds zero rows without duplicating registered teams', () => {
     const out = breakdownByTeam([row({ teamName: 'U10' })], NOW, ['U8', ' U10 ', '']);
