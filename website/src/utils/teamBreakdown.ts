@@ -49,14 +49,25 @@ function hasIssue(row: TeamBreakdownRow, now: number): boolean {
 }
 
 /**
- * One summary per team, sorted by name.
+ * One summary per team, sorted by name. `configuredTeams` (from /api/teams)
+ * seeds zero rows for teams nobody has registered for yet.
  *
  * Money counts go through `summariseRegistrations` per team, so they match the
  * summary strip under a team filter: a billing group spanning teams counts once
  * in each team it has a member in.
  */
-export function breakdownByTeam(rows: readonly TeamBreakdownRow[], now: number = Date.now()): TeamBreakdown[] {
+export function breakdownByTeam(
+  rows: readonly TeamBreakdownRow[],
+  now: number = Date.now(),
+  configuredTeams: readonly string[] = [],
+): TeamBreakdown[] {
   const byTeam = new Map<string, TeamBreakdownRow[]>();
+  // Configured teams with nobody registered still get a row: that is the
+  // clearest "space available" signal there is.
+  for (const name of configuredTeams) {
+    const trimmed = name.trim();
+    if (trimmed && !byTeam.has(trimmed)) byTeam.set(trimmed, []);
+  }
   for (const row of rows) {
     const name = row.teamName?.trim() || '(No team)';
     const list = byTeam.get(name);

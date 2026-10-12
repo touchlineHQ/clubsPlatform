@@ -37,6 +37,21 @@ const COLUMNS: { key: keyof TeamBreakdown; label: string }[] = [
 ];
 
 /**
+ * Names of the club's configured teams, so ones with no registrations still
+ * show. Non-fatal: without them the breakdown just covers registered teams.
+ */
+async function loadConfiguredTeams(clubSlug: string): Promise<string[]> {
+  try {
+    const res = await fetch('/api/teams', { headers: { 'X-Club-Slug': clubSlug } });
+    if (!res.ok) return [];
+    const data = await res.json() as { teams?: { name?: unknown }[] };
+    return (data.teams ?? []).map(t => (typeof t.name === 'string' ? t.name : '')).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * One row per team (#230): league / training counts, money and issues, so an
  * official can see who to chase and where there is space. Aggregated
  * client-side from the full club set, via the same paginated loader the export
@@ -52,8 +67,13 @@ export function TeamBreakdownTab({ clubSlug, reloadToken }: { clubSlug: string; 
     let cancelled = false;
     setTeams(null);
     setError('');
-    loadAll({ team: ALL, status: ALL, subscription: ALL }, '')
-      .then(rows => { if (!cancelled) setTeams(breakdownByTeam(rows)); })
+    Promise.all([
+      loadAll({ team: ALL, status: ALL, subscription: ALL }, ''),
+      loadConfiguredTeams(clubSlug),
+    ])
+      .then(([rows, configured]) => {
+        if (!cancelled) setTeams(breakdownByTeam(rows, Date.now(), configured));
+      })
       .catch((e: unknown) => {
         if (cancelled) return;
         captureError(e, { op: 'registrations.team-breakdown' });
@@ -62,7 +82,7 @@ export function TeamBreakdownTab({ clubSlug, reloadToken }: { clubSlug: string; 
           : 'Failed to load team breakdown');
       });
     return () => { cancelled = true; };
-  }, [loadAll, reloadToken]);
+  }, [loadAll, clubSlug, reloadToken]);
 
   const sorted = useMemo(() => (teams ? sortTeams(teams, sort) : []), [teams, sort]);
 
@@ -78,7 +98,7 @@ export function TeamBreakdownTab({ clubSlug, reloadToken }: { clubSlug: string; 
     );
   }
   if (teams.length === 0) {
-    return <Text c="dimmed" ta="center" py="xl">No registrations yet, so there are no teams to break down.</Text>;
+    return <Text c="dimmed" ta="center" py="xl">No teams or registrations yet, so there is nothing to break down.</Text>;
   }
 
   return (

@@ -42,6 +42,14 @@ describe('breakdownByTeam', () => {
   });
 });
 
+describe('breakdownByTeam with configured teams', () => {
+  it('seeds zero rows without duplicating registered teams', () => {
+    const out = breakdownByTeam([row({ teamName: 'U10' })], NOW, ['U8', ' U10 ', '']);
+    expect(out.map(t => [t.teamName, t.registrations])).toEqual([['U8', 0], ['U10', 1]]);
+    expect(out[0]).toMatchObject({ league: 0, paying: 0, outstanding: 0, issues: 0, players: 0 });
+  });
+});
+
 describe('isExpiryCurrent', () => {
   it.each([
     [null, true], ['', true], ['2026-10-12', true], ['12/10/2026', true],
