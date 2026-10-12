@@ -26,7 +26,7 @@ describe('breakdownByTeam', () => {
     const u12 = out[2];
     expect(u12).toMatchObject({
       league: 1, training: 1, registrations: 3, players: 2, paying: 1, outstanding: 1, noLevel: 1, issues: 1,
-    });
+    }); // players = distinct fanIds that are league or training
     expect(out[1]).toMatchObject({ league: 1, paying: 1, outstanding: 0, issues: 1 });
   });
 

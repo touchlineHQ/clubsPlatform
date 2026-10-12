@@ -9,7 +9,7 @@ export interface TeamBreakdownRow extends SummaryRow {
 
 export interface TeamBreakdown extends RegistrationSummary {
   teamName: string;
-  /** Registrations whose FA status is "Active" — a league-registered player. */
+  /** League-registered players (FA status Active or other non-training non-inactive). */
   league: number;
   /** Registrations whose FA status is "Training Only". */
   training: number;
@@ -17,11 +17,26 @@ export interface TeamBreakdown extends RegistrationSummary {
   issues: number;
 }
 
-const LEAGUE_STATUSES = new Set(['active']);
-const TRAINING_STATUSES = new Set(['training only']);
+/** FA statuses that count as a league-registered player. "Active" is the documented value;
+ *  real exports have been seen with other spellings, so match a small set of likely ones.
+ *  Anything that is neither training-only nor clearly inactive/cancelled is treated as league. */
+const LEAGUE_STATUSES = new Set(['active', 'registered', 'full', 'full registration', 'playing', 'active registration']);
+const TRAINING_STATUSES = new Set(['training only', 'training-only', 'training only.']);
+const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'lapsed', 'inactive', 'expired', 'deleted', 'not registered']);
 
 function norm(v: string | null | undefined): string {
   return (v ?? '').trim().toLowerCase();
+}
+
+function isLeague(status: string | null | undefined): boolean {
+  const n = norm(status);
+  if (!n) return false;
+  if (TRAINING_STATUSES.has(n) || INACTIVE_STATUSES.has(n)) return false;
+  return LEAGUE_STATUSES.has(n) || true; // non-training, non-inactive → league
+}
+
+function isTraining(status: string | null | undefined): boolean {
+  return TRAINING_STATUSES.has(norm(status));
 }
 
 /**
@@ -78,8 +93,10 @@ export function breakdownByTeam(
     .map(([teamName, teamRows]) => ({
       teamName,
       ...summariseRegistrations(teamRows),
-      league: teamRows.filter(r => LEAGUE_STATUSES.has(norm(r.registrationStatus))).length,
-      training: teamRows.filter(r => TRAINING_STATUSES.has(norm(r.registrationStatus))).length,
+      league: teamRows.filter(r => isLeague(r.registrationStatus)).length,
+      training: teamRows.filter(r => isTraining(r.registrationStatus)).length,
+      // Players = league-registered + training-only (the useful headcount). Distinct fanIds among those rows.
+      players: new Set(teamRows.filter(r => isLeague(r.registrationStatus) || isTraining(r.registrationStatus)).map(r => r.fanId)).size,
       issues: teamRows.filter(r => hasIssue(r, now)).length,
     }))
     .sort((a, b) => a.teamName.localeCompare(b.teamName, undefined, { numeric: true, sensitivity: 'base' }));

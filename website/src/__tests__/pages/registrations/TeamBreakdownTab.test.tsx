@@ -46,8 +46,8 @@ describe('TeamBreakdownTab', () => {
     const url = String(regCalls()[0][0]);
     expect(url).not.toContain('team=');
     expect(teamRows()).toEqual([
-      ['U9', '1', '0', '1', '1', '0', '1', '0'],
-      ['U12', '1', '1', '2', '2', '1', '0', '1'],
+      ['U9', '1', '0', '1', '0', '1', '0'],
+      ['U12', '1', '1', '2', '1', '0', '1'],
     ]);
 
     const sort = screen.getByRole('combobox', { name: 'Sort by' });
@@ -74,8 +74,8 @@ describe('TeamBreakdownTab', () => {
     renderWithMantine(<TeamBreakdownTab clubSlug="club" reloadToken={0} />);
     await screen.findByRole('table', { name: 'Team breakdown' });
     expect(teamRows()).toEqual([
-      ['U7', '0', '0', '0', '0', '0', '0', '0'],
-      ['U12', '1', '0', '1', '1', '1', '0', '0'],
+      ['U7', '0', '0', '0', '0', '0', '0'],
+      ['U12', '1', '0', '1', '1', '0', '0'],
     ]);
   });
 

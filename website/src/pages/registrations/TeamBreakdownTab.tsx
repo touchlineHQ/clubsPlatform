@@ -29,7 +29,6 @@ function sortTeams(teams: TeamBreakdown[], key: SortKey): TeamBreakdown[] {
 const COLUMNS: { key: keyof TeamBreakdown; label: string }[] = [
   { key: 'league', label: 'League' },
   { key: 'training', label: 'Training' },
-  { key: 'registrations', label: 'Registrations' },
   { key: 'players', label: 'Players' },
   { key: 'paying', label: 'Paying' },
   { key: 'outstanding', label: 'Outstanding' },
@@ -105,8 +104,9 @@ export function TeamBreakdownTab({ clubSlug, reloadToken }: { clubSlug: string; 
     <Stack gap="sm">
       <Group justify="space-between" align="flex-end">
         <Text size="xs" c="dimmed" maw={560}>
-          League = FA status Active; Training = Training Only. Paying and Outstanding count
-          billing units, as in the summary strip. Issues = no level assigned or registration expired.
+          League = league-registered players (FA status Active or equivalent). Training = Training Only.
+          Players = league + training (distinct). Paying and Outstanding count billing units.
+          Issues = no level assigned or registration expired.
         </Text>
         <NativeSelect
           label="Sort by"
