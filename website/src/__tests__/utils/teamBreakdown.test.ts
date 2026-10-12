@@ -26,7 +26,7 @@ describe('breakdownByTeam', () => {
     const u12 = out[2];
     expect(u12).toMatchObject({
       league: 1, training: 1, registrations: 3, players: 2, paying: 1, outstanding: 1, noLevel: 1, issues: 1,
-    });
+    }); // players = distinct fanIds that are league or training
     expect(out[1]).toMatchObject({ league: 1, paying: 1, outstanding: 0, issues: 1 });
   });
 
@@ -39,6 +39,24 @@ describe('breakdownByTeam', () => {
     const { registrations, players, billableUnits, paying, outstanding, noLevel } = t;
     expect({ registrations, players, billableUnits, paying, outstanding, noLevel }).toEqual(summariseRegistrations(rows));
     expect(t.outstanding).toBe(1);
+  });
+});
+
+describe('breakdownByTeam status classification', () => {
+  it('counts any non-training, non-inactive status as league and dedupes players', () => {
+    const rows = [
+      row({ fanId: 'a', registrationStatus: 'Registered' }),
+      row({ fanId: 'b', registrationStatus: ' ACTIVE ' }),
+      row({ fanId: 'b', registrationStatus: 'Active' }),
+      row({ fanId: 'c', registrationStatus: 'Training Only.' }),
+      row({ fanId: 'd', registrationStatus: 'training-only' }),
+      row({ fanId: 'e', registrationStatus: 'Cancelled' }),
+      row({ fanId: 'f', registrationStatus: 'Lapsed' }),
+      row({ fanId: 'g', registrationStatus: '' }),
+      row({ fanId: 'h', registrationStatus: null }),
+    ];
+    const [t] = breakdownByTeam(rows, NOW);
+    expect(t).toMatchObject({ league: 3, training: 2, players: 4 });
   });
 });
 
