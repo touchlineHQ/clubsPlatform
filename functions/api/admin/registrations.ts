@@ -67,8 +67,18 @@ interface RegistrationRow {
 const CONTACT_STATE_RANK = ["confirmed", "pending", "bounced", "withdrawn"];
 
 /**
- * Per-player contact state for the admin table (#132). One query bounded by the
- * page's own FANs (<= page size), so it does not reintroduce a club scan.
+ * How many fan ids one contact-state lookup may name.
+ *
+ * D1 caps a query at 100 bound parameters. `clubSlug` takes one, so 80 leaves
+ * generous headroom while keeping a full page (LIMIT_MAX = 200) to a small
+ * number of statements. Same pattern as MANUAL_ID_CHUNK in
+ * registration-attribution.ts.
+ */
+const CONTACT_FAN_CHUNK = 80;
+
+/**
+ * Per-player contact state for the admin table (#132). One query (or a small
+ * batch) bounded by the page's own FANs, so it does not reintroduce a club scan.
  */
 async function attachContactState(
   db: D1Database,
@@ -77,22 +87,34 @@ async function attachContactState(
 ): Promise<RegistrationRow[]> {
   const fanIds = [...new Set(rows.map((r) => r.fanId))];
   if (fanIds.length === 0) return rows;
-  const { results } = await db
-    .prepare(
-      `SELECT p."fanId" AS fanId, pc."state" AS state
-         FROM "player_contact" pc
-         JOIN "player" p ON p."id" = pc."playerId"
-        WHERE pc."clubSlug" = ? AND p."fanId" IN (${fanIds.map(() => "?").join(",")})`,
-    )
-    .bind(clubSlug, ...fanIds)
-    .all<{ fanId: string; state: string }>();
+
+  const statements = [];
+  for (let i = 0; i < fanIds.length; i += CONTACT_FAN_CHUNK) {
+    const chunk = fanIds.slice(i, i + CONTACT_FAN_CHUNK);
+    statements.push(
+      db
+        .prepare(
+          `SELECT p."fanId" AS fanId, pc."state" AS state
+             FROM "player_contact" pc
+             JOIN "player" p ON p."id" = pc."playerId"
+            WHERE pc."clubSlug" = ? AND p."fanId" IN (${chunk.map(() => "?").join(",")})`,
+        )
+        .bind(clubSlug, ...chunk),
+    );
+  }
+
+  const batches = await db.batch<{ fanId: string; state: string }>(statements);
+
   const best = new Map<string, string>();
-  for (const { fanId, state } of results ?? []) {
-    const current = best.get(fanId);
-    if (!current || CONTACT_STATE_RANK.indexOf(state) < CONTACT_STATE_RANK.indexOf(current)) {
-      best.set(fanId, state);
+  for (const batch of batches) {
+    for (const { fanId, state } of batch.results ?? []) {
+      const current = best.get(fanId);
+      if (!current || CONTACT_STATE_RANK.indexOf(state) < CONTACT_STATE_RANK.indexOf(current)) {
+        best.set(fanId, state);
+      }
     }
   }
+
   return rows.map((r) => ({ ...r, contactState: best.get(r.fanId) ?? null }));
 }
 
