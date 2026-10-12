@@ -80,7 +80,7 @@ const CONTACT_FAN_CHUNK = 80;
  * Per-player contact state for the admin table (#132). One query (or a small
  * batch) bounded by the page's own FANs, so it does not reintroduce a club scan.
  */
-async function attachContactState(
+export async function attachContactState(
   db: D1Database,
   clubSlug: string,
   rows: RegistrationRow[],
