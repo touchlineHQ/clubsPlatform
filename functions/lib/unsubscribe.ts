@@ -1,10 +1,10 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { nowMs, randomId } from "./api-helpers";
 import {
+  currentOperationalConsentPolicy,
   hashToken,
   latestConsentRecord,
   randomTokenHex,
-  withdrawOperationalConsent,
 } from "./consent";
 import { purgePlayerContact } from "./contact-purge";
 import type { EmailPurpose } from "./send-guard";
@@ -233,12 +233,42 @@ export async function withdrawContact(
     );
   }
 
+  if (scope === "all") {
+    // Right to object: operational evidence is withdrawn in the same batch as
+    // the contact update and audit row, so the three cannot disagree.
+    const latestOperational = await latestConsentRecord(db, {
+      clubSlug,
+      subjectType: "player_contact",
+      subjectId: contactId,
+      purpose: "operational",
+    });
+    if (latestOperational?.state !== "withdrawn") {
+      const policy = await currentOperationalConsentPolicy();
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO "consent_record"
+               (id, clubSlug, subjectType, subjectId, purpose, channel, state,
+                recordedAt, ipAddress, policyVersion, wordingHash, withdrawTokenHash, supersedesId)
+             VALUES (?, ?, 'player_contact', ?, 'operational', 'email', 'withdrawn',
+                     ?, ?, ?, ?, NULL, ?)`,
+          )
+          .bind(
+            randomId("consent"),
+            clubSlug,
+            contactId,
+            now,
+            ipAddress,
+            latestOperational?.policyVersion ?? policy.policyVersion,
+            latestOperational?.wordingHash ?? policy.wordingHash,
+            latestOperational?.id ?? null,
+          ),
+      );
+    }
+  }
+
   statements.push(auditStatement(db, { clubSlug, contactId, scope, source, purpose, batchId, now }));
   await db.batch(statements);
-
-  if (scope === "all") {
-    await withdrawOperationalConsent(db, { clubSlug, subjectId: contactId, ipAddress });
-  }
 }
 
 /** Mark a token spent. Purge needs a fresh token; withdrawals do not. */
@@ -263,32 +293,35 @@ export async function purgeFromUnsubscribe(
   resolved: ResolvedUnsubscribe,
   now = nowMs(),
 ): Promise<boolean> {
+  // Audit row and token clean-up commit in the purge's own batch, so a
+  // purged contact can never be left without its withdrawal record.
   const purged = await purgePlayerContact(db, {
     clubSlug: resolved.clubSlug,
     contactId: resolved.contactId,
     actor: { actorId: "unsubscribe_link", source: "parent" },
+    additionalStatements: [
+      auditStatement(db, {
+        clubSlug: resolved.clubSlug,
+        contactId: resolved.contactId,
+        scope: "purge",
+        source: "link",
+        purpose: resolved.purpose,
+        batchId: resolved.batchId,
+        now,
+      }),
+      db
+        .prepare(`DELETE FROM "unsubscribe_token" WHERE clubSlug = ? AND contactId = ?`)
+        .bind(resolved.clubSlug, resolved.contactId),
+    ],
   });
   if (!purged) return false;
-  await db.batch([
-    auditStatement(db, {
-      clubSlug: resolved.clubSlug,
-      contactId: resolved.contactId,
-      scope: "purge",
-      source: "link",
-      purpose: resolved.purpose,
-      batchId: resolved.batchId,
-      now,
-    }),
-    db
-      .prepare(`DELETE FROM "unsubscribe_token" WHERE clubSlug = ? AND contactId = ?`)
-      .bind(resolved.clubSlug, resolved.contactId),
-  ]);
   return true;
 }
 
 /**
  * Provider bounce / complaint for a message we sent. A hard bounce marks the
  * contact bounced; a spam complaint is treated as withdrawal of all club mail.
+ * Returns null (no-op) for unknown messages or a contact already handled.
  */
 export async function applyDeliveryFeedback(
   db: D1Database,
@@ -304,15 +337,20 @@ export async function applyDeliveryFeedback(
 ): Promise<{ clubSlug: string } | null> {
   const send = await db
     .prepare(
-      `SELECT es.clubSlug, es.contactId, es.purpose, es.batchId
+      `SELECT es.clubSlug, es.contactId, es.purpose, es.batchId, pc.state
          FROM "email_send_event" es
          JOIN "player_contact" pc ON pc.id = es.contactId AND pc.clubSlug = es.clubSlug
         WHERE es.providerMessageId = ? AND es.outcome = 'sent'
         LIMIT 1`,
     )
     .bind(providerMessageId)
-    .first<{ clubSlug: string; contactId: string; purpose: EmailPurpose; batchId: string }>();
+    .first<{ clubSlug: string; contactId: string; purpose: EmailPurpose; batchId: string; state: string }>();
   if (!send) return null;
+
+  // Idempotent: provider retries and duplicate deliveries change nothing and
+  // add no further audit rows once the contact is already in the end state.
+  if (kind === "bounce" && send.state === "bounced") return null;
+  if (kind === "complaint" && (send.state === "withdrawn" || send.state === "bounced")) return null;
 
   if (kind === "complaint") {
     await withdrawContact(db, {

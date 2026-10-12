@@ -192,16 +192,21 @@ async function legacyWithdraw(context: EventContext<Env, string, unknown>, token
 
   const posthog = getPostHog(context.env);
   if (posthog) {
-    await posthog.captureImmediate({
-      distinctId: `consent:${result.subjectId}`,
-      event: "marketing consent withdrawn",
-      ...clubGroups(result.clubSlug),
-      properties: {
-        club_slug: result.clubSlug,
-        subject_id: result.subjectId,
-        source: "unsubscribe_link",
-      },
-    });
+    // Off the response path, and no contact id: the withdrawal has already
+    // happened, so a PostHog failure must not turn it into a 500.
+    context.waitUntil(
+      posthog
+        .captureImmediate({
+          distinctId: `club:${result.clubSlug}`,
+          event: "marketing consent withdrawn",
+          ...clubGroups(result.clubSlug),
+          properties: {
+            club_slug: result.clubSlug,
+            source: "unsubscribe_link",
+          },
+        })
+        .catch((err) => console.error("PostHog capture failed", err)),
+    );
   }
   return json({ ok: true, withdrawn: true });
 }
@@ -226,8 +231,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   // RFC 8058 one-click withdraws the purpose of the mail it came from:
   // marketing mail stops marketing; admin mail stops all club mail.
+  // A transactional link is a preferences link, not an unsubscribe: a stray
+  // one-click POST on it shows the page rather than stopping all mail.
   const action: UnsubscribeAction | null = oneClick
-    ? (resolved.purpose === "marketing" ? "marketing" : "all")
+    ? (resolved.purpose === "marketing" ? "marketing" : resolved.purpose === "operational" ? "all" : null)
     : parseAction(rawAction);
   if (!action) return preferencePage(token, resolved);
 

@@ -220,6 +220,15 @@ describe('/api/unsubscribe', () => {
     expect((await post('', {})).status).toBe(400);
   });
 
+  it('a one-click POST on a transactional (preferences) link changes nothing', async () => {
+    seed();
+    const token = await mintUnsubscribeToken(d1, { clubSlug: CLUB, contactId: 'pc1', purpose: 'transactional', batchId: null });
+    const html = await (await post(token, { 'List-Unsubscribe': 'One-Click' })).text();
+    expect(html).toContain('value="all"');
+    expect(contact()!.state).toBe('confirmed');
+    expect(withdrawals()).toHaveLength(0);
+  });
+
   it('a POST with no action just re-renders the page', async () => {
     seed();
     const token = await mintUnsubscribeToken(d1, { clubSlug: CLUB, contactId: 'pc1', purpose: 'operational', batchId: null });
@@ -278,10 +287,33 @@ describe('Resend webhook: bounces and complaints', () => {
     expect(withdrawals()[0]).toMatchObject({ scope: 'bounce', source: 'bounce', batchId: 'b9' });
   });
 
-  it('a transient bounce is ignored', async () => {
+  it('transient, undetermined and untyped bounces are ignored', async () => {
     seedSent();
-    await call(await signed({ type: 'email.bounced', data: { email_id: 'em_1', bounce: { type: 'Transient' } } }));
+    for (const bounce of [{ type: 'Transient' }, { type: 'Undetermined' }, undefined]) {
+      await call(await signed({ type: 'email.bounced', data: { email_id: 'em_1', bounce } }));
+    }
     expect(contact()!.state).toBe('confirmed');
+    expect(withdrawals()).toHaveLength(0);
+  });
+
+  it('duplicate deliveries are idempotent', async () => {
+    seedSent();
+    const bounce = { type: 'email.bounced', data: { email_id: 'em_1', bounce: { type: 'Permanent' } } };
+    await call(await signed(bounce));
+    await call(await signed(bounce));
+    expect(withdrawals()).toHaveLength(1);
+    const complaint = { type: 'email.complained', data: { email_id: 'em_1' } };
+    expect((await call(await signed(complaint))).status).toBe(200);
+    expect(withdrawals()).toHaveLength(1);
+    expect(contact()!.state).toBe('bounced');
+  });
+
+  it('a repeated complaint adds no second withdrawal', async () => {
+    seedSent();
+    const complaint = { type: 'email.complained', data: { email_id: 'em_1' } };
+    await call(await signed(complaint));
+    await call(await signed(complaint));
+    expect(withdrawals()).toHaveLength(1);
   });
 
   it('a spam complaint is recorded as a withdrawal of all club mail', async () => {

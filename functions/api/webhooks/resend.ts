@@ -7,13 +7,14 @@ import { verifySvixSignature } from "../../lib/webhook-signature";
 /**
  * Resend delivery webhook (#135).
  *
- * email.bounced   → the contact is marked `bounced` (Resend only sends this
- *                   for a permanent rejection; a Transient type is ignored).
+ * email.bounced   → the contact is marked `bounced` when bounce.type is
+ *                   Permanent; Transient / Undetermined are ignored.
  * email.complained → treated as withdrawal of all club mail.
  *
  * Messages are matched by provider message id against email_send_event, so
  * the payload's addresses are never read or stored. Unknown ids are accepted
- * and ignored, so the response says nothing about what we hold.
+ * and ignored, so the response says nothing about what we hold. Duplicate
+ * deliveries are no-ops once the contact is already bounced / withdrawn.
  */
 
 type ResendEvent = {
@@ -41,8 +42,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const emailId = typeof event.data?.email_id === "string" ? event.data.email_id : "";
+  // Only a Permanent bounce is hard; Transient / Undetermined may recover.
   const isBounce = event.type === "email.bounced"
-    && (event.data?.bounce?.type ?? "").toLowerCase() !== "transient";
+    && (event.data?.bounce?.type ?? "").toLowerCase() === "permanent";
   const isComplaint = event.type === "email.complained";
   if (!emailId || (!isBounce && !isComplaint)) return json({ ok: true });
 

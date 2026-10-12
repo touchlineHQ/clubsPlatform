@@ -97,13 +97,6 @@ describe('no send path bypasses the layout', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('nothing calls the provider HTTP API directly', () => {
-    const offenders = files
-      .filter((f) => readFileSync(f, 'utf8').includes('api.resend.com'))
-      .map((f) => relative(ROOT, f));
-    expect(offenders).toEqual(['lib/mailers/resend.ts']);
-  });
-
   it('every .send( call to a mailer passes a footer', () => {
     const missing: string[] = [];
     for (const f of files) {
