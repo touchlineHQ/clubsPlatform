@@ -281,6 +281,17 @@ describe('RegistrationsPage', () => {
     });
   });
 
+  it('adds a Team Breakdown tab for admins that only loads once opened (#230)', async () => {
+    routeClubApi([{ ...sampleRow, teamName: 'U11 Blue' }]);
+    renderWithMantine(<RegistrationsPage />, { authValue: mockAdmin, clubValue: mockSingleClub });
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Team Breakdown/i })).toBeTruthy());
+    // Panels unmount when inactive, so opening the page does not walk the whole club.
+    expect(mockFetch.mock.calls.some(c => String(c[0]).startsWith('/api/admin/registrations?'))).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: /Team Breakdown/i }));
+    const table = await screen.findByRole('table', { name: 'Team breakdown' });
+    expect(within(table).getByText('U11 Blue')).toBeTruthy();
+  });
+
   it('shows a loader while fetching', () => {
     mockFetch.mockImplementation(() => new Promise(() => {}));
 
