@@ -21,6 +21,14 @@ export interface TeamBreakdown extends RegistrationSummary {
  *  non-blank status that is neither training-only nor clearly inactive counts as league. */
 const TRAINING_STATUSES = new Set(['training only', 'training-only', 'training']);
 const INACTIVE_STATUSES = new Set(['cancelled', 'canceled', 'lapsed', 'inactive', 'expired', 'deleted', 'not registered']);
+/** Cancelled and transferred registrations never count as league, whatever the
+ *  exact wording ("Cancelled", "Cancellation", "Transferred", "Transferred Out",
+ *  "Transfer Pending"...). */
+const IGNORED_PREFIXES = ['cancel', 'transfer'];
+
+function isInactive(n: string): boolean {
+  return INACTIVE_STATUSES.has(n) || IGNORED_PREFIXES.some(p => n.startsWith(p));
+}
 
 function norm(v: string | null | undefined): string {
   return (v ?? '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[.]+$/, '');
@@ -29,7 +37,7 @@ function norm(v: string | null | undefined): string {
 function isLeague(status: string | null | undefined): boolean {
   const n = norm(status);
   if (!n) return false;
-  return !TRAINING_STATUSES.has(n) && !INACTIVE_STATUSES.has(n);
+  return !TRAINING_STATUSES.has(n) && !isInactive(n);
 }
 
 function isTraining(status: string | null | undefined): boolean {

@@ -58,6 +58,13 @@ describe('breakdownByTeam status classification', () => {
     const [t] = breakdownByTeam(rows, NOW);
     expect(t).toMatchObject({ league: 3, training: 2, players: 4 });
   });
+
+  it.each(['Cancelled', 'canceled', 'CANCELLED.', 'Cancellation', 'Transferred', 'transferred out',
+    ' Transferred  Out ', 'Transfer', 'Transfer Pending'])(
+    'ignores %j for league and training counts', (status) => {
+      const [t] = breakdownByTeam([row({ fanId: 'x', registrationStatus: status })], NOW);
+      expect(t).toMatchObject({ league: 0, training: 0, players: 0, registrations: 1 });
+    });
 });
 
 describe('breakdownByTeam with configured teams', () => {
