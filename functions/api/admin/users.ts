@@ -33,12 +33,16 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 
-  let body: { userId?: unknown; role?: unknown; reason?: unknown };
+  let parsed: unknown;
   try {
-    body = await context.request.json() as typeof body;
+    parsed = await context.request.json();
   } catch {
     return json({ error: "Invalid request body" }, { status: 400 });
   }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const body = parsed as { userId?: unknown; role?: unknown; reason?: unknown };
   const userId = typeof body.userId === "string" ? body.userId : "";
   const role = body.role;
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
@@ -66,24 +70,32 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // reason given, so "why can this person see payments?" has an answer that
   // points at a person (#79). The grants themselves are permissionsFor(role).
   const note = JSON.stringify({ reason: reason || null, permissions: permissionsFor(role) });
-  await context.env.DB.batch([
-    context.env.DB
-      .prepare(
-        `UPDATE "user" SET role = ?
-         WHERE id = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`
-      )
-      .bind(role, userId, clubSlug, clubSlug),
-    prepareAuditLog(context.env.DB, {
-      clubSlug: clubSlug ?? "",
-      adminId,
-      action: "user_role_changed",
-      targetTable: "user",
-      targetId: userId,
-      oldStatus: target.role,
-      newStatus: role,
-      note,
-    }),
-  ]);
+  // The update only applies if the role is still the one just read, and the
+  // audit row's guard aborts the whole batch unless exactly that one row
+  // changed, so a concurrent change or a moved/deleted user can never leave an
+  // audit entry describing a change that didn't happen.
+  try {
+    await context.env.DB.batch([
+      context.env.DB
+        .prepare(
+          `UPDATE "user" SET role = ?
+           WHERE id = ? AND role = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`
+        )
+        .bind(role, userId, target.role, clubSlug, clubSlug),
+      prepareAuditLog(context.env.DB, {
+        clubSlug: clubSlug ?? "",
+        adminId,
+        action: "user_role_changed",
+        targetTable: "user",
+        targetId: userId,
+        oldStatus: target.role,
+        newStatus: role,
+        note,
+      }, { sql: "changes() = 1", bindings: [] }),
+    ]);
+  } catch {
+    return json({ error: "That user's role changed while you were editing; reload and try again" }, { status: 409 });
+  }
 
   const posthog = getPostHog(context.env);
   if (posthog) {

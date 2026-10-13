@@ -1,5 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { permissionsFor } from "../../lib/permissions";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   deleteMemberData,
@@ -51,6 +52,19 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 /**
+ * A secretary manages members, not the committee: only an admin may change or
+ * delete an account whose role carries any committee permission (#79), so
+ * member management can't be used to take over an admin's identity.
+ */
+function mayManageTarget(callerRole: string, targetRole: string): boolean {
+  return callerRole === "admin" || permissionsFor(targetRole).length === 0;
+}
+
+function committeeTargetRefused(): Response {
+  return json({ error: "Only an admin can change a committee member's account" }, { status: 403 });
+}
+
+/**
  * Correct a member's account name and email within the requested club.
  * Values are audited without copying the corrected PII into the audit note.
  */
@@ -85,10 +99,11 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   }
 
   const user = await context.env.DB
-    .prepare(`SELECT id FROM "user" WHERE id = ? AND clubSlug = ?`)
+    .prepare(`SELECT id, role FROM "user" WHERE id = ? AND clubSlug = ?`)
     .bind(userId, clubSlug)
-    .first<{ id: string }>();
+    .first<{ id: string; role: string }>();
   if (!user) return json({ error: "Member not found in this club" }, { status: 404 });
+  if (!mayManageTarget(result.role, user.role)) return committeeTargetRefused();
 
   const duplicate = await context.env.DB
     .prepare(`SELECT id FROM "user" WHERE lower(email) = lower(?) AND id <> ?`)
@@ -128,6 +143,15 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   if (adminId === userId) {
     return json({ error: "Admins cannot delete their own data via this path" }, { status: 400 });
+  }
+
+  if (result.role !== "admin") {
+    const target = await context.env.DB
+      .prepare(`SELECT role FROM "user" WHERE id = ? AND clubSlug = ?`)
+      .bind(userId, clubSlug)
+      .first<{ role: string }>();
+    if (!target) return json({ error: "Member not found in this club" }, { status: 404 });
+    if (!mayManageTarget(result.role, target.role)) return committeeTargetRefused();
   }
 
   try {

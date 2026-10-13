@@ -264,8 +264,9 @@ function AppRoutes() {
         </AppShell.Navbar>
 
         <AppShell.Main>
-          {/* Only an admin ever renders the site while it's private, so this
-              banner is their standing reminder that nobody else can see it. */}
+          {/* Only the committee ever renders the site while it's private, so this
+              banner is their standing reminder that nobody else can see it.
+              Going live is admin-only (#79). */}
           {!clubPublished && (
             <Alert
               variant="light"
@@ -275,11 +276,17 @@ function AppRoutes() {
               icon={<IconEyeOff size={18} />}
               title="This site is private"
             >
-              Only your club's admins can see these pages.{' '}
-              <Anchor component={Link} to="/customise" fw={600} inherit>
-                Go live from Site Admin
-              </Anchor>{' '}
-              when you're ready.
+              Only your club's committee can see these pages.{' '}
+              {isAdmin ? (
+                <>
+                  <Anchor component={Link} to="/customise" fw={600} inherit>
+                    Go live from Site Admin
+                  </Anchor>{' '}
+                  when you're ready.
+                </>
+              ) : (
+                <>Ask a club admin to publish the site when you're ready.</>
+              )}
             </Alert>
           )}
           <Routes>

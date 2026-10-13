@@ -44,6 +44,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
+  const [roleReason, setRoleReason] = useState('');
   const [dataBusy, setDataBusy] = useState<string | null>(null);
   const [dataMessage, setDataMessage] = useState('');
   const [editingUser, setEditingUser] = useState<UserRow | null>(null);
@@ -119,7 +120,7 @@ export function AdminUsersPage({ liveTeams }: Props) {
       const res = await fetch('/api/admin/users', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
-        body: JSON.stringify({ userId, role: newRole }),
+        body: JSON.stringify({ userId, role: newRole, reason: roleReason.trim() || undefined }),
       });
       if (!res.ok) throw new Error('Failed to update role');
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
@@ -371,6 +372,14 @@ export function AdminUsersPage({ liveTeams }: Props) {
           <Stack>
             {error && <Alert color="red" variant="light">{error}</Alert>}
             {dataMessage && <Alert color="green" variant="light">{dataMessage}</Alert>}
+            <TextInput
+              label="Reason for role changes"
+              description="Recorded in the audit log with each role you change below, e.g. 'Elected treasurer at the AGM'."
+              value={roleReason}
+              onChange={(e) => setRoleReason(e.currentTarget.value)}
+              maxLength={500}
+              radius="md"
+            />
             <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
               <Table striped highlightOnHover>
                 <Table.Thead>

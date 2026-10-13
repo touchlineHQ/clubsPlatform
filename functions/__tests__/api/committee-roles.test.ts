@@ -114,3 +114,64 @@ describe('permission table', () => {
     expect(websitePermissions.ROLE_PERMISSIONS).toEqual(ROLE_PERMISSIONS);
   });
 });
+
+import { onRequestPatch as memberDataPatch, onRequestDelete as memberDataDelete } from '../../api/admin/member-data';
+import { onRequestPatch as teamsPatch } from '../../api/teams';
+
+describe('secretary member management stops at the committee (#79)', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const body = { name: 'New Name', email: 'new@example.com' };
+
+  it("refuses a secretary editing an admin's account", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({ first: [{ id: 'u9', role: 'admin' }] });
+    const res = await memberDataPatch(makeContext(
+      patchReq('/api/admin/member-data?userId=u9', body), { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(403);
+    expect(db.batch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a secretary deleting a treasurer's account", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({ first: [{ role: 'treasurer' }] });
+    const res = await memberDataDelete(makeContext(
+      new Request('https://example.com/api/admin/member-data?userId=u9', { method: 'DELETE', headers: CLUB }),
+      { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(403);
+  });
+
+  it("lets a secretary correct a plain member's account", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({ first: [{ id: 'u9', role: 'member' }, null] });
+    const res = await memberDataPatch(makeContext(
+      patchReq('/api/admin/member-data?userId=u9', body), { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(200);
+  });
+
+  it("still lets an admin correct another admin's account", async () => {
+    mockGetSession.mockResolvedValue(adminSession);
+    const db = makeDb({ first: [{ id: 'u9', role: 'admin' }, null] });
+    const res = await memberDataPatch(makeContext(
+      patchReq('/api/admin/member-data?userId=u9', body), { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('team moves stay inside the club', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("refuses moving a team into another club's section", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    // Team found in this club; destination section not found in this club.
+    const db = makeDb({ first: [{ id: 't1' }, null] });
+    const res = await teamsPatch(makeContext(
+      patchReq('/api/teams?type=team&id=t1', { sectionId: 'sec-other-club' }, CLUB),
+      { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(404);
+  });
+});

@@ -1,4 +1,5 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createSchemaDb, d1Over, type SqliteDb } from '../sqlite-harness';
 import { makeContext, makeDb, makeEnv, adminSession, treasurerSession, secretarySession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -93,15 +94,61 @@ describe('PATCH /api/admin/users', () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 404 for a user outside the admin's club and changes nothing", async () => {
-    const db = makeDb({ first: [null] });
-    const ctx = makeContext(
-      patchReq('/api/admin/users', { userId: 'u-other', role: 'admin' }),
-      { env: { DB: db as any } },
-    );
-    const res = await onRequestPatch(ctx as any);
-    expect(res.status).toBe(404);
-    expect(db.batch).not.toHaveBeenCalled();
+  describe('against real SQL', () => {
+    let sqlite: SqliteDb;
+    beforeEach(() => {
+      sqlite = createSchemaDb();
+      sqlite.exec(`INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt, role, clubSlug) VALUES
+        ('u1', 'Ann', 'ann@example.com', 0, 1, 1, 'member', 'test-club'),
+        ('u-other', 'Olly', 'olly@example.com', 0, 1, 1, 'member', 'other-club')`);
+    });
+    afterEach(() => sqlite.close());
+
+    const patch = (body: unknown) => onRequestPatch(makeContext(
+      patchReq('/api/admin/users', body),
+      { env: { DB: d1Over(sqlite) as any } },
+    ) as any);
+    const roleOf = (id: string) => (sqlite.prepare(`SELECT role FROM "user" WHERE id = ?`).get(id) as { role: string }).role;
+    const auditRows = () => sqlite.prepare(`SELECT oldStatus, newStatus FROM admin_audit_log`).all();
+
+    it('changes the role and writes one audit row', async () => {
+      const res = await patch({ userId: 'u1', role: 'secretary', reason: 'Took minutes' });
+      expect(res.status).toBe(200);
+      expect(roleOf('u1')).toBe('secretary');
+      expect(auditRows()).toEqual([{ oldStatus: 'member', newStatus: 'secretary' }]);
+    });
+
+    it("returns 404 for a user in another club and changes nothing", async () => {
+      const res = await patch({ userId: 'u-other', role: 'admin' });
+      expect(res.status).toBe(404);
+      expect(roleOf('u-other')).toBe('member');
+      expect(auditRows()).toEqual([]);
+    });
+
+    it('returns 409 and audits nothing when the role changed after it was read', async () => {
+      const db = d1Over(sqlite);
+      const realBatch = db.batch.bind(db);
+      // Another admin's change lands between this request's read and its write.
+      db.batch = async (stmts) => {
+        sqlite.exec(`UPDATE "user" SET role = 'admin' WHERE id = 'u1'`);
+        return realBatch(stmts);
+      };
+      const res = await onRequestPatch(makeContext(
+        patchReq('/api/admin/users', { userId: 'u1', role: 'treasurer' }),
+        { env: { DB: db as any } },
+      ) as any);
+      expect(res.status).toBe(409);
+      expect(roleOf('u1')).toBe('admin');
+      expect(auditRows()).toEqual([]);
+    });
+  });
+
+  it('returns 400 for a JSON null body', async () => {
+    const res = await onRequestPatch(makeContext(
+      patchReq('/api/admin/users', null),
+      { env: { DB: makeDb() as any } },
+    ) as any);
+    expect(res.status).toBe(400);
   });
 
   it('refuses a treasurer or secretary trying to assign roles', async () => {

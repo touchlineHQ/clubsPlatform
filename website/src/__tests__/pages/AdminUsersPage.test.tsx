@@ -53,6 +53,16 @@ describe('AdminUsersPage', () => {
     });
   });
 
+  it('asks for a reason that is recorded with role changes (#79)', async () => {
+    renderWithMantine(<AdminUsersPage liveTeams={liveTeams} />, {
+      authValue: mockAdmin,
+      clubValue: mockSingleClub,
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText('Reason for role changes')).toBeTruthy();
+    });
+  });
+
   it('shows an error when the API fails', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
 
