@@ -52,12 +52,15 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 /**
- * A secretary manages members, not the committee: only an admin may change or
- * delete an account whose role carries any committee permission (#79), so
- * member management can't be used to take over an admin's identity.
+ * A secretary manages members, not privileged accounts: only an admin may
+ * change or delete an account that holds committee permissions, or a manager
+ * (legacy privileged role with an empty permission set via requireManagerOrAdmin)
+ * (#79). Member management must not rewrite those identities.
  */
 function mayManageTarget(callerRole: string, targetRole: string): boolean {
-  return callerRole === "admin" || permissionsFor(targetRole).length === 0;
+  if (callerRole === "admin") return true;
+  if (targetRole === "manager") return false;
+  return permissionsFor(targetRole).length === 0;
 }
 
 function committeeTargetRefused(): Response {
@@ -112,18 +115,38 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   if (duplicate) return json({ error: "Email is already in use" }, { status: 409 });
 
   const adminId = (result.session.user as Record<string, unknown>).id as string;
-  const update = context.env.DB
-    .prepare(`UPDATE "user" SET name = ?, email = ?, updatedAt = ? WHERE id = ? AND clubSlug = ?`)
-    .bind(name, email, nowMs(), userId, clubSlug);
-  const audit = prepareAuditLog(context.env.DB, {
-    clubSlug,
-    adminId,
-    action: "member_data_corrected",
-    targetTable: "user",
-    targetId: userId,
-    note: "fields=name,email",
-  });
-  await context.env.DB.batch([update, audit]);
+  // Condition the write on the role just authorised, so a concurrent promotion
+  // cannot let a secretary rewrite a newly privileged account; audit only when
+  // that one row actually changed.
+  let writes: D1Result<unknown>[];
+  try {
+    writes = await context.env.DB.batch([
+      context.env.DB
+        .prepare(
+          `UPDATE "user" SET name = ?, email = ?, updatedAt = ?
+           WHERE id = ? AND clubSlug = ? AND role = ?`,
+        )
+        .bind(name, email, nowMs(), userId, clubSlug, user.role),
+      prepareAuditLog(context.env.DB, {
+        clubSlug,
+        adminId,
+        action: "member_data_corrected",
+        targetTable: "user",
+        targetId: userId,
+        note: "fields=name,email",
+      }, { sql: "changes() = 1", bindings: [], abortOnFalse: false }),
+    ]);
+  } catch (error) {
+    console.error("Member data correction failed", { userId, error });
+    return json({ error: "Failed to update member data" }, { status: 500 });
+  }
+
+  if ((writes[0]?.meta?.changes ?? 0) !== 1) {
+    return json(
+      { error: "That member's role changed while you were editing; reload and try again" },
+      { status: 409 },
+    );
+  }
 
   return json({ ok: true, user: { id: userId, name, email } });
 };

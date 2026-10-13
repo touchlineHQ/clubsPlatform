@@ -159,6 +159,40 @@ describe('secretary member management stops at the committee (#79)', () => {
     ) as any);
     expect(res.status).toBe(200);
   });
+
+  it("refuses a secretary editing a manager's account", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({ first: [{ id: 'u9', role: 'manager' }] });
+    const res = await memberDataPatch(makeContext(
+      patchReq('/api/admin/member-data?userId=u9', body), { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(403);
+    expect(db.batch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a secretary deleting a manager's account", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({ first: [{ role: 'manager' }] });
+    const res = await memberDataDelete(makeContext(
+      new Request('https://example.com/api/admin/member-data?userId=u9', { method: 'DELETE', headers: CLUB }),
+      { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 409 when the target role changes between read and write", async () => {
+    mockGetSession.mockResolvedValue(secretarySession);
+    const db = makeDb({
+      first: [{ id: 'u9', role: 'member' }, null],
+      run: { meta: { changes: 0 } },
+    });
+    const res = await memberDataPatch(makeContext(
+      patchReq('/api/admin/member-data?userId=u9', body), { env: { DB: db as any } },
+    ) as any);
+    expect(res.status).toBe(409);
+    const payload = await res.json() as { error: string };
+    expect(payload.error).toMatch(/role changed/i);
+  });
 });
 
 describe('team moves stay inside the club', () => {
