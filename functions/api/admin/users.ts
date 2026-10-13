@@ -71,11 +71,11 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // points at a person (#79). The grants themselves are permissionsFor(role).
   const note = JSON.stringify({ reason: reason || null, permissions: permissionsFor(role) });
   // The update only applies if the role is still the one just read, and the
-  // audit row's guard aborts the whole batch unless exactly that one row
-  // changed, so a concurrent change or a moved/deleted user can never leave an
+  // audit row is only written if exactly that one row changed (otherwise 409), so a concurrent change or a moved/deleted user can never leave an
   // audit entry describing a change that didn't happen.
+  let writes: D1Result<unknown>[];
   try {
-    await context.env.DB.batch([
+    writes = await context.env.DB.batch([
       context.env.DB
         .prepare(
           `UPDATE "user" SET role = ?
@@ -91,9 +91,14 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
         oldStatus: target.role,
         newStatus: role,
         note,
-      }, { sql: "changes() = 1", bindings: [] }),
+      }, { sql: "changes() = 1", bindings: [], abortOnFalse: false }),
     ]);
-  } catch {
+  } catch (error) {
+    console.error("Role update transaction failed", { userId, error });
+    return json({ error: "Failed to update the user's role" }, { status: 500 });
+  }
+
+  if ((writes[0]?.meta?.changes ?? 0) !== 1) {
     return json({ error: "That user's role changed while you were editing; reload and try again" }, { status: 409 });
   }
 

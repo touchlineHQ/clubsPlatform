@@ -122,11 +122,15 @@ export function AdminUsersPage({ liveTeams }: Props) {
         headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({ userId, role: newRole, reason: roleReason.trim() || undefined }),
       });
-      if (!res.ok) throw new Error('Failed to update role');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        if (res.status === 409) await fetchUsers();
+        throw new Error(body.error ?? 'Failed to update role');
+      }
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
     } catch (e) {
       captureError(e, { op: 'adminUsers.updateRole' });
-      setError('Failed to update role');
+      setError(e instanceof Error ? e.message : 'Failed to update role');
     } finally {
       setUpdating(null);
     }

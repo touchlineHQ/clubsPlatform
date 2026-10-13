@@ -16,6 +16,8 @@ type AuditLogGuard = {
   /** Trusted, caller-owned SQL expression. False deliberately aborts the D1 batch. */
   sql: string;
   bindings: unknown[];
+  /** When false, a false guard just inserts no row instead of aborting the batch. */
+  abortOnFalse?: boolean;
 };
 
 /** Prepare an admin audit entry so it can be included in an atomic D1 batch. */
@@ -45,6 +47,17 @@ export function prepareAuditLog(
     note ?? null,
     nowMs(),
   ];
+
+  if (guard && guard.abortOnFalse === false) {
+    return db
+      .prepare(
+        `INSERT INTO "admin_audit_log"
+           (id, clubSlug, adminId, action, targetTable, targetId, oldStatus, newStatus, note, createdAt)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE ${guard.sql}`,
+      )
+      .bind(...values, ...guard.bindings);
+  }
 
   if (guard) {
     return db

@@ -141,6 +141,19 @@ describe('PATCH /api/admin/users', () => {
       expect(roleOf('u1')).toBe('admin');
       expect(auditRows()).toEqual([]);
     });
+
+    it('returns 500, not 409, when the role update batch fails for another reason', async () => {
+      const db = d1Over(sqlite);
+      db.batch = async () => { throw new Error('D1 unavailable'); };
+      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await onRequestPatch(makeContext(
+        patchReq('/api/admin/users', { userId: 'u1', role: 'treasurer' }),
+        { env: { DB: db as any } },
+      ) as any);
+      expect(res.status).toBe(500);
+      expect(auditRows()).toEqual([]);
+      spy.mockRestore();
+    });
   });
 
   it('returns 400 for a JSON null body', async () => {
