@@ -1,4 +1,4 @@
-import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface LiveFixture {
@@ -34,7 +34,7 @@ function addDuration(time: string, hours: number): string {
 }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
   const { session } = result;
 

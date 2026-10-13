@@ -7,6 +7,7 @@ import { ClubContext } from '../context/ClubContext';
 import { SectionContext } from '../context/SectionContext';
 import type { UserTeamRole, ClubEntry } from '../types';
 import { vi } from 'vitest';
+import { hasPermission, type Permission } from '../lib/permissions';
 
 // ─── Standard context values ──────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ export const mockLoggedOut = {
   isAdmin: false,
   isManager: false,
   isPlatformAdmin: false,
+  can: (() => false) as (needed: Permission | readonly Permission[]) => boolean,
   teamRoles: [] as UserTeamRole[],
   refresh: vi.fn(async () => null as AuthUser | null),
 };
@@ -36,6 +38,19 @@ export const mockAdmin = {
   user: { id: 'u2', name: 'Admin', email: 'admin@example.com', role: 'admin', clubSlug: 'test-club' },
   isAdmin: true,
   isManager: true,
+  can: (needed: Permission | readonly Permission[]) => hasPermission('admin', needed),
+};
+
+export const mockTreasurer = {
+  ...mockLoggedOut,
+  user: { id: 'u4', name: 'Treasurer', email: 'treasurer@example.com', role: 'treasurer', clubSlug: 'test-club' },
+  can: (needed: Permission | readonly Permission[]) => hasPermission('treasurer', needed),
+};
+
+export const mockSecretary = {
+  ...mockLoggedOut,
+  user: { id: 'u5', name: 'Secretary', email: 'secretary@example.com', role: 'secretary', clubSlug: 'test-club' },
+  can: (needed: Permission | readonly Permission[]) => hasPermission('secretary', needed),
 };
 
 export const mockPlatformAdmin = {

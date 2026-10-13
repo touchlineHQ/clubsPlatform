@@ -2,7 +2,8 @@ import { ensureTables } from "../lib/ensure-tables";
 import { prepareAuditLog } from "../lib/audit-log";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { seedClubData } from "../lib/seed";
-import { type Env, json, getClubSlug, requireAdmin } from "../lib/api-helpers";
+import { type Env, json, getClubSlug, requirePermission } from "../lib/api-helpers";
+import { hasPermission } from "../lib/permissions";
 
 type ClubRow = {
   slug: string;
@@ -51,12 +52,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
   if (!row) return json({ error: "Club not found" }, { status: 404 });
 
-  // A club that hasn't gone live yet serves its content to its own admins only.
+  // A club that hasn't gone live yet serves its content to its own committee only.
   // Everyone else gets the same 404 as a club that doesn't exist, so the
   // response never confirms a private club is there. The session lookup only
   // happens for unpublished clubs — a live club pays nothing for this.
   if (row.published === 0) {
-    const admin = await requireAdmin(context);
+    const admin = await requirePermission(context, ["content", "payments", "members"]);
     if ("error" in admin) return json({ error: "Club not found" }, { status: 404 });
   }
 
@@ -87,7 +88,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -105,6 +106,11 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const body = parsedBody as Record<string, unknown>;
   if ('published' in body && typeof body.published !== 'boolean') {
     return json({ error: "published must be a boolean" }, { status: 400 });
+  }
+  // Content editors can save the Customise page; taking the site live or
+  // offline stays admin-only (#79).
+  if ('published' in body && !hasPermission(result.role, "publish")) {
+    return json({ error: "Only an admin can publish or unpublish the site" }, { status: 403 });
   }
 
   // Only a go-live touches `published`, so only a go-live needs the column to

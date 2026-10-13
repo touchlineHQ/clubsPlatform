@@ -18,6 +18,7 @@ import { SaveButton } from '../components/customize/SaveButton';
 import { PublishToggle } from '../components/customize/PublishToggle';
 import { EmailSignoffPrompt } from '../components/customize/EmailSignoffPrompt';
 import { useClub } from '../context/ClubContext';
+import { useAuth } from '../context/AuthContext';
 import { captureEvent } from '../lib/posthog';
 import { PageHeader } from '../components/club/PageHeader';
 
@@ -47,6 +48,7 @@ export function CustomizePage({
   onPublishedChange,
 }: Props) {
   const { clubSlug } = useClub();
+  const { isAdmin } = useAuth();
   const [loadingFeeds, setLoadingFeeds] = useState(false);
   const [feedTeams, setFeedTeams] = useState<FeedTeamEntry[]>([]);
   const [clubSlugs, setClubSlugs] = useState<string[]>([]);
@@ -114,7 +116,7 @@ export function CustomizePage({
         <PublishToggle published={published} onPublishedChange={onPublishedChange} />
       )}
 
-      <EmailSignoffPrompt />
+      {isAdmin && <EmailSignoffPrompt />}
 
       <Paper p="md" radius="md" withBorder>
         <Group justify="space-between" wrap="wrap">

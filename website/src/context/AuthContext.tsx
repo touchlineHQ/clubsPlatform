@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { UserTeamRole } from '../types';
 import { identify, reset } from '../lib/posthog';
+import { hasPermission, type Permission } from '../lib/permissions';
 
 export interface AuthUser {
   id: string;
@@ -14,6 +15,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   isAdmin: boolean;
+  /** True when the user's committee role grants any of `needed` (#79). */
+  can: (needed: Permission | readonly Permission[]) => boolean;
   isManager: boolean;
   /** True when the user is an admin with no specific clubSlug — can manage all clubs. */
   isPlatformAdmin: boolean;
@@ -25,6 +28,7 @@ export const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
   isAdmin: false,
+  can: () => false,
   isManager: false,
   isPlatformAdmin: false,
   teamRoles: [],
@@ -82,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       loading,
       isAdmin: user?.role === 'admin',
+      can: (needed: Permission | readonly Permission[]) => hasPermission(user?.role, needed),
       isManager: user?.role === 'manager' || user?.role === 'admin',
       isPlatformAdmin: user?.role === 'admin' && user?.clubSlug === null,
       teamRoles,

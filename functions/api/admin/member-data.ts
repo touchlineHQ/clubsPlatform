@@ -1,5 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
-import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   deleteMemberData,
@@ -16,7 +16,7 @@ import { prepareAuditLog, writeAuditLog } from "../../lib/audit-log";
 /** Export one club member's data and record the admin access. */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -56,7 +56,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
  */
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -116,7 +116,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 /** Delete one member's direct PII, subject to last-admin and self-delete guards. */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

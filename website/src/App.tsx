@@ -67,7 +67,7 @@ function parseClubSlugFromPath(clubs: ClubEntry[]): string | null {
 }
 
 function AppRoutes() {
-  const { user, loading: authLoading, isAdmin, isPlatformAdmin } = useAuth();
+  const { user, loading: authLoading, isAdmin, isPlatformAdmin, can } = useAuth();
   const [registry, setRegistry] = useState<{ multiClub: boolean; selfRegister: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
@@ -106,7 +106,8 @@ function AppRoutes() {
   const registryEntry = registry?.clubs.find(c => c.slug === clubSlug) ?? null;
   const clubPublished = registryEntry?.published ?? true;
   const belongsToClub = isPlatformAdmin || user?.clubSlug === clubSlug;
-  const canViewPrivate = isAdmin && belongsToClub;
+  // Any committee role can see its own club's site before it goes live (#79).
+  const canViewPrivate = can(['content', 'payments', 'members']) && belongsToClub;
   const canViewSite = clubPublished || canViewPrivate;
 
   // Step 2: once we have a club slug, load all club data. Skipped while the
@@ -319,7 +320,7 @@ function AppRoutes() {
               </ProtectedRoute>
             } />
             <Route path="/customise" element={
-              <ProtectedRoute requireAdmin>
+              <ProtectedRoute permission="content">
                 <CustomizePage
                   originalData={fetchedData!}
                   editingData={editingData}
@@ -330,7 +331,7 @@ function AppRoutes() {
                   onPrimaryColorSaved={handlePrimaryColorSaved}
                   onSecondaryColorSaved={handleSecondaryColorSaved}
                   published={clubPublished}
-                  onPublishedChange={handlePublishedChanged}
+                  onPublishedChange={isAdmin ? handlePublishedChanged : undefined}
                 />
               </ProtectedRoute>
             } />
@@ -352,7 +353,7 @@ function AppRoutes() {
               </ProtectedRoute>
             } />
             <Route path="/admin/payments" element={
-              <ProtectedRoute requireAdmin>
+              <ProtectedRoute permission="payments">
                 <AdminPaymentsPage />
               </ProtectedRoute>
             } />

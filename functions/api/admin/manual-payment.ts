@@ -1,5 +1,5 @@
 import { ensureTables } from '../../lib/ensure-tables';
-import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../../lib/api-helpers';
+import { type Env, json, nowMs, randomId, requirePermission, getClubSlug } from '../../lib/api-helpers';
 import { getPostHog } from '../../lib/posthog';
 import { writeAuditLog } from '../../lib/audit-log';
 import { GC_BLOCKING_STATUSES } from '../../lib/payment-status';
@@ -86,7 +86,7 @@ async function loadRegistration(
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -260,7 +260,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

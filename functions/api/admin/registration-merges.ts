@@ -4,7 +4,7 @@ import {
   json,
   nowMs,
   randomId,
-  requireAdmin,
+  requirePermission,
   getClubSlug,
 } from '../../lib/api-helpers';
 import { prepareAuditLog } from '../../lib/audit-log';
@@ -109,7 +109,7 @@ async function loadPayments(
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -405,7 +405,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

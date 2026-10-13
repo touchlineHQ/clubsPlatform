@@ -97,7 +97,7 @@ export function makeDb(config: DbConfig = {}): D1Database {
 }
 
 // ─── Session builders ─────────────────────────────────────────────────────────
-type UserRole = 'admin' | 'manager' | 'member';
+type UserRole = 'admin' | 'treasurer' | 'secretary' | 'manager' | 'member';
 
 function makeSession(role: UserRole, clubSlug: string | null = 'test-club') {
   return {
@@ -114,6 +114,8 @@ function makeSession(role: UserRole, clubSlug: string | null = 'test-club') {
 
 export const adminSession = makeSession('admin', 'test-club');
 export const managerSession = makeSession('manager', 'test-club');
+export const treasurerSession = makeSession('treasurer', 'test-club');
+export const secretarySession = makeSession('secretary', 'test-club');
 export const memberSession = makeSession('member', 'test-club');
 export const platformAdminSession = makeSession('admin', null);
 

@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requirePermission, getClubSlug } from "../lib/api-helpers";
 
 type CommitteeRow = {
   id: string;
@@ -31,7 +31,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -63,7 +63,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const url = new URL(context.request.url);
@@ -108,7 +108,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const url = new URL(context.request.url);

@@ -396,11 +396,13 @@ export function AdminUsersPage({ liveTeams }: Props) {
                           onChange={(val) => val && handleRoleChange(user.id, val)}
                           data={[
                             { value: 'admin', label: 'Admin' },
+                            { value: 'treasurer', label: 'Treasurer' },
+                            { value: 'secretary', label: 'Secretary' },
                             { value: 'manager', label: 'Manager' },
                             { value: 'member', label: 'Member' },
                           ]}
                           size="xs"
-                          w={120}
+                          w={130}
                           radius="md"
                           disabled={updating === user.id}
                         />

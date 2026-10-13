@@ -1,5 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { makeContext, makeDb, makeEnv, adminSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
+import { makeContext, makeDb, makeEnv, adminSession, treasurerSession, secretarySession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -53,7 +53,7 @@ describe('PATCH /api/admin/users', () => {
   it('updates user role and returns ok', async () => {
     const ctx = makeContext(
       patchReq('/api/admin/users', { userId: 'u1', role: 'manager' }),
-      { env: { DB: makeDb({ run: { meta: { changes: 1 } } }) as any } },
+      { env: { DB: makeDb({ first: [{ role: 'member' }] }) as any } },
     );
 
     const res = await onRequestPatch(ctx as any);
@@ -61,6 +61,59 @@ describe('PATCH /api/admin/users', () => {
 
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
+  });
+
+  it('grants a committee role and audits who, what and why (#79)', async () => {
+    const db = makeDb({ first: [{ role: 'member' }] });
+    const ctx = makeContext(
+      patchReq('/api/admin/users', { userId: 'u1', role: 'treasurer', reason: 'Elected at AGM' }),
+      { env: { DB: db as any } },
+    );
+
+    const res = await onRequestPatch(ctx as any);
+    expect(res.status).toBe(200);
+
+    const prepare = vi.mocked(db.prepare);
+    const sqls = prepare.mock.calls.map((c) => String(c[0]));
+    const auditIdx = sqls.findIndex((q) => q.includes('admin_audit_log'));
+    expect(auditIdx).toBeGreaterThan(-1);
+    const auditBind = vi.mocked(prepare.mock.results[auditIdx].value.bind).mock.calls[0];
+    // id, clubSlug, adminId, action, targetTable, targetId, old, new, note, createdAt
+    expect(auditBind.slice(1, 8)).toEqual(['test-club', 'user_1', 'user_role_changed', 'user', 'u1', 'member', 'treasurer']);
+    expect(JSON.parse(auditBind[8] as string)).toEqual({ reason: 'Elected at AGM', permissions: ['payments'] });
+    expect(db.batch).toHaveBeenCalledOnce();
+  });
+
+  it('accepts secretary as a role', async () => {
+    const ctx = makeContext(
+      patchReq('/api/admin/users', { userId: 'u1', role: 'secretary' }),
+      { env: { DB: makeDb({ first: [{ role: 'member' }] }) as any } },
+    );
+    const res = await onRequestPatch(ctx as any);
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 404 for a user outside the admin's club and changes nothing", async () => {
+    const db = makeDb({ first: [null] });
+    const ctx = makeContext(
+      patchReq('/api/admin/users', { userId: 'u-other', role: 'admin' }),
+      { env: { DB: db as any } },
+    );
+    const res = await onRequestPatch(ctx as any);
+    expect(res.status).toBe(404);
+    expect(db.batch).not.toHaveBeenCalled();
+  });
+
+  it('refuses a treasurer or secretary trying to assign roles', async () => {
+    for (const session of [treasurerSession, secretarySession]) {
+      mockGetSession.mockResolvedValue(session);
+      const ctx = makeContext(
+        patchReq('/api/admin/users', { userId: 'u1', role: 'admin' }),
+        { env: { DB: makeDb() as any } },
+      );
+      const res = await onRequestPatch(ctx as any);
+      expect(res.status).toBe(403);
+    }
   });
 
   it('returns 400 when userId is missing', async () => {

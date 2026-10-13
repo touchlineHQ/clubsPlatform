@@ -1,5 +1,6 @@
 import { type Env, json, requireAuth, requireAdmin, getClubSlug, isMultiClubMode } from "../lib/api-helpers";
 import { readMeta, reportReadCost } from "../lib/read-cost";
+import { hasPermission } from "../lib/permissions";
 import {
   billingIdFromJoinSql,
   billingMergeJoinSql,
@@ -217,7 +218,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     return json({ error: "Missing X-Club-Slug header" }, { status: 400 });
   }
 
-  const isAdmin = role === "admin";
+  // Club-wide scope for anyone whose committee role covers registrations (#79).
+  const isAdmin = hasPermission(role, ["payments", "members"]);
 
   if (isAdmin && isMultiClubMode(context.env) && userClubSlug !== null && userClubSlug !== clubSlug) {
     return json({ error: "Access denied: club mismatch" }, { status: 403 });

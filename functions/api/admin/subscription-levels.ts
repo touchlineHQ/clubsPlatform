@@ -1,5 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
-import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
 type IntervalUnit = "weekly" | "monthly" | "yearly";
@@ -65,7 +65,7 @@ function validate(body: CreateLevelBody): { ok: true; data: { name: string; year
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -86,7 +86,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

@@ -2,7 +2,7 @@ import { ensureTables } from "../../lib/ensure-tables";
 import {
   type Env,
   json,
-  requireAdmin,
+  requirePermission,
   getClubSlug,
   isMultiClubMode,
 } from "../../lib/api-helpers";
@@ -22,7 +22,7 @@ import { emailActivationLink } from "../../lib/activation-mail";
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "members");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -37,7 +37,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "members");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

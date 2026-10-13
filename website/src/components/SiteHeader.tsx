@@ -25,7 +25,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
   const showFcSuffix = !club.tagShort && / FC$/i.test(club.name);
 
   const { activeSection, setActiveSection } = useSection();
-  const { user, isAdmin, isPlatformAdmin, loading: authLoading } = useAuth();
+  const { user, isAdmin, isPlatformAdmin, can, loading: authLoading } = useAuth();
   const { isMultiClub, clubSlug, clubs } = useClub();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -33,6 +33,7 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
 
   const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
   const canAdmin = isAdmin && belongsToClub;
+  const canContent = can('content') && belongsToClub;
 
   const userClub = isMultiClub && user && !belongsToClub
     ? clubs.find(c => c.slug === user.clubSlug) ?? null
@@ -166,11 +167,13 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               </UnstyledButton>
             </Menu.Target>
             <Menu.Dropdown>
-              {canAdmin && (
-                <>
+              {canContent && (
                   <Menu.Item leftSection={<IconSettings size={14} />} onClick={() => navigate('/customise')}>
                     Site Admin
                   </Menu.Item>
+                )}
+                {canAdmin && (
+                <>
                   <Menu.Item leftSection={<IconUsers size={14} />} onClick={() => navigate('/admin/users')}>
                     Manage Users
                   </Menu.Item>
@@ -328,14 +331,16 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
               </Button>
             </Menu.Target>
             <Menu.Dropdown>
-              {canAdmin && (
-                <>
+              {canContent && (
                   <Menu.Item
                     leftSection={<IconSettings size={14} />}
                     onClick={() => navigate('/customise')}
                   >
                     Site Admin
                   </Menu.Item>
+                )}
+                {canAdmin && (
+                <>
                   <Menu.Item
                     leftSection={<IconUsers size={14} />}
                     onClick={() => navigate('/admin/users')}
