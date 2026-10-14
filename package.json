@@ -28,7 +28,7 @@
     "posthog-node": "^5.55.2"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261005.1",
+    "@cloudflare/workers-types": "^5.20261011.1",
     "@mantine/core": "^9.0.0",
     "@mantine/dates": "^9.7.2",
     "@mantine/hooks": "^9.0.0",
