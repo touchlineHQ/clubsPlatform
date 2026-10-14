@@ -508,7 +508,8 @@ jobs:
           # workflow_run. Dependabot writes the same update-type lines into the commit
           # message, so apply the ceiling again here. A label applied under a looser
           # config is removed rather than trusted.
-          messages=$(gh api --paginate "repos/$REPO/pulls/$pr/commits?per_page=100" --jq '.[].commit.message')
+          messages=$(gh api --paginate "repos/$REPO/pulls/$pr/commits?per_page=100" \
+            --jq '.[] | select(.author.login == "dependabot[bot]") | .commit.message')
           if [ -z "$messages" ]; then
             echo "::error::PR #$pr returned no commit messages; not merging."
             exit 1
