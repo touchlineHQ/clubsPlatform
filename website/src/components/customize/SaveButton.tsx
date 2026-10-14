@@ -37,6 +37,7 @@ export function SaveButton({ data, onSaved }: Props) {
         req('POST', '/api/registration', { items: data.registration }),
         req('POST', '/api/gallery', { items: data.gallery }),
         req('POST', '/api/matchday', { items: data.matchday }),
+        req('POST', '/api/fixtures', { items: data.manualFixtures }),
       ]);
       captureEvent('customisation saved', { club_slug: clubSlug });
       setResult('success');
@@ -72,7 +73,7 @@ export function SaveButton({ data, onSaved }: Props) {
         <Group gap={4}>
           <IconX size={14} color="red" />
           {/* Deliberately does not promise the save was a no-op. handleSave
-              issues seven independent writes through Promise.all, which
+              issues eight independent writes through Promise.all, which
               rejects on the first failure while the others stay in flight —
               so a failure can leave some sections saved and others not.
               Telling the user nothing was lost would send them away from a

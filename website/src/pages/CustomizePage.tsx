@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Tabs, Stack, Text, Group, Button, Paper, Badge } from '@mantine/core';
 import {
   IconUsers, IconId, IconNews, IconRefresh, IconBuildingStore,
-  IconPhoto, IconCalendarEvent, IconInfoCircle, IconEye,
+  IconPhoto, IconCalendarEvent, IconInfoCircle, IconEye, IconBallFootball,
 } from '@tabler/icons-react';
 import type { AppData } from '../types';
 import { loadFeeds, loadAllFeedTeams, loadClubSlugs } from '../data';
@@ -14,6 +14,8 @@ import { NewsForm } from '../components/customize/NewsForm';
 import { RegistrationForm } from '../components/customize/RegistrationForm';
 import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
+import { FixturesForm } from '../components/customize/FixturesForm';
+import { mergeManualFixtures } from '../utils/manualFixtures';
 import { SaveButton } from '../components/customize/SaveButton';
 import { PublishToggle } from '../components/customize/PublishToggle';
 import { EmailSignoffPrompt } from '../components/customize/EmailSignoffPrompt';
@@ -77,7 +79,11 @@ export function CustomizePage({
       setLoadingFeeds(true);
       try {
         const feeds = await loadFeeds(localData.club, localData.teams);
-        const merged = { ...localData, ...feeds };
+        const merged = {
+          ...localData,
+          ...feeds,
+          clubFeed: mergeManualFixtures(feeds.clubFeed, localData.manualFixtures ?? [], localData.club.name),
+        };
         onEditingChange(merged);
         onApplyPreview(merged);
       } finally {
@@ -162,6 +168,7 @@ export function CustomizePage({
           <Tabs.Tab value="registration" leftSection={<IconBuildingStore size={14} />}>Registration</Tabs.Tab>
           <Tabs.Tab value="gallery" leftSection={<IconPhoto size={14} />}>Gallery</Tabs.Tab>
           <Tabs.Tab value="matchday" leftSection={<IconCalendarEvent size={14} />}>Matchday</Tabs.Tab>
+          <Tabs.Tab value="fixtures" leftSection={<IconBallFootball size={14} />}>Fixtures</Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="club" pt="md">
@@ -215,6 +222,14 @@ export function CustomizePage({
           <MatchdayForm
             matchday={localData.matchday}
             onChange={matchday => set(d => ({ ...d, matchday }))}
+          />
+        </Tabs.Panel>
+
+        <Tabs.Panel value="fixtures" pt="md">
+          <FixturesForm
+            fixtures={localData.manualFixtures ?? []}
+            teamNames={localData.teams.sections.flatMap(s => s.teams.map(t => t.name))}
+            onChange={manualFixtures => set(d => ({ ...d, manualFixtures }))}
           />
         </Tabs.Panel>
       </Tabs>

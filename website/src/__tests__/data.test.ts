@@ -479,3 +479,20 @@ describe('loadAllData (multi-club)', () => {
     expect(data.club.slug).toBe('test-club');
   });
 });
+
+describe('loadManualFixturesFromApi (#78)', () => {
+  it('returns items for the club', async () => {
+    const { loadManualFixturesFromApi } = await import('../data');
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [{ team: 'Reds' }] }) });
+    expect(await loadManualFixturesFromApi('test-club')).toEqual([{ team: 'Reds' }]);
+    expect(mockFetch).toHaveBeenCalledWith('/api/fixtures', { headers: { 'X-Club-Slug': 'test-club' } });
+  });
+
+  it('returns [] on failure', async () => {
+    const { loadManualFixturesFromApi } = await import('../data');
+    mockFetch.mockResolvedValue({ ok: false });
+    expect(await loadManualFixturesFromApi('x')).toEqual([]);
+    mockFetch.mockRejectedValue(new Error('down'));
+    expect(await loadManualFixturesFromApi('x')).toEqual([]);
+  });
+});

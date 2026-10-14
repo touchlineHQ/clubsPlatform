@@ -41,6 +41,7 @@ const appData: AppData = {
   gallery: [],
   matchday: [],
   clubFeed: null,
+  manualFixtures: [],
   liveTeams: [],
   sidebarFeeds: [],
   visibility: {},

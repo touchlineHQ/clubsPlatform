@@ -292,7 +292,7 @@ function AppRoutes() {
                 <Route path="/teams/:teamSlug" element={<TeamPage liveTeams={data.liveTeams} />} />
               </>
             )}
-            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} />} />}
+            {data.visibility['/fixtures'] && <Route path="/fixtures" element={<FixturesResultsPage feed={data.clubFeed} teams={data.teams} liveTeams={data.liveTeams} manualOnly={!data.club.clubFeedSlug && data.manualFixtures.length > 0} />} />}
             {data.visibility['/register'] && <Route path="/register" element={<RegisterPage items={data.registration} />} />}
             {data.visibility['/committee'] && <Route path="/committee" element={<CommitteePage committee={data.committee} teams={data.teams} />} />}
             {data.visibility['/news'] && <Route path="/news" element={<NewsPage items={data.news} />} />}
