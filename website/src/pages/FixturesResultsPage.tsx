@@ -96,7 +96,9 @@ export function FixturesResultsPage({ feed, teams, liveTeams, manualOnly = false
     if (!section) return null;
 
     const matched = liveTeamsForSection(section, liveTeams);
-    return new Set(matched.map(lt => lt.name));
+    // Also allow the section's own team names, so manually recorded games
+    // (which have no live feed team) are not hidden by the section filter.
+    return new Set([...matched.map(lt => lt.name), ...section.teams.map(t => t.name)]);
   }, [activeSection, teams, liveTeams]);
 
   const duplicateNames = useMemo(() => findDuplicateTeamNames(liveTeams), [liveTeams]);

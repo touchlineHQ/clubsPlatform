@@ -189,3 +189,20 @@ describe('FixturesResultsPage league table (#78)', () => {
     expect(await screen.findByText('No scored results yet.')).toBeTruthy();
   });
 });
+
+describe('FixturesResultsPage section filter with manual games (#78)', () => {
+  it('keeps games for a section team that has no live feed team', () => {
+    const feed: ClubFeed = {
+      club: 'test-club', generated: '2026-01-01T00:00:00Z', results: [],
+      fixtures: [{
+        id: 'm1', date: '2099-01-01', time: '10:00', home_team: 'First XI', away_team: 'Rivals', venue: 'Home Park',
+        division: 'Friendly', league: '', team: 'First XI', home_away: 'home', opponent: 'Rivals',
+      }],
+    };
+    renderWithMantine(
+      <FixturesResultsPage feed={feed} teams={teams} liveTeams={[]} manualOnly />,
+      { clubValue: mockSingleClub, sectionValue: { ...mockSection, activeSection: 'seniors' } },
+    );
+    expect(screen.getByRole('tab', { name: /Fixtures \(1\)/ })).toBeTruthy();
+  });
+});
