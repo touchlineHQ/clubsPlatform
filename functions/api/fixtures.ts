@@ -52,8 +52,12 @@ export function validateManualFixture(raw: unknown, index: number): { error: str
   if (!team) return { error: `${at}.team is required` };
   const opponent = str(r.opponent, 100);
   if (!opponent) return { error: `${at}.opponent is required` };
+  if (opponent.toLowerCase() === team.toLowerCase()) return { error: `${at}.opponent cannot be the same as team` };
   const date = str(r.date, 10);
-  if (!date || !DATE_RE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+  // Round-trip through Date so impossible days (2026-02-30) are rejected,
+  // not rolled forward to the next valid date.
+  const parsed = date && DATE_RE.test(date) ? new Date(`${date}T00:00:00Z`) : null;
+  if (!date || !parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     return { error: `${at}.date must be YYYY-MM-DD` };
   }
   const time = r.time === undefined || r.time === null ? "" : str(r.time, 5);
@@ -103,9 +107,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const items: Required<ManualFixtureInput>[] = [];
+  const seen = new Set<string>();
   for (let i = 0; i < body.items.length; i++) {
     const v = validateManualFixture(body.items[i], i);
     if ("error" in v) return json({ error: v.error }, { status: 400 });
+    // A team plays once a day; a second entry would be silently hidden on the site.
+    const key = `${v.value.team.toLowerCase()}\0${v.value.date}`;
+    if (seen.has(key)) {
+      return json({ error: `items[${i}] duplicates another game for ${v.value.team} on ${v.value.date}` }, { status: 400 });
+    }
+    seen.add(key);
     items.push(v.value);
   }
 

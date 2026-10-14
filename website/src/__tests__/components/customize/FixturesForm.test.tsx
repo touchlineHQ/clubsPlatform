@@ -40,4 +40,10 @@ describe('FixturesForm', () => {
     fireEvent.change(screen.getByLabelText('Away score'), { target: { value: '' } });
     expect(onChange).toHaveBeenLastCalledWith([expect.objectContaining({ awayScore: null })]);
   });
+
+  it('shows field errors for an incomplete game', () => {
+    renderWithMantine(<FixturesForm fixtures={[{ ...entry, opponent: '', homeScore: 2 }]} teamNames={[]} onChange={vi.fn()} />);
+    expect(screen.getByText('Required')).toBeTruthy();
+    expect(screen.getByText('Enter both scores or neither')).toBeTruthy();
+  });
 });

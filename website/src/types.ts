@@ -192,6 +192,8 @@ export interface AppData {
   matchday: MatchdayItem[];
   /** Feed merged with manual entries (feed wins on conflict). */
   clubFeed: ClubFeed | null;
+  /** The feed as loaded, before manual entries are merged in. */
+  rawClubFeed: ClubFeed | null;
   manualFixtures: ManualFixture[];
   liveTeams: LiveTeam[];
   sidebarFeeds: { feed: TeamFeed; label: string; sectionId: string }[];

@@ -42,6 +42,10 @@ export function mergeManualFixtures(
   const results: LiveResult[] = [...(feed?.results ?? [])];
 
   manual.forEach((m, i) => {
+    const played = m.homeScore !== null && m.awayScore !== null;
+    // Past and unscored: nothing useful to show. Skip before claiming the
+    // team+date key so it cannot hide a scored entry for the same game.
+    if (!played && m.date < today) return;
     if (covered.has(conflictKey(m.team, m.date))) return;
     covered.add(conflictKey(m.team, m.date));
     const home = m.homeAway === 'home';
@@ -58,12 +62,10 @@ export function mergeManualFixtures(
       home_away: m.homeAway,
       opponent: m.opponent,
     };
-    const played = m.homeScore !== null && m.awayScore !== null;
-    if (!played && m.date >= today) {
+    if (!played) {
       fixtures.push(base);
       return;
     }
-    if (!played) return; // past and unscored: nothing useful to show
     const gf = home ? m.homeScore : m.awayScore;
     const ga = home ? m.awayScore : m.homeScore;
     results.push({ ...base, home_score: m.homeScore, away_score: m.awayScore, goals_for: gf, goals_against: ga });
@@ -79,6 +81,7 @@ export function mergeManualFixtures(
 
 export interface TableRow {
   team: string;
+  league: string;
   played: number;
   won: number;
   drawn: number;
@@ -97,11 +100,13 @@ export interface TableRow {
  */
 export function buildLeagueTable(results: LiveResult[]): TableRow[] {
   const rows = new Map<string, TableRow>();
-  const row = (team: string): TableRow => {
-    let r = rows.get(team);
+  // Keyed by name + league so same-named teams in different leagues stay apart.
+  const row = (team: string, league: string): TableRow => {
+    const key = `${team}\0${league}`;
+    let r = rows.get(key);
     if (!r) {
-      r = { team, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 };
-      rows.set(team, r);
+      r = { team, league, played: 0, won: 0, drawn: 0, lost: 0, goalsFor: 0, goalsAgainst: 0, goalDifference: 0, points: 0 };
+      rows.set(key, r);
     }
     return r;
   };
@@ -110,8 +115,8 @@ export function buildLeagueTable(results: LiveResult[]): TableRow[] {
     if (res.home_score === null || res.away_score === null) continue;
     if (seen.has(res.id)) continue;
     seen.add(res.id);
-    const h = row(res.home_team);
-    const a = row(res.away_team);
+    const h = row(res.home_team, res.league);
+    const a = row(res.away_team, res.league);
     h.played++; a.played++;
     h.goalsFor += res.home_score; h.goalsAgainst += res.away_score;
     a.goalsFor += res.away_score; a.goalsAgainst += res.home_score;
@@ -125,4 +130,71 @@ export function buildLeagueTable(results: LiveResult[]): TableRow[] {
     || y.goalDifference - x.goalDifference
     || y.goalsFor - x.goalsFor
     || x.team.localeCompare(y.team));
+}
+
+export interface CompetitionTable {
+  competition: string;
+  rows: TableRow[];
+}
+
+/**
+ * One table per competition (division), so a friendly or cup game never
+ * lands in the same table as league games. Callers pass one team's results.
+ */
+export function buildCompetitionTables(results: LiveResult[]): CompetitionTable[] {
+  const byCompetition = new Map<string, LiveResult[]>();
+  for (const r of results) {
+    const key = r.division.trim() || 'Other games';
+    const list = byCompetition.get(key) ?? [];
+    list.push(r);
+    byCompetition.set(key, list);
+  }
+  return [...byCompetition.entries()]
+    .map(([competition, list]) => ({ competition, rows: buildLeagueTable(list) }))
+    .filter((t) => t.rows.length > 0)
+    .sort((a, b) => a.competition.localeCompare(b.competition));
+}
+
+export type ManualFixtureField = 'team' | 'opponent' | 'date' | 'time' | 'homeScore' | 'awayScore';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function validScore(v: number | null): boolean {
+  return v === null || (Number.isInteger(v) && v >= 0 && v <= 99);
+}
+
+/**
+ * Client-side mirror of the /api/fixtures validation, per field, so the form
+ * can point at the bad game and Save can refuse to start rather than half-save.
+ */
+export function manualFixtureErrors(list: ManualFixture[]): Partial<Record<ManualFixtureField, string>>[] {
+  const firstIndex = new Map<string, number>();
+  return list.map((m, i) => {
+    const e: Partial<Record<ManualFixtureField, string>> = {};
+    const team = m.team.trim();
+    const opponent = m.opponent.trim();
+    if (!team) e.team = 'Required';
+    if (!opponent) e.opponent = 'Required';
+    else if (team && opponent.toLowerCase() === team.toLowerCase()) e.opponent = 'Cannot be the same as our team';
+    const parsed = DATE_RE.test(m.date) ? new Date(`${m.date}T00:00:00Z`) : null;
+    if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== m.date) e.date = 'Enter a valid date';
+    if (m.time && !TIME_RE.test(m.time)) e.time = 'Use HH:MM';
+    if (!validScore(m.homeScore)) e.homeScore = 'Whole number 0-99';
+    if (!validScore(m.awayScore)) e.awayScore = 'Whole number 0-99';
+    if (!e.homeScore && !e.awayScore && (m.homeScore === null) !== (m.awayScore === null)) {
+      e[m.homeScore === null ? 'homeScore' : 'awayScore'] = 'Enter both scores or neither';
+    }
+    if (team && !e.date) {
+      const key = `${team.toLowerCase()}\0${m.date}`;
+      const first = firstIndex.get(key);
+      if (first === undefined) firstIndex.set(key, i);
+      else e.date = `${team} already has a game on this date (game ${first + 1})`;
+    }
+    return e;
+  });
+}
+
+export function hasManualFixtureErrors(list: ManualFixture[]): boolean {
+  return manualFixtureErrors(list).some((e) => Object.keys(e).length > 0);
 }

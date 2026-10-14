@@ -82,6 +82,7 @@ export function CustomizePage({
         const merged = {
           ...localData,
           ...feeds,
+          rawClubFeed: feeds.clubFeed,
           clubFeed: mergeManualFixtures(feeds.clubFeed, localData.manualFixtures ?? [], localData.club.name),
         };
         onEditingChange(merged);
@@ -90,7 +91,14 @@ export function CustomizePage({
         setLoadingFeeds(false);
       }
     } else {
-      onApplyPreview(localData);
+      // Re-merge from the unmerged feed so manual-fixture edits show in the
+      // preview (the current clubFeed already holds the old manual entries).
+      const merged = {
+        ...localData,
+        clubFeed: mergeManualFixtures(localData.rawClubFeed ?? null, localData.manualFixtures ?? [], localData.club.name),
+      };
+      onEditingChange(merged);
+      onApplyPreview(merged);
     }
 
     captureEvent('preview applied', { club_slug: clubSlug });

@@ -75,6 +75,7 @@ const appData: AppData = {
   matchday: [],
   clubFeed: null,
   manualFixtures: [],
+  rawClubFeed: null,
   liveTeams: [],
   sidebarFeeds: [],
   visibility: {},

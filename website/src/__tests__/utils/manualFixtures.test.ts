@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeManualFixtures, buildLeagueTable } from '../../utils/manualFixtures';
+import { mergeManualFixtures, buildLeagueTable, buildCompetitionTables, manualFixtureErrors, hasManualFixtureErrors } from '../../utils/manualFixtures';
 import type { ClubFeed, LiveResult, ManualFixture } from '../../types';
 
 const NOW = new Date('2026-10-14T09:00:00Z');
@@ -50,6 +50,14 @@ describe('mergeManualFixtures', () => {
     expect(merged.generated).toBe(feed.generated);
   });
 
+  it('does not let a skipped past unscored entry hide a scored one for the same game', () => {
+    const merged = mergeManualFixtures(null, [
+      manual({ date: '2026-09-01' }),
+      manual({ date: '2026-09-01', homeScore: 1, awayScore: 0 }),
+    ], 'Test FC', NOW)!;
+    expect(merged.results).toHaveLength(1);
+  });
+
   it('skips past games with no score and de-duplicates repeated manual entries', () => {
     const merged = mergeManualFixtures(null, [
       manual({ date: '2026-09-01' }),
@@ -88,5 +96,50 @@ describe('buildLeagueTable', () => {
 
   it('is empty with no scored results', () => {
     expect(buildLeagueTable([])).toEqual([]);
+  });
+});
+
+describe('buildLeagueTable league identity', () => {
+  it('keeps same-named teams in different leagues apart', () => {
+    const a = { ...result('1', 'Reds', 'Blues', 1, 0), league: 'sat' };
+    const b = { ...result('2', 'Reds', 'Greens', 0, 2), league: 'sun' };
+    const table = buildLeagueTable([a, b]);
+    expect(table.filter(r => r.team === 'Reds').map(r => [r.league, r.points])).toEqual([['sat', 3], ['sun', 0]]);
+  });
+});
+
+describe('buildCompetitionTables', () => {
+  it('splits by division and names blanks "Other games"', () => {
+    const tables = buildCompetitionTables([
+      { ...result('1', 'Reds', 'Blues', 1, 0), division: 'Cup' },
+      { ...result('2', 'Reds', 'Greens', 0, 0), division: '' },
+      { ...result('3', 'Reds', 'Yellows', null, null), division: 'Friendly' },
+    ]);
+    expect(tables.map(t => t.competition)).toEqual(['Cup', 'Other games']);
+    expect(tables[0].rows[0]).toMatchObject({ team: 'Reds', points: 3 });
+  });
+});
+
+describe('manualFixtureErrors', () => {
+  it('passes a valid entry', () => {
+    expect(manualFixtureErrors([manual()])).toEqual([{}]);
+    expect(hasManualFixtureErrors([manual(), manual({ date: '2026-11-08', homeScore: 2, awayScore: 2 })])).toBe(false);
+  });
+
+  it('flags each invalid field', () => {
+    expect(manualFixtureErrors([manual({ team: ' ', opponent: '' })])[0]).toMatchObject({ team: 'Required', opponent: 'Required' });
+    expect(manualFixtureErrors([manual({ opponent: 'u12 reds' })])[0].opponent).toMatch(/same/);
+    expect(manualFixtureErrors([manual({ date: '2026-02-30' })])[0].date).toMatch(/valid date/);
+    expect(manualFixtureErrors([manual({ time: '9am' })])[0].time).toMatch(/HH:MM/);
+    expect(manualFixtureErrors([manual({ homeScore: 100, awayScore: 1 })])[0].homeScore).toMatch(/0-99/);
+    expect(manualFixtureErrors([manual({ homeScore: NaN, awayScore: 1 })])[0].homeScore).toMatch(/0-99/);
+    expect(manualFixtureErrors([manual({ homeScore: 2 })])[0].awayScore).toMatch(/both/);
+    expect(manualFixtureErrors([manual({ awayScore: 2 })])[0].homeScore).toMatch(/both/);
+  });
+
+  it('flags a second game for the same team on the same day', () => {
+    const errs = manualFixtureErrors([manual(), manual({ team: 'U12 REDS', opponent: 'Other' })]);
+    expect(errs[0]).toEqual({});
+    expect(errs[1].date).toMatch(/game 1/);
   });
 });

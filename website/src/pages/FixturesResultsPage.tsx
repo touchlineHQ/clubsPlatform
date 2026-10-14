@@ -9,7 +9,7 @@ import { useSection } from '../context/SectionContext';
 import { findDuplicateTeamNames, teamDisplayLabel, liveTeamsForSection } from '../utils/teamMatching';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
-import { buildLeagueTable } from '../utils/manualFixtures';
+import { buildCompetitionTables } from '../utils/manualFixtures';
 
 const FORM_GAMES = 5;
 
@@ -166,7 +166,9 @@ export function FixturesResultsPage({ feed, teams, liveTeams, manualOnly = false
     return results.slice(0, FORM_GAMES).map(getOutcome).filter((o): o is 'W' | 'D' | 'L' => o !== null);
   }, [results]);
 
-  const table = useMemo(() => buildLeagueTable(results), [results]);
+  // Tables only make sense for one team, one competition at a time: mixing
+  // every club team, friendlies and cups would give a meaningless table.
+  const tables = useMemo(() => (effectiveTeam ? buildCompetitionTables(results) : []), [effectiveTeam, results]);
 
   if (!feed) {
     return (
@@ -355,43 +357,50 @@ export function FixturesResultsPage({ feed, teams, liveTeams, manualOnly = false
         </Tabs.Panel>
 
         <Tabs.Panel value="table" pt="md">
-          {tab !== 'table' ? null : table.length === 0 ? (
+          {tab !== 'table' ? null : !effectiveTeam ? (
+            <Text c="dimmed" size="sm">Choose a team above to see its table.</Text>
+          ) : tables.length === 0 ? (
             <Text c="dimmed" size="sm">No scored results yet.</Text>
           ) : (
-            <Stack gap="xs">
-              <Text size="xs" c="dimmed">Built from the results shown here: 3 points for a win, 1 for a draw.</Text>
-              <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
-                <Table striped aria-label="League table">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Team</Table.Th>
-                      <Table.Th ta="center">P</Table.Th>
-                      <Table.Th ta="center">W</Table.Th>
-                      <Table.Th ta="center">D</Table.Th>
-                      <Table.Th ta="center">L</Table.Th>
-                      <Table.Th ta="center" visibleFrom="sm">GF</Table.Th>
-                      <Table.Th ta="center" visibleFrom="sm">GA</Table.Th>
-                      <Table.Th ta="center">GD</Table.Th>
-                      <Table.Th ta="center">Pts</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {table.map((row) => (
-                      <Table.Tr key={row.team}>
-                        <Table.Td><Text size="sm" fw={600}>{row.team}</Text></Table.Td>
-                        <Table.Td ta="center">{row.played}</Table.Td>
-                        <Table.Td ta="center">{row.won}</Table.Td>
-                        <Table.Td ta="center">{row.drawn}</Table.Td>
-                        <Table.Td ta="center">{row.lost}</Table.Td>
-                        <Table.Td ta="center" visibleFrom="sm">{row.goalsFor}</Table.Td>
-                        <Table.Td ta="center" visibleFrom="sm">{row.goalsAgainst}</Table.Td>
-                        <Table.Td ta="center">{row.goalDifference}</Table.Td>
-                        <Table.Td ta="center"><Text size="sm" fw={800}>{row.points}</Text></Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Paper>
+            <Stack gap="md">
+              <Text size="xs" c="dimmed">Built from this team&apos;s results shown here, one table per competition: 3 points for a win, 1 for a draw.</Text>
+              {tables.map(({ competition, rows }) => (
+                <Stack gap={4} key={competition}>
+                  <Text size="sm" fw={700}>{competition}</Text>
+                  <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                    <Table striped aria-label={`${competition} table`}>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Team</Table.Th>
+                          <Table.Th ta="center">P</Table.Th>
+                          <Table.Th ta="center">W</Table.Th>
+                          <Table.Th ta="center">D</Table.Th>
+                          <Table.Th ta="center">L</Table.Th>
+                          <Table.Th ta="center" visibleFrom="sm">GF</Table.Th>
+                          <Table.Th ta="center" visibleFrom="sm">GA</Table.Th>
+                          <Table.Th ta="center">GD</Table.Th>
+                          <Table.Th ta="center">Pts</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {rows.map((row) => (
+                          <Table.Tr key={`${row.team}\0${row.league}`}>
+                            <Table.Td><Text size="sm" fw={600}>{row.team}</Text></Table.Td>
+                            <Table.Td ta="center">{row.played}</Table.Td>
+                            <Table.Td ta="center">{row.won}</Table.Td>
+                            <Table.Td ta="center">{row.drawn}</Table.Td>
+                            <Table.Td ta="center">{row.lost}</Table.Td>
+                            <Table.Td ta="center" visibleFrom="sm">{row.goalsFor}</Table.Td>
+                            <Table.Td ta="center" visibleFrom="sm">{row.goalsAgainst}</Table.Td>
+                            <Table.Td ta="center">{row.goalDifference}</Table.Td>
+                            <Table.Td ta="center"><Text size="sm" fw={800}>{row.points}</Text></Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Paper>
+                </Stack>
+              ))}
             </Stack>
           )}
         </Tabs.Panel>

@@ -139,34 +139,52 @@ describe('FixturesResultsPage', () => {
 });
 
 describe('FixturesResultsPage league table (#78)', () => {
-  it('builds the table from results and labels manual-only data', async () => {
+  const res = (id: string, division: string, hs: number, as: number) => ({
+    id, date: '2026-01-0' + id, time: '10:00', home_team: 'Reds', away_team: 'Blues ' + division, venue: '', division,
+    league: '', team: 'Reds', home_away: 'home' as const, opponent: 'Blues ' + division,
+    home_score: hs, away_score: as, goals_for: hs, goals_against: as,
+  });
+  const feed: ClubFeed = {
+    club: 'test-club', generated: '2026-01-01T00:00:00Z', fixtures: [],
+    results: [res('1', 'Friendly', 2, 0), res('2', 'County Cup', 1, 1)],
+  };
+
+  it('asks for a team first and labels manual-only data', async () => {
     const { fireEvent } = await import('@testing-library/react');
-    const feed: ClubFeed = {
-      club: 'test-club', generated: '2026-01-01T00:00:00Z', fixtures: [],
-      results: [{
-        id: 'r1', date: '2026-01-01', time: '10:00', home_team: 'Reds', away_team: 'Blues', venue: '', division: 'Friendly',
-        league: '', team: 'Reds', home_away: 'home', opponent: 'Blues', home_score: 2, away_score: 0, goals_for: 2, goals_against: 0,
-      }],
-    };
     renderWithMantine(
       <FixturesResultsPage feed={feed} teams={teams} liveTeams={liveTeams} manualOnly />,
       { clubValue: mockSingleClub },
     );
     expect(screen.getByText(/recorded by the club/)).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
-    const table = await screen.findByRole('table', { name: 'League table' });
-    const rows = table.querySelectorAll('tbody tr');
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain('Reds');
-    expect(rows[0].textContent).toContain('3');
+    expect(await screen.findByText(/Choose a team above/)).toBeTruthy();
   });
 
-  it('shows an empty-table message when nothing is scored', async () => {
+  it('shows one table per competition for the selected team', async () => {
     const { fireEvent } = await import('@testing-library/react');
     renderWithMantine(
-      <FixturesResultsPage feed={emptyFeed} teams={teams} liveTeams={liveTeams} />,
+      <FixturesResultsPage feed={feed} teams={teams} liveTeams={liveTeams} />,
       { clubValue: mockSingleClub },
     );
+    fireEvent.click(screen.getByRole('combobox', { name: /Filter by team/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Reds' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
+    const friendly = await screen.findByRole('table', { name: 'Friendly table' });
+    const cup = screen.getByRole('table', { name: 'County Cup table' });
+    expect(friendly.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(friendly.querySelector('tbody tr')!.textContent).toContain('Reds');
+    expect(cup.querySelectorAll('tbody tr')).toHaveLength(2);
+  });
+
+  it('shows an empty-table message when the team has no scored results', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const unscored: ClubFeed = { ...feed, results: [{ ...res('1', 'Friendly', 0, 0), home_score: null, away_score: null }] };
+    renderWithMantine(
+      <FixturesResultsPage feed={unscored} teams={teams} liveTeams={liveTeams} />,
+      { clubValue: mockSingleClub },
+    );
+    fireEvent.click(screen.getByRole('combobox', { name: /Filter by team/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Reds' }));
     fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
     expect(await screen.findByText('No scored results yet.')).toBeTruthy();
   });

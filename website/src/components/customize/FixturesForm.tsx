@@ -1,6 +1,7 @@
 import { TextInput, Select, Stack, Group, Title, Paper, Button, Text, Autocomplete } from '@mantine/core';
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import type { ManualFixture } from '../../types';
+import { manualFixtureErrors } from '../../utils/manualFixtures';
 
 interface Props {
   fixtures: ManualFixture[];
@@ -14,10 +15,11 @@ const blank = (): ManualFixture => ({
   homeScore: null, awayScore: null,
 });
 
+/** Empty = not played. Anything else is kept as typed so validation can flag it. */
 function toScore(v: string): number | null {
   if (v.trim() === '') return null;
   const n = Number(v);
-  return Number.isInteger(n) && n >= 0 && n <= 99 ? n : null;
+  return Number.isFinite(n) ? n : NaN;
 }
 
 /**
@@ -33,6 +35,7 @@ export function FixturesForm({ fixtures, teamNames, onChange }: Props) {
   };
   const remove = (i: number) => onChange(fixtures.filter((_, idx) => idx !== i));
   const suggestions = Array.from(new Set(teamNames.filter(Boolean)));
+  const errors = manualFixtureErrors(fixtures);
 
   return (
     <Stack gap="lg">
@@ -53,12 +56,12 @@ export function FixturesForm({ fixtures, teamNames, onChange }: Props) {
           </Group>
           <Stack gap="xs">
             <Group grow>
-              <Autocomplete label="Our team" required data={suggestions} value={f.team} onChange={v => update(i, { team: v })} />
-              <TextInput label="Opponent" required value={f.opponent} onChange={e => update(i, { opponent: e.target.value })} />
+              <Autocomplete label="Our team" required data={suggestions} value={f.team} error={errors[i].team} onChange={v => update(i, { team: v })} />
+              <TextInput label="Opponent" required value={f.opponent} error={errors[i].opponent} onChange={e => update(i, { opponent: e.target.value })} />
             </Group>
             <Group grow>
-              <TextInput label="Date" type="date" required value={f.date} onChange={e => update(i, { date: e.target.value })} />
-              <TextInput label="Kick-off" type="time" value={f.time} onChange={e => update(i, { time: e.target.value })} />
+              <TextInput label="Date" type="date" required value={f.date} error={errors[i].date} onChange={e => update(i, { date: e.target.value })} />
+              <TextInput label="Kick-off" type="time" value={f.time} error={errors[i].time} onChange={e => update(i, { time: e.target.value })} />
               <Select
                 label="Home or away"
                 data={[{ value: 'home', label: 'Home' }, { value: 'away', label: 'Away' }]}
@@ -72,8 +75,8 @@ export function FixturesForm({ fixtures, teamNames, onChange }: Props) {
               <TextInput label="Venue" value={f.venue} onChange={e => update(i, { venue: e.target.value })} />
             </Group>
             <Group grow>
-              <TextInput label="Home score" type="number" inputMode="numeric" min={0} max={99} step={1} value={f.homeScore ?? ''} onChange={e => update(i, { homeScore: toScore(e.target.value) })} />
-              <TextInput label="Away score" type="number" inputMode="numeric" min={0} max={99} step={1} value={f.awayScore ?? ''} onChange={e => update(i, { awayScore: toScore(e.target.value) })} />
+              <TextInput label="Home score" type="number" inputMode="numeric" min={0} max={99} step={1} value={f.homeScore === null || Number.isNaN(f.homeScore) ? '' : f.homeScore} error={errors[i].homeScore} onChange={e => update(i, { homeScore: toScore(e.target.value) })} />
+              <TextInput label="Away score" type="number" inputMode="numeric" min={0} max={99} step={1} value={f.awayScore === null || Number.isNaN(f.awayScore) ? '' : f.awayScore} error={errors[i].awayScore} onChange={e => update(i, { awayScore: toScore(e.target.value) })} />
             </Group>
           </Stack>
         </Paper>

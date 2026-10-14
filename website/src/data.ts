@@ -339,7 +339,11 @@ export const loadAllData = async (clubSlug: string, multiClub = false): Promise<
     loadFeeds(club, teams),
     loadManualFixturesFromApi(clubSlug),
   ]);
-  const feeds = { ...loadedFeeds, clubFeed: mergeManualFixtures(loadedFeeds.clubFeed, manualFixtures, club.name) };
+  const feeds = {
+    ...loadedFeeds,
+    rawClubFeed: loadedFeeds.clubFeed,
+    clubFeed: mergeManualFixtures(loadedFeeds.clubFeed, manualFixtures, club.name),
+  };
 
   visibility = {
     '/about': (club.about?.length ?? 0) > 0 || (club.history?.length ?? 0) > 0,

@@ -53,7 +53,7 @@ describe('/api/fixtures (manual fixtures, #78)', () => {
   });
 
   it('inserts in chunks that stay under the 100 bound-parameter cap', async () => {
-    const items = Array.from({ length: 50 }, (_, i) => game({ date: `2026-12-${String((i % 28) + 1).padStart(2, '0')}`, opponent: `Opp ${i}` }));
+    const items = Array.from({ length: 50 }, (_, i) => game({ team: `Team ${i}`, opponent: `Opp ${i}` }));
     const spy = vi.spyOn(db, 'prepare');
     await post({ items });
     expect((await get()).length).toBe(50);
@@ -74,7 +74,13 @@ describe('/api/fixtures (manual fixtures, #78)', () => {
     expect((await post({ items: 'nope' })).status).toBe(400);
     expect((await post({ items: [game({ date: '7/11/2026' })] })).status).toBe(400);
     expect((await post({ items: Array.from({ length: MAX_MANUAL_FIXTURES + 1 }, () => game()) })).status).toBe(400);
+    expect((await post({ items: [game(), game({ team: 'u12 reds', opponent: 'Other' })] })).status).toBe(400);
     expect(await get()).toHaveLength(1);
+  });
+
+  it('names the duplicate in the error', async () => {
+    const res = await post({ items: [game(), game({ opponent: 'Other' })] });
+    expect((await res.json() as any).error).toMatch(/items\[1\] duplicates/);
   });
 });
 
@@ -86,6 +92,9 @@ describe('validateManualFixture', () => {
 
   it.each([
     [{ ...game(), team: '' }, /team/],
+    [{ ...game(), opponent: ' u12 REDS ' }, /same as team/],
+    [{ ...game(), date: '2026-02-30' }, /date/],
+    [{ ...game(), date: '2026-13-01' }, /date/],
     [{ ...game(), opponent: '' }, /opponent/],
     [{ ...game(), time: '25:00' }, /time/],
     [{ ...game(), homeAway: 'neutral' }, /homeAway/],
