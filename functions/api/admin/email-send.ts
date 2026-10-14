@@ -6,6 +6,7 @@ import {
   getClubSlug,
 } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
+import { getClubIdentity } from "../../lib/club-identity";
 import {
   parseEmailPurpose,
   parseSendAudience,
@@ -122,6 +123,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const fromName = typeof body.fromName === "string" ? body.fromName : undefined;
   const replyTo = typeof body.replyTo === "string" ? body.replyTo : undefined;
 
+  const identity = await getClubIdentity(context.env.DB, clubSlug);
   const result = await sendClubEmail(context.env, context.env.DB, {
     clubSlug,
     purpose,
@@ -132,6 +134,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     fromName,
     replyTo,
     initiatedBy: adminId,
+    clubName: identity?.name ?? "Your club",
+    origin: new URL(context.request.url).origin,
   });
 
   // Off the response path: a PostHog failure must not turn a completed send

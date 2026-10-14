@@ -155,6 +155,7 @@ async function sendAccountEmail(
       subject: message.subject,
       html: message.html,
       text: message.text,
+      footer: { kind: "transactional", clubName },
       fromName: clubName,
       ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
     });

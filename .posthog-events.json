@@ -8,7 +8,7 @@
   },
   {
     "event": "activation link resent",
-    "description": "A parent asks for a fresh activation link from an expired or spent link, and one was sent. No properties \u2014 no FAN, no email, no contact id.",
+    "description": "A parent asks for a fresh activation link from an expired or spent link, and one was sent. No properties — no FAN, no email, no contact id.",
     "files": [
       "functions/api/consent/resend.ts"
     ]
@@ -92,11 +92,25 @@
     ]
   },
   {
+    "event": "contact delivery feedback applied",
+    "description": "A signed Resend webhook marks a contact bounced (hard bounce) or withdrawn (spam complaint). Properties: club_slug and kind (bounce | complaint) only — no contact id, message id or address.",
+    "files": [
+      "functions/api/webhooks/resend.ts"
+    ]
+  },
+  {
     "event": "contact email purged",
-    "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only \u2014 never the address.",
+    "description": "An admin or parent hard-deletes a player_contact email; a salted hash is suppressed so FA import cannot silently re-add it. Counts and contact ids only — never the address.",
     "files": [
       "functions/api/admin/contact-purge.ts",
       "functions/api/me/contact-purge.ts"
+    ]
+  },
+  {
+    "event": "contact unsubscribed",
+    "description": "A parent withdraws from club mail via the unsubscribe link or a mail client's one-click (RFC 8058) control. Properties: club_slug, scope (marketing | all | purge), source (link | one_click) and the purpose of the mail it came from. No contact id, FAN, token or address.",
+    "files": [
+      "functions/api/unsubscribe.ts"
     ]
   },
   {
@@ -207,7 +221,7 @@
   },
   {
     "event": "merge suggestion dismissed",
-    "description": "An admin rules that two of one player's registrations sharing an age group are genuinely separate subs, so the merge suggestion stops being raised \u2014 or restores one they dismissed before, which carries `restored: true`. Counts only \u2014 no FAN numbers and no team names.",
+    "description": "An admin rules that two of one player's registrations sharing an age group are genuinely separate subs, so the merge suggestion stops being raised — or restores one they dismissed before, which carries `restored: true`. Counts only — no FAN numbers and no team names.",
     "files": [
       "functions/api/admin/registration-merge-suggestions.ts"
     ]
@@ -249,7 +263,7 @@
   },
   {
     "event": "password reset failed",
-    "description": "A reset submission was rejected \u2014 usually an expired, already-used or malformed token.",
+    "description": "A reset submission was rejected — usually an expired, already-used or malformed token.",
     "files": [
       "website/src/pages/ResetPasswordPage.tsx"
     ]
@@ -305,7 +319,7 @@
   },
   {
     "event": "payment page viewed",
-    "description": "A player lands on the public payment setup page \u2014 the top of the subscription payment funnel.",
+    "description": "A player lands on the public payment setup page — the top of the subscription payment funnel.",
     "files": [
       "functions/[clubSlug]/payments/[paymentType]/[fanId].ts"
     ]
@@ -326,7 +340,7 @@
   },
   {
     "event": "player payment manually marked paid",
-    "description": "An admin records a registration as paid outside Direct Debit \u2014 cash, bank transfer or a sponsored place.",
+    "description": "An admin records a registration as paid outside Direct Debit — cash, bank transfer or a sponsored place.",
     "files": [
       "functions/api/admin/manual-payment.ts"
     ]
@@ -340,7 +354,7 @@
   },
   {
     "event": "players import previewed",
-    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind \u2014 no writes happen. Counts only; no FAN numbers.",
+    "description": "An admin uploads a player file and the dry run reports what it would create, update and leave behind — no writes happen. Counts only; no FAN numbers.",
     "files": [
       "functions/api/admin/import-players.ts"
     ]
@@ -375,7 +389,7 @@
   },
   {
     "event": "registrations merged",
-    "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only \u2014 no FAN numbers.",
+    "description": "An admin merges several of one player's registrations into a single billing group, so one payment covers them all. Counts only — no FAN numbers.",
     "files": [
       "functions/api/admin/registration-merges.ts",
       "website/src/pages/registrations/ClubRegistrationsTab.tsx"
@@ -383,14 +397,14 @@
   },
   {
     "event": "registrations read",
-    "description": "A registrations read that was slow or touched a lot of rows, with how long it took, how many rows D1 read and how many it returned. One event across every registrations read \u2014 the `endpoint` property says which one (registrations_page, registrations_summary, registrations_facets, player_registrations_search, my_registrations). Sampled deliberately, not sent on every load: these endpoints are the ones suspected of being killed by a resource limit, so making healthy requests pay for a capture would push them closer to it. Durations and counts only \u2014 no FAN numbers, no emails, no team names.",
+    "description": "A registrations read that was slow or touched a lot of rows, with how long it took, how many rows D1 read and how many it returned. One event across every registrations read — the `endpoint` property says which one (registrations_page, registrations_summary, registrations_facets, player_registrations_search, my_registrations). Sampled deliberately, not sent on every load: these endpoints are the ones suspected of being killed by a resource limit, so making healthy requests pay for a capture would push them closer to it. Durations and counts only — no FAN numbers, no emails, no team names.",
     "files": [
       "functions/lib/read-cost.ts"
     ]
   },
   {
     "event": "registrations unmerged",
-    "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only \u2014 no FAN numbers.",
+    "description": "An admin dissolves a billing group, so each registration is billed on its own again. Counts only — no FAN numbers.",
     "files": [
       "functions/api/admin/registration-merges.ts",
       "website/src/pages/registrations/ClubRegistrationsTab.tsx"
@@ -412,7 +426,7 @@
   },
   {
     "event": "status report generated",
-    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only \u2014 no names, dates of birth or FAN numbers leave the page.",
+    "description": "An admin downloads the status report joining an FA Club Player Report against club registrations in the browser. Counts only — no names, dates of birth or FAN numbers leave the page.",
     "files": [
       "website/src/pages/registrations/StatusReportPanel.tsx"
     ]
@@ -484,7 +498,7 @@
   },
   {
     "event": "unactivated contacts lapsed",
-    "description": "Pending contacts that never activated were deleted after the 30-day retention period. A count only \u2014 no FAN numbers and no addresses.",
+    "description": "Pending contacts that never activated were deleted after the 30-day retention period. A count only — no FAN numbers and no addresses.",
     "files": [
       "functions/api/admin/activation-mail.ts"
     ]

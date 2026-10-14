@@ -80,10 +80,11 @@ async function deliver(
   kind: ActivationKind,
 ): Promise<boolean> {
   const clubName = identity?.name ?? "Your club";
+  const links = linksFor(ctx, clubSlug, token);
   const message = activationMessage(
     clubName,
     { fanId: candidate.fanId, teamName: candidate.teamName },
-    linksFor(ctx, clubSlug, token),
+    links,
     kind === "reminder",
   );
   try {
@@ -92,6 +93,9 @@ async function deliver(
       subject: message.subject,
       html: message.html,
       text: message.text,
+      // A pending contact has no mail to unsubscribe from yet; the
+      // activation page is where they choose what (if anything) to receive.
+      footer: { kind: "transactional", clubName, preferencesUrl: links.activate },
       fromName: clubName,
       ...(identity?.replyTo ? { replyTo: identity.replyTo } : {}),
     });

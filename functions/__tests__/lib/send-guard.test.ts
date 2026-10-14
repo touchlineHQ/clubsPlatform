@@ -262,6 +262,8 @@ describe('send guard eligibility (#133)', () => {
       html: '<p>Shop</p>',
       text: 'Shop',
       initiatedBy: 'admin_1',
+      clubName: 'Test FC',
+      origin: 'https://club.example',
       mailer,
     });
 
@@ -317,6 +319,8 @@ describe('send guard eligibility (#133)', () => {
       subject: 'Training moved',
       html: '<p>Moved</p>',
       text: 'Moved',
+      clubName: 'Test FC',
+      origin: 'https://club.example',
       mailer: null,
     });
 

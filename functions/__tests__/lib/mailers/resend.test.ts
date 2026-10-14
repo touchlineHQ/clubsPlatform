@@ -24,6 +24,7 @@ describe('createResendMailer', () => {
       subject: 'Hi',
       html: '<p>Hi</p>',
       text: 'Hi',
+      headers: { 'List-Unsubscribe': '<https://x.example/u>' },
       fromName: 'Test FC',
     });
     expect(result.id).toBe('re_123');
@@ -33,5 +34,6 @@ describe('createResendMailer', () => {
     const body = JSON.parse(String(call[1].body));
     expect(body.to).toEqual(['parent@example.com']);
     expect(body.from).toContain('Test FC');
+    expect(body.headers).toEqual({ 'List-Unsubscribe': '<https://x.example/u>' });
   });
 });

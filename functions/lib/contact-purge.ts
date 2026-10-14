@@ -257,10 +257,13 @@ export async function purgePlayerContact(
     clubSlug,
     contactId,
     actor,
+    additionalStatements = [],
   }: {
     clubSlug: string;
     contactId: string;
     actor: ContactPurgeActor;
+    /** Extra writes that must commit atomically with this purge (e.g. #135 audit). */
+    additionalStatements?: D1PreparedStatement[];
   },
 ): Promise<ContactPurgeResult | null> {
   const contact = await db
@@ -272,7 +275,10 @@ export async function purgePlayerContact(
     .first<ContactRow>();
   if (!contact) return null;
 
-  await db.batch(await preparePurgeStatements(db, clubSlug, contact, actor));
+  await db.batch([
+    ...(await preparePurgeStatements(db, clubSlug, contact, actor)),
+    ...additionalStatements,
+  ]);
 
   return {
     contactId: contact.id,

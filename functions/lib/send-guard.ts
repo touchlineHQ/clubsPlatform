@@ -2,6 +2,8 @@ import type { D1Database } from "@cloudflare/workers-types";
 import { nowMs, randomId } from "./api-helpers";
 import { latestConsentRecord } from "./consent";
 import { getMailer, type MailEnv, type Mailer, type OutboundMessage } from "./email";
+import type { MailFooter } from "./mail-layout";
+import { mintUnsubscribeToken, unsubscribeUrl } from "./unsubscribe";
 
 /**
  * Structural email send guard.
@@ -458,6 +460,10 @@ export type SendClubEmailInput = {
   fromName?: string;
   replyTo?: string;
   initiatedBy?: string | null;
+  /** Sending club's display name — the footer names the club as sender (#128). */
+  clubName: string;
+  /** Absolute origin for the per-recipient unsubscribe link (#135). */
+  origin: string;
   /** Injected mailer for tests; production uses getMailer(env). */
   mailer?: Mailer | null;
 };
@@ -589,11 +595,24 @@ export async function sendClubEmail(
       continue;
     }
 
+    // One token per recipient per send; the URL carries no address or id.
+    const token = await mintUnsubscribeToken(db, {
+      clubSlug: input.clubSlug,
+      contactId: recipient.contactId,
+      purpose: input.purpose,
+      batchId,
+    });
+    const link = unsubscribeUrl(input.origin, token);
+    const footer: MailFooter = input.purpose === "transactional"
+      ? { kind: "transactional", clubName: input.clubName, preferencesUrl: link }
+      : { kind: input.purpose, clubName: input.clubName, unsubscribeUrl: link };
+
     const message: OutboundMessage = {
       to: recipient.email,
       subject: input.subject,
       html: input.html,
       text: input.text,
+      footer,
       fromName: input.fromName,
       replyTo: input.replyTo,
     };

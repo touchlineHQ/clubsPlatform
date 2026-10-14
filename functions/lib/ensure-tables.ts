@@ -128,6 +128,12 @@ export const TABLE_STATEMENTS = [
   // Contact email suppression (#134): salted hash only — never plaintext.
   `CREATE TABLE IF NOT EXISTS "contact_email_suppression" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "emailHash" TEXT NOT NULL, "salt" TEXT NOT NULL, "hashVersion" INTEGER NOT NULL DEFAULT 1, "createdAt" INTEGER NOT NULL, UNIQUE("clubSlug", "emailHash"))`,
   `CREATE INDEX IF NOT EXISTS "idx_contact_email_suppression_clubSlug" ON "contact_email_suppression" ("clubSlug")`,
+  // One-click unsubscribe (#135): hashed per-send tokens + withdrawal audit, no addresses.
+  `CREATE TABLE IF NOT EXISTS "unsubscribe_token" ("tokenHash" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "contactId" TEXT NOT NULL, "purpose" TEXT NOT NULL CHECK("purpose" IN ('transactional', 'operational', 'marketing')), "batchId" TEXT, "createdAt" INTEGER NOT NULL, "expiresAt" INTEGER NOT NULL, "usedAt" INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS "idx_unsubscribe_token_contact" ON "unsubscribe_token" ("clubSlug", "contactId")`,
+  `CREATE TABLE IF NOT EXISTS "contact_withdrawal" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "contactId" TEXT NOT NULL, "scope" TEXT NOT NULL CHECK("scope" IN ('marketing', 'all', 'purge', 'bounce')), "source" TEXT NOT NULL CHECK("source" IN ('link', 'one_click', 'complaint', 'bounce')), "purpose" TEXT, "batchId" TEXT, "createdAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_contact_withdrawal_club_createdAt" ON "contact_withdrawal" ("clubSlug", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "idx_email_send_event_providerMessageId" ON "email_send_event" ("providerMessageId")`,
 ];
 
 const PITCH_SEED_STATEMENTS = [

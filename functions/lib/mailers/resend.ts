@@ -1,7 +1,8 @@
 /**
  * Resend HTTP provider for outbound mail.
  *
- * Provider-specific: do not import this from route handlers. Use getMailer()
+ * Provider-specific: do not import this from route handlers. It returns a raw
+ * provider without the footer layout; only getMailer() may wrap and expose it. Use getMailer()
  * from ../email, which returns null when Resend is not configured.
  */
 
@@ -10,7 +11,7 @@ import {
   sanitizeAddress,
   sanitizeSubject,
 } from "../email-format";
-import type { Mailer, OutboundMessage } from "../email";
+import type { MailProvider, ProviderMessage } from "../email";
 
 export interface ResendMailEnv {
   RESEND_API_KEY?: string;
@@ -26,7 +27,7 @@ const RESEND_ENDPOINT = "https://api.resend.com/emails";
 export function createResendMailer(
   env: ResendMailEnv,
   deps?: { fetch?: typeof fetch },
-): Mailer | null {
+): MailProvider | null {
   const apiKey = env.RESEND_API_KEY;
   const fromEmail = env.FROM_EMAIL;
   if (!apiKey || !fromEmail) return null;
@@ -34,7 +35,7 @@ export function createResendMailer(
   const doFetch = deps?.fetch ?? fetch;
 
   return {
-    async send(message: OutboundMessage): Promise<{ id?: string }> {
+    async send(message: ProviderMessage): Promise<{ id?: string }> {
       const to = sanitizeAddress(message.to);
       if (!to.includes("@")) throw new Error("Refusing to send to an invalid address");
 
@@ -53,6 +54,7 @@ export function createResendMailer(
           subject: sanitizeSubject(message.subject),
           html: message.html,
           text: message.text,
+          ...(Object.keys(message.headers).length > 0 ? { headers: message.headers } : {}),
           ...(replyTo.includes("@") ? { reply_to: replyTo } : {}),
         }),
       });
