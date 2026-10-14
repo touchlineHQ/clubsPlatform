@@ -162,6 +162,20 @@ export interface ClubFeed {
   results: LiveResult[];
 }
 
+/** A fixture or result the club recorded itself (#78). Scores null = not played. */
+export interface ManualFixture {
+  id?: string;
+  team: string;
+  date: string;
+  time: string;
+  homeAway: 'home' | 'away';
+  opponent: string;
+  venue: string;
+  competition: string;
+  homeScore: number | null;
+  awayScore: number | null;
+}
+
 export interface LiveTeam {
   name: string;
   slug: string;
@@ -176,7 +190,11 @@ export interface AppData {
   news: NewsItem[];
   gallery: GalleryItem[];
   matchday: MatchdayItem[];
+  /** Feed merged with manual entries (feed wins on conflict). */
   clubFeed: ClubFeed | null;
+  /** The feed as loaded, before manual entries are merged in. */
+  rawClubFeed: ClubFeed | null;
+  manualFixtures: ManualFixture[];
   liveTeams: LiveTeam[];
   sidebarFeeds: { feed: TeamFeed; label: string; sectionId: string }[];
   visibility: VisibleItems;

@@ -1,4 +1,6 @@
-import type { AppData, Club, ClubEntry, ClubFeed, CommitteeData, GalleryItem, LiveTeam, MatchdayItem, NewsItem, RegistrationItem, VisibleItems, TeamFeed, TeamsData } from './types';
+import type { AppData, Club, ClubEntry, ClubFeed, CommitteeData, GalleryItem, LiveTeam, ManualFixture, MatchdayItem, NewsItem, RegistrationItem, VisibleItems, TeamFeed, TeamsData } from './types';
+
+import { mergeManualFixtures } from './utils/manualFixtures';
 
 const CLUBS_BASE = '/data/clubs/';
 const FEEDS_BASE = 'https://fixtures.touchlinehq.co.uk/feeds/';
@@ -166,6 +168,15 @@ async function loadMatchdayFromApi(clubSlug: string): Promise<MatchdayItem[]> {
   } catch { return []; }
 }
 
+export async function loadManualFixturesFromApi(clubSlug: string): Promise<ManualFixture[]> {
+  try {
+    const res = await fetch('/api/fixtures', { headers: clubHeaders(clubSlug) });
+    if (!res.ok) return [];
+    const data = await res.json() as { items?: ManualFixture[] };
+    return data.items ?? [];
+  } catch { return []; }
+}
+
 async function loadNewsFromApi(clubSlug: string): Promise<NewsItem[] | null> {
   try {
     const res = await fetch('/api/news', { headers: clubHeaders(clubSlug) });
@@ -324,13 +335,21 @@ export const loadAllData = async (clubSlug: string, multiClub = false): Promise<
     matchday = match;
   }
 
-  const feeds = await loadFeeds(club, teams);
+  const [loadedFeeds, manualFixtures] = await Promise.all([
+    loadFeeds(club, teams),
+    loadManualFixturesFromApi(clubSlug),
+  ]);
+  const feeds = {
+    ...loadedFeeds,
+    rawClubFeed: loadedFeeds.clubFeed,
+    clubFeed: mergeManualFixtures(loadedFeeds.clubFeed, manualFixtures, club.name),
+  };
 
   visibility = {
     '/about': (club.about?.length ?? 0) > 0 || (club.history?.length ?? 0) > 0,
     '/contact': !!club.email || Object.values(club.address).some(value => !!value),
     '/teams': teams.sections.length > 0 || feeds.liveTeams.length > 0,
-    '/fixtures': teams.sections.length > 0 || feeds.liveTeams.length > 0,
+    '/fixtures': teams.sections.length > 0 || feeds.liveTeams.length > 0 || manualFixtures.length > 0,
     '/register': registration.length > 0,
     '/committee': (committee.committee?.length ?? 0) > 0,
     '/news': news.length > 0,
@@ -338,5 +357,5 @@ export const loadAllData = async (clubSlug: string, multiClub = false): Promise<
     '/matchday': matchday.length > 0,
   }
 
-  return { club, teams, committee, registration, news, gallery, matchday, visibility, ...feeds } as AppData;
+  return { club, teams, committee, registration, news, gallery, matchday, visibility, manualFixtures, ...feeds } as AppData;
 }

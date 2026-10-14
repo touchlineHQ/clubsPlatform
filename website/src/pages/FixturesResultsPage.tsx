@@ -3,12 +3,13 @@ import {
   Text, Stack, Paper, Badge, Group, Select, Tabs, Box,
   Table, Alert,
 } from '@mantine/core';
-import { IconCalendar, IconTrophy, IconAlertCircle } from '@tabler/icons-react';
+import { IconCalendar, IconTrophy, IconAlertCircle, IconListNumbers } from '@tabler/icons-react';
 import type { ClubFeed, LiveResult, LiveFixture, TeamsData, LiveTeam } from '../types';
 import { useSection } from '../context/SectionContext';
 import { findDuplicateTeamNames, teamDisplayLabel, liveTeamsForSection } from '../utils/teamMatching';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { buildCompetitionTables } from '../utils/manualFixtures';
 
 const FORM_GAMES = 5;
 
@@ -70,6 +71,8 @@ interface Props {
   feed: ClubFeed | null;
   teams: TeamsData;
   liveTeams: LiveTeam[];
+  /** True when every entry was recorded by the club, with no FA feed behind it. */
+  manualOnly?: boolean;
 }
 
 
@@ -78,9 +81,10 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
+export function FixturesResultsPage({ feed, teams, liveTeams, manualOnly = false }: Props) {
   const { activeSection } = useSection();
   const [selectedTeam, setSelectedTeam] = useState<string | null>(null);
+  const [tab, setTab] = useState<string>('fixtures');
 
   // Use composite key (team + league) so same-named Saturday/Sunday teams stay separate
   const fixtureKey = (f: LiveFixture | LiveResult) => `${f.team}\0${f.league}`;
@@ -92,7 +96,9 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     if (!section) return null;
 
     const matched = liveTeamsForSection(section, liveTeams);
-    return new Set(matched.map(lt => lt.name));
+    // Also allow the section's own team names, so manually recorded games
+    // (which have no live feed team) are not hidden by the section filter.
+    return new Set([...matched.map(lt => lt.name), ...section.teams.map(t => t.name)]);
   }, [activeSection, teams, liveTeams]);
 
   const duplicateNames = useMemo(() => findDuplicateTeamNames(liveTeams), [liveTeams]);
@@ -162,6 +168,10 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     return results.slice(0, FORM_GAMES).map(getOutcome).filter((o): o is 'W' | 'D' | 'L' => o !== null);
   }, [results]);
 
+  // Tables only make sense for one team, one competition at a time: mixing
+  // every club team, friendlies and cups would give a meaningless table.
+  const tables = useMemo(() => (effectiveTeam ? buildCompetitionTables(results) : []), [effectiveTeam, results]);
+
   if (!feed) {
     return (
       <Stack gap="md">
@@ -181,7 +191,7 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
     <Stack gap="lg">
       <PageHeader
         title="Fixtures &amp; Results"
-        subtitle={
+        subtitle={manualOnly ? 'Fixtures and results recorded by the club.' : (
           <>
             Data sourced from FA Full-Time via{' '}
             <Text component="a" href="https://github.com/touchlineHQ/fulltimeFeeds" c="var(--mantine-primary-color-filled)" size="sm" fw={600} style={{ textDecoration: 'none' }}>
@@ -189,7 +199,7 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
             </Text>
             . Last updated: {lastUpdated}.
           </>
-        }
+        )}
         below={
           recentForm.length > 0 ? (
             <Group justify="space-between" px="xl" py="sm" wrap="wrap" gap="xs">
@@ -214,13 +224,16 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
         radius="md"
       />
 
-      <Tabs defaultValue="fixtures" variant="default">
+      <Tabs value={tab} onChange={(v) => setTab(v ?? 'fixtures')} variant="default">
         <Tabs.List>
           <Tabs.Tab value="fixtures" leftSection={<IconCalendar size={14} />}>
             Fixtures ({fixtures.length})
           </Tabs.Tab>
           <Tabs.Tab value="results" leftSection={<IconTrophy size={14} />}>
             Results ({results.length})
+          </Tabs.Tab>
+          <Tabs.Tab value="table" leftSection={<IconListNumbers size={14} />}>
+            Table
           </Tabs.Tab>
         </Tabs.List>
 
@@ -341,6 +354,55 @@ export function FixturesResultsPage({ feed, teams, liveTeams }: Props) {
                   </Table.Tbody>
                 </Table>
               </Paper>
+            </Stack>
+          )}
+        </Tabs.Panel>
+
+        <Tabs.Panel value="table" pt="md">
+          {tab !== 'table' ? null : !effectiveTeam ? (
+            <Text c="dimmed" size="sm">Choose a team above to see its table.</Text>
+          ) : tables.length === 0 ? (
+            <Text c="dimmed" size="sm">No scored results yet.</Text>
+          ) : (
+            <Stack gap="md">
+              <Text size="xs" c="dimmed">Built from this team&apos;s results shown here, one table per competition: 3 points for a win, 1 for a draw.</Text>
+              {tables.map(({ competition, rows }) => (
+                <Stack gap={4} key={competition}>
+                  <Text size="sm" fw={700}>{competition}</Text>
+                  <Paper withBorder radius="md" style={{ overflow: 'hidden' }}>
+                    <Table striped aria-label={`${competition} table`}>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Team</Table.Th>
+                          <Table.Th ta="center">P</Table.Th>
+                          <Table.Th ta="center">W</Table.Th>
+                          <Table.Th ta="center">D</Table.Th>
+                          <Table.Th ta="center">L</Table.Th>
+                          <Table.Th ta="center" visibleFrom="sm">GF</Table.Th>
+                          <Table.Th ta="center" visibleFrom="sm">GA</Table.Th>
+                          <Table.Th ta="center">GD</Table.Th>
+                          <Table.Th ta="center">Pts</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {rows.map((row) => (
+                          <Table.Tr key={`${row.team}\0${row.league}`}>
+                            <Table.Td><Text size="sm" fw={600}>{row.team}</Text></Table.Td>
+                            <Table.Td ta="center">{row.played}</Table.Td>
+                            <Table.Td ta="center">{row.won}</Table.Td>
+                            <Table.Td ta="center">{row.drawn}</Table.Td>
+                            <Table.Td ta="center">{row.lost}</Table.Td>
+                            <Table.Td ta="center" visibleFrom="sm">{row.goalsFor}</Table.Td>
+                            <Table.Td ta="center" visibleFrom="sm">{row.goalsAgainst}</Table.Td>
+                            <Table.Td ta="center">{row.goalDifference}</Table.Td>
+                            <Table.Td ta="center"><Text size="sm" fw={800}>{row.points}</Text></Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Paper>
+                </Stack>
+              ))}
             </Stack>
           )}
         </Tabs.Panel>

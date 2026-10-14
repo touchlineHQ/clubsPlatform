@@ -4,6 +4,7 @@ import { IconDeviceFloppy, IconCheck, IconX } from '@tabler/icons-react';
 import type { AppData, Club } from '../../types';
 import { useClub } from '../../context/ClubContext';
 import { captureError, captureEvent } from '../../lib/posthog';
+import { hasManualFixtureErrors } from '../../utils/manualFixtures';
 
 interface Props {
   data: AppData;
@@ -25,7 +26,11 @@ export function SaveButton({ data, onSaved }: Props) {
     }
   };
 
+  // Refuse to start rather than let /api/fixtures 400 after the other writes land.
+  const fixturesInvalid = hasManualFixtureErrors(data.manualFixtures ?? []);
+
   const handleSave = async () => {
+    if (fixturesInvalid) return;
     setSaving(true);
     setResult(null);
     try {
@@ -37,6 +42,7 @@ export function SaveButton({ data, onSaved }: Props) {
         req('POST', '/api/registration', { items: data.registration }),
         req('POST', '/api/gallery', { items: data.gallery }),
         req('POST', '/api/matchday', { items: data.matchday }),
+        req('POST', '/api/fixtures', { items: data.manualFixtures ?? [] }),
       ]);
       captureEvent('customisation saved', { club_slug: clubSlug });
       setResult('success');
@@ -58,10 +64,14 @@ export function SaveButton({ data, onSaved }: Props) {
         leftSection={<IconDeviceFloppy size={16} />}
         onClick={handleSave}
         loading={saving}
+        disabled={fixturesInvalid}
         color={result === 'success' ? 'green' : result === 'error' ? 'red' : undefined}
       >
         {result === 'success' ? 'Saved!' : result === 'error' ? 'Error' : 'Save to Site'}
       </Button>
+      {fixturesInvalid && (
+        <Text size="xs" c="red">Fix the highlighted games on the Fixtures tab before saving.</Text>
+      )}
       {result === 'success' && (
         <Group gap={4}>
           <IconCheck size={14} color="green" />
@@ -72,7 +82,7 @@ export function SaveButton({ data, onSaved }: Props) {
         <Group gap={4}>
           <IconX size={14} color="red" />
           {/* Deliberately does not promise the save was a no-op. handleSave
-              issues seven independent writes through Promise.all, which
+              issues eight independent writes through Promise.all, which
               rejects on the first failure while the others stay in flight —
               so a failure can leave some sections saved and others not.
               Telling the user nothing was lost would send them away from a

@@ -137,3 +137,72 @@ describe('FixturesResultsPage', () => {
     expect(screen.getAllByRole('heading').length).toBeGreaterThan(0);
   });
 });
+
+describe('FixturesResultsPage league table (#78)', () => {
+  const res = (id: string, division: string, hs: number, as: number) => ({
+    id, date: '2026-01-0' + id, time: '10:00', home_team: 'Reds', away_team: 'Blues ' + division, venue: '', division,
+    league: '', team: 'Reds', home_away: 'home' as const, opponent: 'Blues ' + division,
+    home_score: hs, away_score: as, goals_for: hs, goals_against: as,
+  });
+  const feed: ClubFeed = {
+    club: 'test-club', generated: '2026-01-01T00:00:00Z', fixtures: [],
+    results: [res('1', 'Friendly', 2, 0), res('2', 'County Cup', 1, 1)],
+  };
+
+  it('asks for a team first and labels manual-only data', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithMantine(
+      <FixturesResultsPage feed={feed} teams={teams} liveTeams={liveTeams} manualOnly />,
+      { clubValue: mockSingleClub },
+    );
+    expect(screen.getByText(/recorded by the club/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
+    expect(await screen.findByText(/Choose a team above/)).toBeTruthy();
+  });
+
+  it('shows one table per competition for the selected team', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    renderWithMantine(
+      <FixturesResultsPage feed={feed} teams={teams} liveTeams={liveTeams} />,
+      { clubValue: mockSingleClub },
+    );
+    fireEvent.click(screen.getByRole('combobox', { name: /Filter by team/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Reds' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
+    const friendly = await screen.findByRole('table', { name: 'Friendly table' });
+    const cup = screen.getByRole('table', { name: 'County Cup table' });
+    expect(friendly.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(friendly.querySelector('tbody tr')!.textContent).toContain('Reds');
+    expect(cup.querySelectorAll('tbody tr')).toHaveLength(2);
+  });
+
+  it('shows an empty-table message when the team has no scored results', async () => {
+    const { fireEvent } = await import('@testing-library/react');
+    const unscored: ClubFeed = { ...feed, results: [{ ...res('1', 'Friendly', 0, 0), home_score: null, away_score: null }] };
+    renderWithMantine(
+      <FixturesResultsPage feed={unscored} teams={teams} liveTeams={liveTeams} />,
+      { clubValue: mockSingleClub },
+    );
+    fireEvent.click(screen.getByRole('combobox', { name: /Filter by team/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Reds' }));
+    fireEvent.click(screen.getByRole('tab', { name: /Table/i }));
+    expect(await screen.findByText('No scored results yet.')).toBeTruthy();
+  });
+});
+
+describe('FixturesResultsPage section filter with manual games (#78)', () => {
+  it('keeps games for a section team that has no live feed team', () => {
+    const feed: ClubFeed = {
+      club: 'test-club', generated: '2026-01-01T00:00:00Z', results: [],
+      fixtures: [{
+        id: 'm1', date: '2099-01-01', time: '10:00', home_team: 'First XI', away_team: 'Rivals', venue: 'Home Park',
+        division: 'Friendly', league: '', team: 'First XI', home_away: 'home', opponent: 'Rivals',
+      }],
+    };
+    renderWithMantine(
+      <FixturesResultsPage feed={feed} teams={teams} liveTeams={[]} manualOnly />,
+      { clubValue: mockSingleClub, sectionValue: { ...mockSection, activeSection: 'seniors' } },
+    );
+    expect(screen.getByRole('tab', { name: /Fixtures \(1\)/ })).toBeTruthy();
+  });
+});

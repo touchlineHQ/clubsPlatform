@@ -41,6 +41,8 @@ const appData: AppData = {
   gallery: [],
   matchday: [],
   clubFeed: null,
+  manualFixtures: [],
+  rawClubFeed: null,
   liveTeams: [],
   sidebarFeeds: [],
   visibility: {},
@@ -150,5 +152,22 @@ describe('SaveButton', () => {
     await waitFor(() =>
       expect(captureEvent).toHaveBeenCalledWith('customisation save failed', expect.any(Object)));
     expect(captureEvent).not.toHaveBeenCalledWith('customisation saved', expect.anything());
+  });
+});
+
+describe('SaveButton with invalid manual fixtures (#78)', () => {
+  it('blocks the save and says why', () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const bad: AppData = {
+      ...appData,
+      manualFixtures: [{ team: 'Reds', date: '', time: '', homeAway: 'home', opponent: 'Blues', venue: '', competition: '', homeScore: null, awayScore: null }],
+    };
+    renderWithMantine(<SaveButton data={bad} />, { clubValue: mockSingleClub });
+    const button = screen.getByRole('button', { name: /Save to Site/i });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(button);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(screen.getByText(/Fix the highlighted games/)).toBeTruthy();
   });
 });

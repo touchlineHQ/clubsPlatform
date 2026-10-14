@@ -101,6 +101,8 @@ const appData: AppData = {
   gallery: [],
   matchday: [],
   clubFeed: null,
+  manualFixtures: [],
+  rawClubFeed: null,
   liveTeams: [],
   sidebarFeeds: [],
   visibility: {},
