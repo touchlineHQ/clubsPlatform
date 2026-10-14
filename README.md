@@ -304,7 +304,7 @@ npx wrangler pages secret put RESEND_WEBHOOK_SECRET --project-name clubsplatform
 npx wrangler pages secret put RESEND_WEBHOOK_SECRET --project-name clubsplatform --env preview
 ```
 
-Without it the webhook answers 503 and bounces are not recorded.
+Without it the webhook is a safe no-op (answers 404, processes nothing) and bounces are not recorded.
 
 **Email verification is recorded but not enforced.** `requireEmailVerification`
 is deliberately off: every account that exists today has `emailVerified = 0`,

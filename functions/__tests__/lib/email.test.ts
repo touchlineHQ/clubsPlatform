@@ -24,4 +24,13 @@ describe('getMailer', () => {
     expect(getMailer({ FROM_EMAIL: 'a@b.c' })).toBeNull();
     expect(getMailer({ RESEND_API_KEY: 'k', FROM_EMAIL: 'a@b.c' })).not.toBeNull();
   });
+
+  it('makes no network call when Resend is unconfigured', () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    for (const env of [{}, { RESEND_API_KEY: '' , FROM_EMAIL: 'a@b.c' }, { RESEND_API_KEY: 'k', FROM_EMAIL: '' }]) {
+      expect(getMailer(env, { fetch: fetchSpy as any })).toBeNull();
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });

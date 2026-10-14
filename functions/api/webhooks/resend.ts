@@ -27,7 +27,9 @@ type ResendEvent = {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   const secret = context.env.RESEND_WEBHOOK_SECRET;
-  if (!secret) return json({ error: "webhook not configured" }, { status: 503 });
+  // Unconfigured (no signing secret): a safe no-op. 404 so nothing is read,
+  // verified or processed, and the endpoint looks absent rather than broken.
+  if (!secret) return json({ error: "not found" }, { status: 404 });
 
   const body = await context.request.text();
   if (!(await verifySvixSignature(secret, context.request.headers, body))) {
