@@ -271,7 +271,7 @@ describe('Resend webhook: bounces and complaints', () => {
   it('rejects unsigned, stale or unconfigured requests', async () => {
     seedSent();
     const body = { type: 'email.bounced', data: { email_id: 'em_1' } };
-    expect((await call(await signed(body), {})).status).toBe(404);
+    expect((await call(await signed(body), {})).status).toBe(200);
     const bad = await signed(body);
     bad.headers.set('svix-signature', 'v1,AAAA');
     expect((await call(bad)).status).toBe(401);
@@ -284,7 +284,7 @@ describe('Resend webhook: bounces and complaints', () => {
     const body = { type: 'email.bounced', data: { email_id: 'em_1', bounce: { type: 'Permanent' } } };
     for (const env of [{}, { RESEND_WEBHOOK_SECRET: '' }]) {
       const res = await call(await signed(body), env);
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(200);
     }
     expect(contact()!.state).toBe('confirmed');
     expect(withdrawals()).toHaveLength(0);
