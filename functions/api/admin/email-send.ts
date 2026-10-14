@@ -2,7 +2,7 @@ import { ensureTables } from "../../lib/ensure-tables";
 import {
   type Env,
   json,
-  requireAdmin,
+  requirePermission,
   getClubSlug,
 } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
@@ -46,7 +46,7 @@ function textAsHtml(text: string): string {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "members");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

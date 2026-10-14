@@ -1,5 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
-import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { permissionsFor } from "../../lib/permissions";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   deleteMemberData,
@@ -16,7 +17,7 @@ import { prepareAuditLog, writeAuditLog } from "../../lib/audit-log";
 /** Export one club member's data and record the admin access. */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -51,12 +52,28 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 /**
+ * A secretary manages members, not privileged accounts: only an admin may
+ * change or delete an account that holds committee permissions, or a manager
+ * (legacy privileged role with an empty permission set via requireManagerOrAdmin)
+ * (#79). Member management must not rewrite those identities.
+ */
+function mayManageTarget(callerRole: string, targetRole: string): boolean {
+  if (callerRole === "admin") return true;
+  if (targetRole === "manager") return false;
+  return permissionsFor(targetRole).length === 0;
+}
+
+function committeeTargetRefused(): Response {
+  return json({ error: "Only an admin can change a committee member's account" }, { status: 403 });
+}
+
+/**
  * Correct a member's account name and email within the requested club.
  * Values are audited without copying the corrected PII into the audit note.
  */
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -85,10 +102,11 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   }
 
   const user = await context.env.DB
-    .prepare(`SELECT id FROM "user" WHERE id = ? AND clubSlug = ?`)
+    .prepare(`SELECT id, role FROM "user" WHERE id = ? AND clubSlug = ?`)
     .bind(userId, clubSlug)
-    .first<{ id: string }>();
+    .first<{ id: string; role: string }>();
   if (!user) return json({ error: "Member not found in this club" }, { status: 404 });
+  if (!mayManageTarget(result.role, user.role)) return committeeTargetRefused();
 
   const duplicate = await context.env.DB
     .prepare(`SELECT id FROM "user" WHERE lower(email) = lower(?) AND id <> ?`)
@@ -97,18 +115,38 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   if (duplicate) return json({ error: "Email is already in use" }, { status: 409 });
 
   const adminId = (result.session.user as Record<string, unknown>).id as string;
-  const update = context.env.DB
-    .prepare(`UPDATE "user" SET name = ?, email = ?, updatedAt = ? WHERE id = ? AND clubSlug = ?`)
-    .bind(name, email, nowMs(), userId, clubSlug);
-  const audit = prepareAuditLog(context.env.DB, {
-    clubSlug,
-    adminId,
-    action: "member_data_corrected",
-    targetTable: "user",
-    targetId: userId,
-    note: "fields=name,email",
-  });
-  await context.env.DB.batch([update, audit]);
+  // Condition the write on the role just authorised, so a concurrent promotion
+  // cannot let a secretary rewrite a newly privileged account; audit only when
+  // that one row actually changed.
+  let writes: D1Result<unknown>[];
+  try {
+    writes = await context.env.DB.batch([
+      context.env.DB
+        .prepare(
+          `UPDATE "user" SET name = ?, email = ?, updatedAt = ?
+           WHERE id = ? AND clubSlug = ? AND role = ?`,
+        )
+        .bind(name, email, nowMs(), userId, clubSlug, user.role),
+      prepareAuditLog(context.env.DB, {
+        clubSlug,
+        adminId,
+        action: "member_data_corrected",
+        targetTable: "user",
+        targetId: userId,
+        note: "fields=name,email",
+      }, { sql: "changes() = 1", bindings: [], abortOnFalse: false }),
+    ]);
+  } catch (error) {
+    console.error("Member data correction failed", { userId, error });
+    return json({ error: "Failed to update member data" }, { status: 500 });
+  }
+
+  if ((writes[0]?.meta?.changes ?? 0) !== 1) {
+    return json(
+      { error: "That member's role changed while you were editing; reload and try again" },
+      { status: 409 },
+    );
+  }
 
   return json({ ok: true, user: { id: userId, name, email } });
 };
@@ -116,7 +154,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 /** Delete one member's direct PII, subject to last-admin and self-delete guards. */
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -128,6 +166,15 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const adminId = (result.session.user as Record<string, unknown>).id as string;
   if (adminId === userId) {
     return json({ error: "Admins cannot delete their own data via this path" }, { status: 400 });
+  }
+
+  if (result.role !== "admin") {
+    const target = await context.env.DB
+      .prepare(`SELECT role FROM "user" WHERE id = ? AND clubSlug = ?`)
+      .bind(userId, clubSlug)
+      .first<{ role: string }>();
+    if (!target) return json({ error: "Member not found in this club" }, { status: 404 });
+    if (!mayManageTarget(result.role, target.role)) return committeeTargetRefused();
   }
 
   try {

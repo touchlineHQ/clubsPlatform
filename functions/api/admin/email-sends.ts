@@ -2,7 +2,7 @@ import { ensureTables } from "../../lib/ensure-tables";
 import {
   type Env,
   json,
-  requireAdmin,
+  requirePermission,
   getClubSlug,
 } from "../../lib/api-helpers";
 import {
@@ -17,7 +17,7 @@ import {
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "members");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

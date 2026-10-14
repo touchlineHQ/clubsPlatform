@@ -1,4 +1,4 @@
-import { type Env, json, requireAdmin, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, randomId, nowMs } from "../../lib/api-helpers";
 import { ensureTables } from "../../lib/ensure-tables";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import { normaliseTeamName } from "../../lib/team-name";
@@ -222,7 +222,7 @@ const regKey = (fanId: string, teamName: string) =>
  * analytics failures outside the per-row handlers can still reject the request.
  */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "members");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

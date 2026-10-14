@@ -1,10 +1,10 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
+import { type Env, json, nowMs, requirePermission, getClubSlug } from "../lib/api-helpers";
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

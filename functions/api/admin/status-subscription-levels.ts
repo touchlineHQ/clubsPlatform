@@ -1,5 +1,5 @@
 import { ensureTables } from "../../lib/ensure-tables";
-import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface ClubRateRow {
@@ -29,7 +29,7 @@ interface AssignBody {
  */
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -90,7 +90,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
  */
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

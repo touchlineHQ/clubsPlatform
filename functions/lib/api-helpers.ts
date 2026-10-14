@@ -1,4 +1,5 @@
 import { createAuth } from "./auth";
+import { hasPermission, type Permission } from "./permissions";
 
 export interface Env {
   DB: D1Database;
@@ -93,10 +94,37 @@ export function getClubSlug(request: Request): string | null {
  * Verify the request has admin authentication and return the session.
  * Returns an error response for unauthenticated or non-admin users.
  * Always enforces that a club-bound admin's club matches the request club.
+ *
+ * Prefer requirePermission for new guards; requireAdmin is for the things that
+ * stay admin-only by design (role assignment, secrets, club lifecycle).
  */
 export async function requireAdmin(
   context: EventContext<Env, string, unknown>,
 ): Promise<Guard<{ session: Session }>> {
+  return guardClubStaff(context, (role) => role === "admin", "Admin access required");
+}
+
+/**
+ * Verify the signed-in user's role grants at least one of `needed` (#79).
+ * Same club-scope rule as requireAdmin: a club-bound user may only act on
+ * their own club; clubSlug = null is a platform superadmin.
+ */
+export async function requirePermission(
+  context: EventContext<Env, string, unknown>,
+  needed: Permission | readonly Permission[],
+): Promise<Guard<{ session: Session; role: string }>> {
+  return guardClubStaff(
+    context,
+    (role) => hasPermission(role, needed),
+    "You don't have permission to do that",
+  );
+}
+
+async function guardClubStaff(
+  context: EventContext<Env, string, unknown>,
+  allowed: (role: string) => boolean,
+  deniedMessage: string,
+): Promise<Guard<{ session: Session; role: string }>> {
   const baseURL =
     context.env.BETTER_AUTH_URL ?? new URL(context.request.url).origin;
   const auth = createAuth(context.env, { baseURL });
@@ -110,9 +138,9 @@ export async function requireAdmin(
   }
   const user = session.user as Record<string, unknown>;
   const role = user.role as string;
-  if (role !== "admin") {
+  if (!allowed(role)) {
     return {
-      error: json({ error: "Admin access required" }, { status: 403 }),
+      error: json({ error: deniedMessage }, { status: 403 }),
     } as const;
   }
 
@@ -126,7 +154,7 @@ export async function requireAdmin(
     } as const;
   }
 
-  return { session } as const;
+  return { session, role } as const;
 }
 
 /**

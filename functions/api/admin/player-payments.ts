@@ -1,5 +1,5 @@
 import { ensureTables } from '../../lib/ensure-tables';
-import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from '../../lib/api-helpers';
+import { type Env, json, nowMs, randomId, requirePermission, getClubSlug } from '../../lib/api-helpers';
 import { getPostHog, clubGroups } from '../../lib/posthog';
 import { getSecret } from '../../lib/secrets';
 import { writeAuditLog } from '../../lib/audit-log';
@@ -43,7 +43,7 @@ interface PlayerPaymentRow {
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -75,7 +75,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -151,7 +151,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
 
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "payments");
   if ('error' in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);

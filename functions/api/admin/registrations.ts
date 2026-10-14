@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { readMeta, reportReadCost } from "../../lib/read-cost";
-import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug } from "../../lib/api-helpers";
 import {
   billingMergeJoinSql,
   mergedTeamNamesSql,
@@ -138,7 +138,7 @@ const LINKED_ACCOUNTS_SQL = `(SELECT GROUP_CONCAT(la."v", ',') FROM (
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, ["payments", "members"]);
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

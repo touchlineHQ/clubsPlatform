@@ -112,7 +112,10 @@ export function d1Over(db: SqliteDb): {
       try {
         const results = statements.map((s) => {
           const bound = s as { __sql: string; __params: unknown[] };
-          return { results: db.prepare(bound.__sql).all(...bound.__params), success: true, meta: {} };
+          const rows = db.prepare(bound.__sql).all(...bound.__params);
+          // Like D1, report each statement's changes so handlers can check them.
+          const row = db.prepare("SELECT changes() AS c").get() as { c?: number } | undefined;
+          return { results: rows, success: true, meta: { changes: Number(row?.c ?? 0) } };
         });
         db.exec("COMMIT");
         return results;

@@ -1,5 +1,5 @@
 import { ensureTables } from "../../../lib/ensure-tables";
-import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../../lib/api-helpers";
 import { getPostHog, clubGroups } from "../../../lib/posthog";
 import { validateStartDate } from "../subscription-levels";
 
@@ -16,7 +16,7 @@ interface UpdateLevelBody {
 
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -119,7 +119,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

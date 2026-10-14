@@ -5,6 +5,7 @@ import { ProtectedRoute } from '../../components/ProtectedRoute';
 import { useAuth } from '../../context/AuthContext';
 import { useClub } from '../../context/ClubContext';
 import type { AuthUser } from '../../context/AuthContext';
+import { hasPermission, type Permission } from '../../lib/permissions';
 
 // Mock routing — avoids pulling in react-router's bundled React copy.
 vi.mock('react-router-dom', () => ({
@@ -30,6 +31,7 @@ const baseAuth = {
   isAdmin: false,
   isManager: false,
   isPlatformAdmin: false,
+  can: (_needed: Permission | readonly Permission[]) => false,
   teamRoles: [],
   refresh: vi.fn(),
 };
@@ -47,7 +49,7 @@ const memberUser: AuthUser = {
 function setup(
   authOverrides: Partial<typeof baseAuth>,
   clubOverrides: Partial<typeof baseClub> = {},
-  props: { requireAdmin?: boolean; requireManager?: boolean } = {},
+  props: { requireAdmin?: boolean; requireManager?: boolean; permission?: Permission | readonly Permission[] } = {},
 ) {
   mockUseAuth.mockReturnValue({ ...baseAuth, ...authOverrides });
   mockUseClub.mockReturnValue({ ...baseClub, ...clubOverrides });
@@ -142,5 +144,38 @@ describe('ProtectedRoute', () => {
     );
     expect(screen.getByText('protected-content')).toBeInTheDocument();
     expect(MockNavigate).not.toHaveBeenCalled();
+  });
+
+  describe('committee permissions (#79)', () => {
+    const asRole = (role: string) => ({
+      user: { ...memberUser, role },
+      can: (needed: Permission | readonly Permission[]) => hasPermission(role, needed),
+    });
+
+    it('lets a treasurer reach the payments page', () => {
+      setup(asRole('treasurer'), {}, { permission: 'payments' });
+      expect(screen.getByText('protected-content')).toBeTruthy();
+    });
+
+    it('refuses a treasurer on the customise page', () => {
+      setup(asRole('treasurer'), {}, { permission: 'content' });
+      expect(screen.queryByText('protected-content')).toBeNull();
+      expect((MockNavigate.mock.calls[0][0] as { to: string }).to).toBe('/');
+    });
+
+    it('lets a secretary reach the customise page', () => {
+      setup(asRole('secretary'), {}, { permission: 'content' });
+      expect(screen.getByText('protected-content')).toBeTruthy();
+    });
+
+    it('refuses a secretary on the payments page', () => {
+      setup(asRole('secretary'), {}, { permission: 'payments' });
+      expect(screen.queryByText('protected-content')).toBeNull();
+    });
+
+    it('refuses a treasurer or secretary on admin-only routes', () => {
+      setup(asRole('treasurer'), {}, { requireAdmin: true });
+      expect(screen.queryByText('protected-content')).toBeNull();
+    });
   });
 });

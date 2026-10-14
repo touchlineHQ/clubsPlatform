@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { type Env, json, nowMs, randomId, requireAdmin, getClubSlug } from "../lib/api-helpers";
+import { type Env, json, nowMs, randomId, requirePermission, getClubSlug } from "../lib/api-helpers";
 
 type TeamSectionRow = {
   id: string;
@@ -69,7 +69,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -142,7 +142,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const url = new URL(context.request.url);
@@ -195,6 +195,19 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       .first<{ id: string }>();
     if (!existing) return json({ error: "Not found" }, { status: 404 });
 
+    if (body.sectionId !== undefined) {
+      // The destination section must belong to this club too, or a team could
+      // be moved into another club's site.
+      const destination = await context.env.DB
+        .prepare(
+          `SELECT id FROM team_section
+           WHERE id = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`
+        )
+        .bind(String(body.sectionId), clubSlug, clubSlug)
+        .first<{ id: string }>();
+      if (!destination) return json({ error: "Section not found" }, { status: 404 });
+    }
+
     if (body.sectionId !== undefined) set("sectionId", String(body.sectionId));
     if (body.name !== undefined) set("name", String(body.name));
     if (body.description !== undefined) set("description", String(body.description));
@@ -220,7 +233,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
-  const result = await requireAdmin(context);
+  const result = await requirePermission(context, "content");
   if ("error" in result) return result.error;
 
   const url = new URL(context.request.url);

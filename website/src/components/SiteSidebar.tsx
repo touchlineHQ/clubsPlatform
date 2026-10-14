@@ -242,13 +242,18 @@ interface Props {
 export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBookings, visibility }: Props) => {
   const { pathname } = useLocation();
   const { activeSection, setActiveSection } = useSection();
-  const { user, isAdmin, isManager, isPlatformAdmin } = useAuth();
+  const { user, isAdmin, isManager, isPlatformAdmin, can } = useAuth();
   const { clubSlug, isMultiClub } = useClub();
   const isMobile = useMediaQuery('(max-width: 61.99em)') ?? false;
 
   const belongsToClub = !isMultiClub || isPlatformAdmin || user?.clubSlug === clubSlug;
   const canAdmin = isAdmin && belongsToClub;
   const canManage = isManager && belongsToClub;
+  // Committee roles (#79) see only the admin links their permissions cover.
+  const canContent = can('content') && belongsToClub;
+  const canPayments = can('payments') && belongsToClub;
+  const canClubRegistrations = can(['payments', 'members']) && belongsToClub;
+  const showAdminSection = canAdmin || canContent || canPayments;
 
   const navItems = (club.nav ?? DEFAULT_NAV).filter(
     ({ to }) => visibility === undefined || !(to in visibility) || visibility[to],
@@ -587,7 +592,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               >
                 <IconShirt size={14} />
               </Box>
-              <span>{canAdmin ? 'Registrations' : 'My Registrations'}</span>
+              <span>{canClubRegistrations ? 'Registrations' : 'My Registrations'}</span>
             </Group>
             <IconChevronRight size={16} />
           </UnstyledButton>
@@ -605,7 +610,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
           </Stack>
         )}
 
-        {canAdmin && (
+        {showAdminSection && (
           <>
             <Group gap={8} mx={12} my="md" wrap="nowrap">
               <Box style={{ flex: 1, height: 1, background: BORDER_FAINT }} />
@@ -618,7 +623,7 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
               <Box style={{ flex: 1, height: 1, background: BORDER_FAINT }} />
             </Group>
             <Stack gap={2} pb={8}>
-              {pitchBookings && canManage && (
+              {canAdmin && pitchBookings && canManage && (
                 <NavRow
                   to="/bookings"
                   label="Request a Pitch"
@@ -627,35 +632,35 @@ export const SiteSidebar = ({ club, sections, sidebarFeeds, onNavClick, pitchBoo
                   onClick={onNavClick}
                 />
               )}
-              <NavRow
+              {canContent && <NavRow
                 to="/customise"
                 label="Customise"
                 icon={<IconSettings size={16} />}
                 active={pathname === '/customise'}
                 onClick={onNavClick}
-              />
-              <NavRow
+              />}
+              {canAdmin && <NavRow
                 to="/admin/users"
                 label="Manage Users"
                 icon={<IconUsers size={16} />}
                 active={pathname === '/admin/users'}
                 onClick={onNavClick}
-              />
-              <NavRow
+              />}
+              {canPayments && <NavRow
                 to="/admin/payments"
                 label="Payments"
                 icon={<IconReceipt size={16} />}
                 active={pathname === '/admin/payments'}
                 onClick={onNavClick}
-              />
-              <NavRow
+              />}
+              {canAdmin && <NavRow
                 to="/admin/secrets"
                 label="API Secrets"
                 icon={<IconKey size={16} />}
                 active={pathname === '/admin/secrets'}
                 onClick={onNavClick}
-              />
-              {pitchBookings && (
+              />}
+              {canAdmin && pitchBookings && (
                 <NavRow
                   to="/admin/bookings"
                   label="Booking Requests"

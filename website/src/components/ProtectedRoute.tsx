@@ -3,15 +3,18 @@ import { Center, Loader } from '@mantine/core';
 import { useAuth } from '../context/AuthContext';
 import { useClub } from '../context/ClubContext';
 import type { ReactNode } from 'react';
+import type { Permission } from '../lib/permissions';
 
 interface Props {
   children: ReactNode;
   requireAdmin?: boolean;
   requireManager?: boolean;
+  /** Committee permission(s) the route needs; any one is enough (#79). */
+  permission?: Permission | readonly Permission[];
 }
 
-export function ProtectedRoute({ children, requireAdmin, requireManager }: Props) {
-  const { user, loading, isAdmin, isManager, isPlatformAdmin } = useAuth();
+export function ProtectedRoute({ children, requireAdmin, requireManager, permission }: Props) {
+  const { user, loading, isAdmin, isManager, isPlatformAdmin, can } = useAuth();
   const { clubSlug, isMultiClub } = useClub();
   const location = useLocation();
 
@@ -32,6 +35,10 @@ export function ProtectedRoute({ children, requireAdmin, requireManager }: Props
   }
 
   if (requireAdmin && !isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (permission && !can(permission)) {
     return <Navigate to="/" replace />;
   }
 

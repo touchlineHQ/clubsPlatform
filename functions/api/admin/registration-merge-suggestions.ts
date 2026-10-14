@@ -1,6 +1,6 @@
 import { ensureTables } from "../../lib/ensure-tables";
 import { readMeta, reportReadCost } from "../../lib/read-cost";
-import { type Env, json, requireAdmin, getClubSlug, nowMs } from "../../lib/api-helpers";
+import { type Env, json, requirePermission, getClubSlug, nowMs } from "../../lib/api-helpers";
 import { prepareAuditLog } from "../../lib/audit-log";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
@@ -122,7 +122,7 @@ SELECT COUNT(*) AS "setSize",
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -303,7 +303,7 @@ interface DismissBody {
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);
@@ -424,7 +424,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
-  const auth = await requireAdmin(context);
+  const auth = await requirePermission(context, "payments");
   if ("error" in auth) return auth.error;
 
   const clubSlug = getClubSlug(context.request);

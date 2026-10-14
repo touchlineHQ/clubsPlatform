@@ -31,6 +31,7 @@ const ANON_AUTH = {
   isAdmin: false,
   isManager: false,
   isPlatformAdmin: false,
+  can: (_needed: unknown) => false,
   teamRoles: [] as unknown[],
   refresh: vi.fn(),
 };
@@ -337,7 +338,7 @@ describe('App — private club', () => {
 
   it("renders the site, with a private banner, for the club's own admin", async () => {
     atClubPath();
-    mockAuth.current = { ...ANON_AUTH, isAdmin: true, user: { clubSlug: 'test-club' } };
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, can: () => true, user: { clubSlug: 'test-club' } };
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     mockLoadAllData.mockResolvedValue(appData);
     renderApp(<App />);
@@ -348,9 +349,24 @@ describe('App — private club', () => {
     expect(window.location.replace).not.toHaveBeenCalled();
   });
 
+  it("renders the site for the club's own treasurer (#79)", async () => {
+    atClubPath();
+    mockAuth.current = {
+      ...ANON_AUTH,
+      user: { clubSlug: 'test-club' },
+      can: (needed: unknown) => (Array.isArray(needed) ? needed : [needed]).includes('payments'),
+    };
+    mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
+    mockLoadAllData.mockResolvedValue(appData);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByTestId('site-header')).toBeTruthy();
+    });
+  });
+
   it('renders the site for a platform admin', async () => {
     atClubPath();
-    mockAuth.current = { ...ANON_AUTH, isAdmin: true, isPlatformAdmin: true, user: { clubSlug: null } };
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, can: () => true, isPlatformAdmin: true, user: { clubSlug: null } };
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     mockLoadAllData.mockResolvedValue(appData);
     renderApp(<App />);
@@ -361,7 +377,7 @@ describe('App — private club', () => {
 
   it('turns away an admin of a different club', async () => {
     atClubPath();
-    mockAuth.current = { ...ANON_AUTH, isAdmin: true, user: { clubSlug: 'other-club' } };
+    mockAuth.current = { ...ANON_AUTH, isAdmin: true, can: () => true, user: { clubSlug: 'other-club' } };
     mockLoadClubRegistry.mockResolvedValue(privateMultiClubRegistry);
     renderApp(<App />);
     await waitFor(() => {
