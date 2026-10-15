@@ -125,15 +125,17 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ error: "Enquiries are not available yet" }, { status: 503 });
   }
 
+  const options = await loadFormOptions(env.DB, clubSlug);
+  const v = validateEnquiry(body, options);
+  if ("error" in v) return json({ error: v.error }, { status: 400 });
+
+  // Count only well-formed submissions, so a visitor fixing a validation error
+  // isn't locked out. Turnstile still gates every counted attempt.
   const now = nowMs();
   const ip = context.request.headers.get("CF-Connecting-IP") ?? "unknown";
   if (!(await checkRateLimit(env.DB, ip, env.BETTER_AUTH_SECRET ?? "", now))) {
     return json({ error: "Too many enquiries. Please try again later." }, { status: 429 });
   }
-
-  const options = await loadFormOptions(env.DB, clubSlug);
-  const v = validateEnquiry(body, options);
-  if ("error" in v) return json({ error: v.error }, { status: 400 });
 
   const token = typeof body.turnstileToken === "string" ? body.turnstileToken : "";
   if (!(await verifyTurnstile(env.TURNSTILE_SECRET_KEY, token, ip === "unknown" ? null : ip))) {

@@ -137,6 +137,13 @@ describe('/api/enquiries (#73)', () => {
     expect(JSON.stringify(keys)).not.toContain('203.0.113.9');
   });
 
+  it('does not count validation failures against the rate limit', async () => {
+    for (let i = 0; i < RATE_LIMIT_PER_HOUR + 2; i++) {
+      expect((await post(enquiry({ contactPhone: 'not a phone' }))).status).toBe(400);
+    }
+    expect((await post(enquiry())).status).toBe(200);
+  });
+
   describe('admin triage', () => {
     const call = (fn: any, req: Request) => fn(makeContext(req, { env: env() }) as any);
     const ADMIN = { 'X-Club-Slug': 'test-club' };

@@ -120,6 +120,8 @@ export function EnquiryForm() {
     } catch (err) {
       captureError(err, { source: 'enquiry submit' });
       setError('Something went wrong. Please try again.');
+      window.turnstile?.reset(widgetId.current ?? undefined);
+      setToken('');
     } finally {
       setSubmitting(false);
     }
