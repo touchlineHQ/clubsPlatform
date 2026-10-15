@@ -211,6 +211,15 @@ describe('/api/enquiries (#73)', () => {
       expect(row.contactPurgedAt).not.toBeNull();
     });
 
+    it('rejects a status change once the enquiry is terminal', async () => {
+      mockGetSession.mockResolvedValue(adminSession);
+      const id = rows()[0].id;
+      expect((await call(admin.onRequestPatch, patchReq('/api/admin/enquiries', { id, status: 'registered' }, ADMIN))).status).toBe(200);
+      const res = await call(admin.onRequestPatch, patchReq('/api/admin/enquiries', { id, status: 'new' }, ADMIN));
+      expect(res.status).toBe(409);
+      expect(rows()[0]).toMatchObject({ status: 'registered', contactEmail: null });
+    });
+
     it('rejects bad statuses and other clubs', async () => {
       const id = rows()[0].id;
       expect((await call(admin.onRequestPatch, patchReq('/api/admin/enquiries', { id, status: 'won' }, ADMIN))).status).toBe(400);

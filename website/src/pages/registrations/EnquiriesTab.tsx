@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActionIcon, Alert, Button, Center, Loader, NativeSelect, Table, Text, Tooltip } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { captureError } from '../../lib/posthog';
@@ -34,6 +34,9 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // Ref for a synchronous double-click guard; state so the controls disable.
+  const pendingRef = useRef(new Set<string>());
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async (offset = 0, append = false) => {
     try {
@@ -52,7 +55,10 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  const mutate = async (init: RequestInit, url = '/api/admin/enquiries') => {
+  const mutate = async (id: string, init: RequestInit, url = '/api/admin/enquiries') => {
+    if (pendingRef.current.has(id)) return;
+    pendingRef.current.add(id);
+    setPendingIds(new Set(pendingRef.current));
     setError(null);
     try {
       const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug } });
@@ -60,6 +66,9 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
     } catch (e) {
       captureError(e, { source: 'enquiries mutate' });
       setError('That change did not save.');
+    } finally {
+      pendingRef.current.delete(id);
+      setPendingIds(new Set(pendingRef.current));
     }
     await load();
   };
@@ -92,35 +101,39 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {items.map((e) => (
-                  <Table.Tr key={e.id}>
-                    <Table.Td>{new Date(e.createdAt).toLocaleDateString()}</Table.Td>
-                    <Table.Td>{e.ageGroup}{e.team ? ` · ${e.team}` : ''}</Table.Td>
-                    <Table.Td>
-                      {e.contactEmail ? (
-                        <>
-                          <Text size="sm">{e.contactName} ({e.enquirerType === 'guardian' ? 'parent/guardian' : 'player'})</Text>
-                          <Text size="xs" c="dimmed">{e.contactEmail}{e.contactPhone ? ` · ${e.contactPhone}` : ''}</Text>
-                        </>
-                      ) : <Text size="xs" c="dimmed">Contact details deleted</Text>}
-                    </Table.Td>
-                    <Table.Td>{e.playerFirstName ?? '—'}</Table.Td>
-                    <Table.Td>
-                      <NativeSelect
-                        aria-label={`Status for enquiry ${e.id}`} size="xs" data={STATUS_OPTIONS} value={e.status}
-                        onChange={(ev) => void mutate({ method: 'PATCH', body: JSON.stringify({ id: e.id, status: ev.currentTarget.value }) })}
-                      />
-                    </Table.Td>
-                    <Table.Td>
-                      <Tooltip label="Delete enquiry">
-                        <ActionIcon variant="subtle" color="red" aria-label="Delete enquiry"
-                          onClick={() => void mutate({ method: 'DELETE' }, `/api/admin/enquiries?id=${encodeURIComponent(e.id)}`)}>
-                          <IconTrash size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                {items.map((e) => {
+                  const busy = pendingIds.has(e.id);
+                  return (
+                    <Table.Tr key={e.id}>
+                      <Table.Td>{new Date(e.createdAt).toLocaleDateString()}</Table.Td>
+                      <Table.Td>{e.ageGroup}{e.team ? ` · ${e.team}` : ''}</Table.Td>
+                      <Table.Td>
+                        {e.contactEmail ? (
+                          <>
+                            <Text size="sm">{e.contactName} ({e.enquirerType === 'guardian' ? 'parent/guardian' : 'player'})</Text>
+                            <Text size="xs" c="dimmed">{e.contactEmail}{e.contactPhone ? ` · ${e.contactPhone}` : ''}</Text>
+                          </>
+                        ) : <Text size="xs" c="dimmed">Contact details deleted</Text>}
+                      </Table.Td>
+                      <Table.Td>{e.playerFirstName ?? '—'}</Table.Td>
+                      <Table.Td>
+                        <NativeSelect
+                          aria-label={`Status for enquiry ${e.id}`} size="xs" data={STATUS_OPTIONS} value={e.status}
+                          disabled={busy}
+                          onChange={(ev) => void mutate(e.id, { method: 'PATCH', body: JSON.stringify({ id: e.id, status: ev.currentTarget.value }) })}
+                        />
+                      </Table.Td>
+                      <Table.Td>
+                        <Tooltip label="Delete enquiry">
+                          <ActionIcon variant="subtle" color="red" aria-label="Delete enquiry" disabled={busy}
+                            onClick={() => void mutate(e.id, { method: 'DELETE' }, `/api/admin/enquiries?id=${encodeURIComponent(e.id)}`)}>
+                            <IconTrash size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Table.Td>
+                    </Table.Tr>
+                  );
+                })}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>

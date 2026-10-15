@@ -169,10 +169,16 @@ export async function purgeStaleEnquiries(db: D1Database, now: number): Promise<
   return res.meta?.changes ?? 0;
 }
 
+export type SetEnquiryStatusResult = "updated" | "not_found" | "conflict";
+
 /**
  * Move an enquiry to a new status. Reaching registered / declined nulls the
  * contact fields in the same statement, so there is no window where a closed
- * lead still holds an address. Returns false when the enquiry is not found.
+ * lead still holds an address.
+ *
+ * Terminal statuses are sticky: a row already at registered/declined cannot
+ * move again (contact details are gone). Returns "conflict" in that case,
+ * "not_found" when the row is missing, otherwise "updated".
  */
 export async function setEnquiryStatus(
   db: D1Database,
@@ -180,17 +186,22 @@ export async function setEnquiryStatus(
   id: string,
   status: EnquiryStatus,
   now: number,
-): Promise<boolean> {
+): Promise<SetEnquiryStatusResult> {
   const terminal = TERMINAL_STATUSES.includes(status);
   const res = await db
     .prepare(
       `UPDATE "player_enquiry" SET "status" = ?, "updatedAt" = ?${
         terminal ? `, ${NULL_CONTACT}, "contactPurgedAt" = COALESCE("contactPurgedAt", ?)` : ""
-      } WHERE "id" = ? AND "clubSlug" = ?`,
+      } WHERE "id" = ? AND "clubSlug" = ? AND "status" NOT IN ('registered', 'declined')`,
     )
     .bind(...(terminal ? [status, now, now, id, clubSlug] : [status, now, id, clubSlug]))
     .run();
-  return (res.meta?.changes ?? 0) > 0;
+  if ((res.meta?.changes ?? 0) > 0) return "updated";
+  const existing = await db
+    .prepare(`SELECT "status" FROM "player_enquiry" WHERE "id" = ? AND "clubSlug" = ?`)
+    .bind(id, clubSlug)
+    .first<{ status: string }>();
+  return existing ? "conflict" : "not_found";
 }
 
 /** One-click erasure: removes the whole row. */

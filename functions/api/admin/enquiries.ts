@@ -67,8 +67,9 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id || !isEnquiryStatus(body.status)) return json({ error: "id and a valid status are required" }, { status: 400 });
 
-  const ok = await setEnquiryStatus(context.env.DB, clubSlug, id, body.status, nowMs());
-  if (!ok) return json({ error: "Enquiry not found" }, { status: 404 });
+  const result = await setEnquiryStatus(context.env.DB, clubSlug, id, body.status, nowMs());
+  if (result === "not_found") return json({ error: "Enquiry not found" }, { status: 404 });
+  if (result === "conflict") return json({ error: "Enquiry is closed and cannot change status" }, { status: 409 });
   const actorId = (auth.session.user as Record<string, unknown>).id as string;
   context.waitUntil(capture(context.env, actorId, clubSlug, { event: "player enquiry status changed", properties: { enquiry_id: id, status: body.status } }));
   return json({ ok: true });

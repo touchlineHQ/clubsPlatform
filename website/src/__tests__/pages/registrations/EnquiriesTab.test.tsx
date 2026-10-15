@@ -30,6 +30,22 @@ describe('EnquiriesTab (#73)', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/admin/enquiries?id=enq_1', expect.objectContaining({ method: 'DELETE' })));
   });
 
+  it('ignores a second delete click while the first is in flight', async () => {
+    let finishDelete!: (value: Response) => void;
+    const deletePromise = new Promise<Response>((resolve) => { finishDelete = resolve; });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') return deletePromise;
+      return new Response(JSON.stringify({ items: [row], hasMore: false }));
+    });
+    renderWithMantine(<EnquiriesTab clubSlug="test-club" />);
+    const btn = await screen.findByLabelText('Delete enquiry');
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'DELETE')).toHaveLength(1);
+    finishDelete(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await waitFor(() => expect(fetchMock.mock.calls.some((c) => !c[1]?.method)).toBe(true));
+  });
+
   it('shows purged contacts as deleted', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [{ ...row, contactEmail: null, contactName: null }], hasMore: false })));
     renderWithMantine(<EnquiriesTab clubSlug="test-club" />);
