@@ -22,6 +22,10 @@ export interface Env {
   FROM_EMAIL?: string;
   /** Resend webhook signing secret (whsec_…) — enables bounce/complaint handling (#135). */
   RESEND_WEBHOOK_SECRET?: string;
+  /** Cloudflare Turnstile secret — required for the public enquiry form (#73). */
+  TURNSTILE_SECRET_KEY?: string;
+  /** Cloudflare Turnstile site key — public, handed to the enquiry form. */
+  TURNSTILE_SITE_KEY?: string;
 }
 
 /**

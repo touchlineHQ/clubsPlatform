@@ -5,6 +5,7 @@ import type { RegistrationItem } from '../types';
 import { tablerIcon } from '../utils/icons';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
+import { EnquiryForm } from '../components/club/EnquiryForm';
 
 interface Props { items: RegistrationItem[] }
 
@@ -48,6 +49,8 @@ export function RegisterPage({ items }: Props) {
           </Paper>
         ))}
       </SimpleGrid>
+
+      <EnquiryForm />
     </Stack>
   );
 }
