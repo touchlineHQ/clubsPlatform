@@ -43,7 +43,8 @@ describe('EnquiriesTab (#73)', () => {
     fireEvent.click(btn);
     expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'DELETE')).toHaveLength(1);
     finishDelete(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    await waitFor(() => expect(fetchMock.mock.calls.some((c) => !c[1]?.method)).toBe(true));
+    await waitFor(() => expect(screen.queryByLabelText('Delete enquiry')).toBeNull());
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === 'DELETE')).toHaveLength(1);
   });
 
   it('shows purged contacts as deleted', async () => {
@@ -68,9 +69,9 @@ describe('EnquiriesTab (#73)', () => {
   it('preserves previous rows when a later load fails', async () => {
     renderWithMantine(<EnquiriesTab clubSlug="test-club" />);
     expect(await screen.findByText(/pat@example.com/)).toBeTruthy();
-    // PATCH ok, then reload fails — rows must stay, empty-state must not appear.
+    // PATCH fails, then the resync fails — rows must stay, empty-state must not appear.
     fetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'x' }), { status: 500 }))
       .mockRejectedValueOnce(new Error('network down'));
     fireEvent.change(screen.getByLabelText('Status for enquiry enq_1'), { target: { value: 'contacted' } });
     expect(await screen.findByText('Could not load enquiries.')).toBeTruthy();
@@ -100,5 +101,53 @@ describe('EnquiriesTab (#73)', () => {
     expect(await screen.findByText(/other@example.com/)).toBeTruthy();
     expect(screen.getByText(/pat@example.com/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Load more/i })).toBeNull();
+  });
+
+  describe('with two pages loaded', () => {
+    const row2 = { ...row, id: 'enq_2', contactEmail: 'other@example.com', contactName: 'Other' };
+    const page = (items: unknown[], hasMore: boolean) => new Response(JSON.stringify({ items, hasMore }));
+    const loadTwoPages = async () => {
+      fetchMock.mockResolvedValueOnce(page([row], true)).mockResolvedValueOnce(page([row2], false));
+      renderWithMantine(<EnquiriesTab clubSlug="test-club" />);
+      expect(await screen.findByText(/pat@example.com/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: /Load more/i }));
+      expect(await screen.findByText(/other@example.com/)).toBeTruthy();
+      fetchMock.mockClear();
+    };
+
+    it('updates status in place and clears contacts on a terminal status, keeping page 2', async () => {
+      await loadTwoPages();
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+      fireEvent.change(screen.getByLabelText('Status for enquiry enq_1'), { target: { value: 'registered' } });
+      expect(await screen.findByText('Contact details deleted')).toBeTruthy();
+      expect(screen.queryByText(/pat@example.com/)).toBeNull();
+      expect(screen.getByText(/other@example.com/)).toBeTruthy();
+      expect((screen.getByLabelText('Status for enquiry enq_1') as HTMLSelectElement).value).toBe('registered');
+      expect(fetchMock).toHaveBeenCalledTimes(1); // PATCH only, no page-1 reload
+    });
+
+    it('removes a deleted row in place, keeping page 2', async () => {
+      await loadTwoPages();
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+      fireEvent.click(screen.getAllByLabelText('Delete enquiry')[0]);
+      await waitFor(() => expect(screen.queryByText(/pat@example.com/)).toBeNull());
+      expect(screen.getByText(/other@example.com/)).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledTimes(1); // DELETE only
+    });
+
+    it('on a failed change resyncs every loaded page', async () => {
+      await loadTwoPages();
+      fetchMock
+        .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'closed' }), { status: 409 }))
+        .mockResolvedValueOnce(page([row], true))
+        .mockResolvedValueOnce(page([row2], false));
+      fireEvent.change(screen.getByLabelText('Status for enquiry enq_2'), { target: { value: 'contacted' } });
+      expect(await screen.findByText('That change did not save.')).toBeTruthy();
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/enquiries?offset=0');
+      expect(fetchMock.mock.calls[2][0]).toBe('/api/admin/enquiries?offset=1');
+      expect(screen.getByText(/pat@example.com/)).toBeTruthy();
+      expect(screen.getByText(/other@example.com/)).toBeTruthy();
+    });
   });
 });

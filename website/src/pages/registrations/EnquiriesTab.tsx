@@ -25,6 +25,15 @@ export const STATUS_OPTIONS = [
   { value: 'declined', label: 'Declined' },
 ];
 
+/** Statuses that close an enquiry; the server deletes its contact details. */
+const TERMINAL_STATUSES = ['registered', 'declined'];
+
+async function fetchPage(clubSlug: string, offset: number) {
+  const res = await fetch(`/api/admin/enquiries?offset=${offset}`, { headers: { 'X-Club-Slug': clubSlug } });
+  if (!res.ok) throw new Error(`Failed to load enquiries (${res.status})`);
+  return (await res.json()) as { items: Enquiry[]; hasMore?: boolean };
+}
+
 /**
  * Secretary triage of public player enquiries (#73). Moving one to
  * Registered or Declined deletes its contact details on the server.
@@ -37,12 +46,12 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
   // Ref for a synchronous double-click guard; state so the controls disable.
   const pendingRef = useRef(new Set<string>());
   const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const itemsRef = useRef(items);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
   const load = useCallback(async (offset = 0, append = false) => {
     try {
-      const res = await fetch(`/api/admin/enquiries?offset=${offset}`, { headers: { 'X-Club-Slug': clubSlug } });
-      if (!res.ok) throw new Error(`Failed to load enquiries (${res.status})`);
-      const data = (await res.json()) as { items: Enquiry[]; hasMore?: boolean };
+      const data = await fetchPage(clubSlug, offset);
       setItems((prev) => (append && prev ? [...prev, ...data.items] : data.items));
       setHasMore(!!data.hasMore);
     } catch (e) {
@@ -55,14 +64,35 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Re-fetch from the top until the already-loaded window is covered, so a resync keeps appended pages.
+  const resync = async (count: number) => {
+    try {
+      let rows: Enquiry[] = [];
+      let more = true;
+      while (more) {
+        const data = await fetchPage(clubSlug, rows.length);
+        rows = [...rows, ...data.items];
+        more = !!data.hasMore;
+        if (rows.length >= count || data.items.length === 0) break;
+      }
+      setItems(rows);
+      setHasMore(more);
+    } catch (e) {
+      captureError(e, { source: 'enquiries load' });
+      setError('Could not load enquiries.');
+    }
+  };
+
   const mutate = async (id: string, init: RequestInit, url = '/api/admin/enquiries') => {
     if (pendingRef.current.has(id)) return;
     pendingRef.current.add(id);
     setPendingIds(new Set(pendingRef.current));
     setError(null);
+    let ok = false;
     try {
       const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug } });
-      if (!res.ok) setError('That change did not save.');
+      ok = res.ok;
+      if (!ok) setError('That change did not save.');
     } catch (e) {
       captureError(e, { source: 'enquiries mutate' });
       setError('That change did not save.');
@@ -70,7 +100,21 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
       pendingRef.current.delete(id);
       setPendingIds(new Set(pendingRef.current));
     }
-    await load();
+    if (!ok) {
+      // Server state is unknown (e.g. closed elsewhere): resync without dropping appended pages.
+      await resync(itemsRef.current?.length ?? 0);
+      return;
+    }
+    // Apply the change in place so rows from later pages stay on screen.
+    if (init.method === 'DELETE') {
+      setItems((prev) => prev && prev.filter((e) => e.id !== id));
+      return;
+    }
+    const { status } = JSON.parse(String(init.body)) as { status: string };
+    const closed = TERMINAL_STATUSES.includes(status);
+    setItems((prev) => prev && prev.map((e) => (e.id !== id ? e : closed
+      ? { ...e, status, contactName: null, contactEmail: null, contactPhone: null, playerFirstName: null, contactPurgedAt: e.contactPurgedAt ?? Date.now() }
+      : { ...e, status })));
   };
 
   const loadMore = async () => {
