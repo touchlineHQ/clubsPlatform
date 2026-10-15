@@ -12,7 +12,7 @@ import { deleteEnquiry, isEnquiryStatus, purgeStaleEnquiries, setEnquiryStatus }
  * DELETE ?id=      → one-click erasure
  */
 
-const LIST_LIMIT = 200;
+export const LIST_LIMIT = 200;
 
 async function capture(env: Env, actorId: string, clubSlug: string, e: { event: string; properties: Record<string, unknown> }) {
   const posthog = getPostHog(env);
@@ -31,16 +31,24 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
 
+  const url = new URL(context.request.url);
+  const rawOffset = Number(url.searchParams.get("offset") ?? "0");
+  const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+
   await purgeStaleEnquiries(context.env.DB, nowMs());
+  // Fetch one extra row so the client knows when older enquiries remain.
   const { results } = await context.env.DB
     .prepare(
       `SELECT "id", "ageGroup", "team", "enquirerType", "contactName", "contactEmail", "contactPhone",
         "playerFirstName", "status", "contactPurgedAt", "createdAt", "updatedAt"
-       FROM "player_enquiry" WHERE "clubSlug" = ? ORDER BY "createdAt" DESC LIMIT ${LIST_LIMIT}`,
+       FROM "player_enquiry" WHERE "clubSlug" = ? ORDER BY "createdAt" DESC LIMIT ? OFFSET ?`,
     )
-    .bind(clubSlug)
+    .bind(clubSlug, LIST_LIMIT + 1, offset)
     .all();
-  return json({ items: results ?? [] });
+  const rows = results ?? [];
+  const hasMore = rows.length > LIST_LIMIT;
+  const items = hasMore ? rows.slice(0, LIST_LIMIT) : rows;
+  return json({ items, hasMore, offset, limit: LIST_LIMIT });
 };
 
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
@@ -62,7 +70,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const ok = await setEnquiryStatus(context.env.DB, clubSlug, id, body.status, nowMs());
   if (!ok) return json({ error: "Enquiry not found" }, { status: 404 });
   const actorId = (auth.session.user as Record<string, unknown>).id as string;
-  await capture(context.env, actorId, clubSlug, { event: "player enquiry status changed", properties: { enquiry_id: id, status: body.status } });
+  context.waitUntil(capture(context.env, actorId, clubSlug, { event: "player enquiry status changed", properties: { enquiry_id: id, status: body.status } }));
   return json({ ok: true });
 };
 
@@ -78,6 +86,6 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const ok = await deleteEnquiry(context.env.DB, clubSlug, id);
   if (!ok) return json({ error: "Enquiry not found" }, { status: 404 });
   const actorId = (auth.session.user as Record<string, unknown>).id as string;
-  await capture(context.env, actorId, clubSlug, { event: "player enquiry deleted", properties: { enquiry_id: id } });
+  context.waitUntil(capture(context.env, actorId, clubSlug, { event: "player enquiry deleted", properties: { enquiry_id: id } }));
   return json({ ok: true });
 };

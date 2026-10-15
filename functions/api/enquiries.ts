@@ -154,8 +154,19 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       e.playerFirstName, now, now, now)
     .run();
 
-  await purgeStaleEnquiries(env.DB, now);
-  await sendMail(context, clubSlug, e);
+  // Side effects after a successful INSERT must not turn the response into a
+  // 500 — the lead is already stored, and a client retry would duplicate it.
+  try {
+    await purgeStaleEnquiries(env.DB, now);
+  } catch {
+    // ignore
+  }
+  try {
+    await sendMail(context, clubSlug, e);
+  } catch {
+    // ignore — sendMail already settles per-recipient failures; this covers
+    // setup throws (identity / FA URL / secretary lookup).
+  }
 
   const posthog = getPostHog(env);
   if (posthog) {

@@ -144,6 +144,18 @@ describe('/api/enquiries (#73)', () => {
     expect((await post(enquiry())).status).toBe(200);
   });
 
+  it('still returns 200 when post-insert purge or mail setup fails', async () => {
+    const enquiriesLib = await import('../../lib/enquiries');
+    const purgeSpy = vi.spyOn(enquiriesLib, 'purgeStaleEnquiries').mockRejectedValue(new Error('purge down'));
+    const { getMailer } = await import('../../lib/email');
+    (getMailer as any).mockImplementationOnce(() => { throw new Error('mailer boom'); });
+    const res = await post(enquiry({ contactEmail: 'survive@example.com' }));
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).ok).toBe(true);
+    expect(rows().some((r: any) => r.contactEmail === 'survive@example.com')).toBe(true);
+    purgeSpy.mockRestore();
+  });
+
   describe('admin triage', () => {
     const call = (fn: any, req: Request) => fn(makeContext(req, { env: env() }) as any);
     const ADMIN = { 'X-Club-Slug': 'test-club' };
@@ -155,9 +167,31 @@ describe('/api/enquiries (#73)', () => {
 
     it('lets a secretary list enquiries but not a treasurer', async () => {
       const res = await call(admin.onRequestGet, getReq('/api/admin/enquiries', ADMIN));
-      expect((await res.json() as any).items[0]).toMatchObject({ contactName: 'Pat Parent', status: 'new' });
+      const body = await res.json() as any;
+      expect(body.items[0]).toMatchObject({ contactName: 'Pat Parent', status: 'new' });
+      expect(body).toMatchObject({ hasMore: false, offset: 0, limit: 200 });
       mockGetSession.mockResolvedValue(treasurerSession);
       expect((await call(admin.onRequestGet, getReq('/api/admin/enquiries', ADMIN))).status).toBe(403);
+    });
+
+    it('pages past LIST_LIMIT with offset and hasMore', async () => {
+      const { LIST_LIMIT } = await import('../../api/admin/enquiries');
+      const now = Date.now();
+      // One row already from beforeEach; add enough more to cross the page boundary.
+      for (let i = 1; i <= LIST_LIMIT; i++) {
+        sqlite.exec(
+          `INSERT INTO player_enquiry (id, clubSlug, ageGroup, team, enquirerType, contactName, contactEmail,
+            contactPhone, playerFirstName, status, consentAt, createdAt, updatedAt)
+           VALUES ('enq_page_${i}', 'test-club', 'U12', NULL, 'guardian', 'N', 'n${i}@ex.com', NULL, 'P', 'new', ${now}, ${now - i}, ${now})`,
+        );
+      }
+      const page1 = await (await call(admin.onRequestGet, getReq('/api/admin/enquiries', ADMIN))).json() as any;
+      expect(page1.items).toHaveLength(LIST_LIMIT);
+      expect(page1.hasMore).toBe(true);
+      const page2 = await (await call(admin.onRequestGet, getReq(`/api/admin/enquiries?offset=${LIST_LIMIT}`, ADMIN))).json() as any;
+      expect(page2.items.length).toBeGreaterThanOrEqual(1);
+      expect(page2.hasMore).toBe(false);
+      expect(page2.offset).toBe(LIST_LIMIT);
     });
 
     it('keeps contact fields through non-terminal statuses', async () => {

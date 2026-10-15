@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActionIcon, Alert, Center, Loader, NativeSelect, Table, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Button, Center, Loader, NativeSelect, Table, Text, Tooltip } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import { captureError } from '../../lib/posthog';
 
@@ -32,16 +32,21 @@ export const STATUS_OPTIONS = [
 export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
   const [items, setItems] = useState<Enquiry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (offset = 0, append = false) => {
     try {
-      const res = await fetch('/api/admin/enquiries', { headers: { 'X-Club-Slug': clubSlug } });
+      const res = await fetch(`/api/admin/enquiries?offset=${offset}`, { headers: { 'X-Club-Slug': clubSlug } });
       if (!res.ok) throw new Error(`Failed to load enquiries (${res.status})`);
-      setItems(((await res.json()) as { items: Enquiry[] }).items);
+      const data = (await res.json()) as { items: Enquiry[]; hasMore?: boolean };
+      setItems((prev) => (append && prev ? [...prev, ...data.items] : data.items));
+      setHasMore(!!data.hasMore);
     } catch (e) {
       captureError(e, { source: 'enquiries load' });
       setError('Could not load enquiries.');
-      setItems([]);
+      // Keep previous rows so a transient failure does not look like an empty inbox.
+      if (!append) setItems((prev) => prev ?? []);
     }
   }, [clubSlug]);
 
@@ -49,9 +54,24 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
 
   const mutate = async (init: RequestInit, url = '/api/admin/enquiries') => {
     setError(null);
-    const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug } });
-    if (!res.ok) setError('That change did not save.');
+    try {
+      const res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug } });
+      if (!res.ok) setError('That change did not save.');
+    } catch (e) {
+      captureError(e, { source: 'enquiries mutate' });
+      setError('That change did not save.');
+    }
     await load();
+  };
+
+  const loadMore = async () => {
+    if (!items || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      await load(items.length, true);
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   if (items === null) return <Center h={120}><Loader /></Center>;
@@ -59,50 +79,57 @@ export function EnquiriesTab({ clubSlug }: { clubSlug: string }) {
   return (
     <>
       {error && <Alert color="red" variant="light" mb="sm">{error}</Alert>}
-      {items.length === 0 ? (
+      {items.length === 0 && !error ? (
         <Text c="dimmed" size="sm">No enquiries yet. They arrive from the form on your Registration page.</Text>
-      ) : (
-        <Table.ScrollContainer minWidth={720}>
-          <Table striped>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Received</Table.Th><Table.Th>Age group</Table.Th><Table.Th>Contact</Table.Th>
-                <Table.Th>Player</Table.Th><Table.Th>Status</Table.Th><Table.Th />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {items.map((e) => (
-                <Table.Tr key={e.id}>
-                  <Table.Td>{new Date(e.createdAt).toLocaleDateString()}</Table.Td>
-                  <Table.Td>{e.ageGroup}{e.team ? ` · ${e.team}` : ''}</Table.Td>
-                  <Table.Td>
-                    {e.contactEmail ? (
-                      <>
-                        <Text size="sm">{e.contactName} ({e.enquirerType === 'guardian' ? 'parent/guardian' : 'player'})</Text>
-                        <Text size="xs" c="dimmed">{e.contactEmail}{e.contactPhone ? ` · ${e.contactPhone}` : ''}</Text>
-                      </>
-                    ) : <Text size="xs" c="dimmed">Contact details deleted</Text>}
-                  </Table.Td>
-                  <Table.Td>{e.playerFirstName ?? '—'}</Table.Td>
-                  <Table.Td>
-                    <NativeSelect
-                      aria-label={`Status for enquiry ${e.id}`} size="xs" data={STATUS_OPTIONS} value={e.status}
-                      onChange={(ev) => void mutate({ method: 'PATCH', body: JSON.stringify({ id: e.id, status: ev.currentTarget.value }) })}
-                    />
-                  </Table.Td>
-                  <Table.Td>
-                    <Tooltip label="Delete enquiry">
-                      <ActionIcon variant="subtle" color="red" aria-label="Delete enquiry"
-                        onClick={() => void mutate({ method: 'DELETE' }, `/api/admin/enquiries?id=${encodeURIComponent(e.id)}`)}>
-                        <IconTrash size={16} />
-                      </ActionIcon>
-                    </Tooltip>
-                  </Table.Td>
+      ) : items.length === 0 ? null : (
+        <>
+          <Table.ScrollContainer minWidth={720}>
+            <Table striped>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Received</Table.Th><Table.Th>Age group</Table.Th><Table.Th>Contact</Table.Th>
+                  <Table.Th>Player</Table.Th><Table.Th>Status</Table.Th><Table.Th />
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
+              </Table.Thead>
+              <Table.Tbody>
+                {items.map((e) => (
+                  <Table.Tr key={e.id}>
+                    <Table.Td>{new Date(e.createdAt).toLocaleDateString()}</Table.Td>
+                    <Table.Td>{e.ageGroup}{e.team ? ` · ${e.team}` : ''}</Table.Td>
+                    <Table.Td>
+                      {e.contactEmail ? (
+                        <>
+                          <Text size="sm">{e.contactName} ({e.enquirerType === 'guardian' ? 'parent/guardian' : 'player'})</Text>
+                          <Text size="xs" c="dimmed">{e.contactEmail}{e.contactPhone ? ` · ${e.contactPhone}` : ''}</Text>
+                        </>
+                      ) : <Text size="xs" c="dimmed">Contact details deleted</Text>}
+                    </Table.Td>
+                    <Table.Td>{e.playerFirstName ?? '—'}</Table.Td>
+                    <Table.Td>
+                      <NativeSelect
+                        aria-label={`Status for enquiry ${e.id}`} size="xs" data={STATUS_OPTIONS} value={e.status}
+                        onChange={(ev) => void mutate({ method: 'PATCH', body: JSON.stringify({ id: e.id, status: ev.currentTarget.value }) })}
+                      />
+                    </Table.Td>
+                    <Table.Td>
+                      <Tooltip label="Delete enquiry">
+                        <ActionIcon variant="subtle" color="red" aria-label="Delete enquiry"
+                          onClick={() => void mutate({ method: 'DELETE' }, `/api/admin/enquiries?id=${encodeURIComponent(e.id)}`)}>
+                          <IconTrash size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+          {hasMore && (
+            <Button mt="sm" size="xs" variant="light" loading={loadingMore} onClick={() => void loadMore()}>
+              Load more
+            </Button>
+          )}
+        </>
       )}
     </>
   );
