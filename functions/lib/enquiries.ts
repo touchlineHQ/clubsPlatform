@@ -243,6 +243,34 @@ export async function checkRateLimit(
   return count <= RATE_LIMIT_PER_HOUR;
 }
 
+export interface TurnstileConfig { secretKey: string; siteKey: string }
+
+let warnedUnconfigured = false;
+
+/** Test hook: let the one-time "not configured" warning fire again. */
+export function resetTurnstileWarning(): void {
+  warnedUnconfigured = false;
+}
+
+/**
+ * Turnstile keys for the enquiry form, or null when either is missing or blank.
+ * Both are needed: the site key renders the widget, the secret verifies it.
+ * A half-configured deploy fails closed (form hidden, POST 503) and warns once
+ * per isolate naming the missing variables, the same way an unconfigured
+ * mailer is a logged no-op rather than a crash.
+ */
+export function getTurnstileConfig(env: { TURNSTILE_SECRET_KEY?: string; TURNSTILE_SITE_KEY?: string }): TurnstileConfig | null {
+  const secretKey = typeof env.TURNSTILE_SECRET_KEY === "string" ? env.TURNSTILE_SECRET_KEY.trim() : "";
+  const siteKey = typeof env.TURNSTILE_SITE_KEY === "string" ? env.TURNSTILE_SITE_KEY.trim() : "";
+  if (secretKey && siteKey) return { secretKey, siteKey };
+  if (!warnedUnconfigured) {
+    warnedUnconfigured = true;
+    const missing = [!secretKey && "TURNSTILE_SECRET_KEY", !siteKey && "TURNSTILE_SITE_KEY"].filter(Boolean).join(" and ");
+    console.warn(`[enquiries] Turnstile not configured (${missing} unset); enquiry form disabled and POST /api/enquiries returns 503.`);
+  }
+  return null;
+}
+
 export const TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 /** Ask Cloudflare whether the Turnstile token is genuine. Any failure is a rejection. */

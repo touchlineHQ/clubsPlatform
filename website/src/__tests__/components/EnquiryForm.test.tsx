@@ -36,6 +36,14 @@ describe('EnquiryForm (#73)', () => {
     expect(container.querySelector('form')).toBeNull();
   });
 
+  it.each([null, '', '  '])('renders no form or Turnstile widget when the site key is %j', async (key) => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ...config, enabled: true, turnstileSiteKey: key })));
+    const { container } = renderWithMantine(<EnquiryForm />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(container.querySelector('form')).toBeNull();
+    expect(document.querySelector('script[src*="turnstile"]')).toBeNull();
+  });
+
   it('never renders a player email field for under 16s', async () => {
     renderWithMantine(<EnquiryForm />);
     await chooseAgeGroup('U12');

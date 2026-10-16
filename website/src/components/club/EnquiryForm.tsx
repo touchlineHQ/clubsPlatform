@@ -68,7 +68,8 @@ export function EnquiryForm() {
     return () => { cancelled = true; };
   }, [clubSlug]);
 
-  const siteKey = config?.enabled ? config.turnstileSiteKey : null;
+  // Without a site key there is no widget to render, so no form either (#73).
+  const siteKey = config?.enabled && config.turnstileSiteKey?.trim() ? config.turnstileSiteKey.trim() : null;
   useEffect(() => {
     if (!siteKey || !widgetRef.current || widgetId.current) return;
     loadTurnstile()
@@ -83,7 +84,7 @@ export function EnquiryForm() {
       .catch((e) => captureError(e, { source: 'enquiry turnstile' }));
   }, [siteKey]);
 
-  if (!config?.enabled || config.ageGroups.length === 0) return null;
+  if (!config || !siteKey || config.ageGroups.length === 0) return null;
 
   const group = config.ageGroups.find(g => g.ageGroup === ageGroup) ?? null;
   const under16 = group?.under16 ?? true;
