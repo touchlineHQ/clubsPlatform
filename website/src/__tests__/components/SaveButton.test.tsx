@@ -155,6 +155,36 @@ describe('SaveButton', () => {
   });
 });
 
+describe('SaveButton reset timer (#249)', () => {
+  it('leaves no pending timers after unmount', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    const { unmount } = renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+    await waitFor(() => expect(screen.getByText('Saved!')).toBeTruthy());
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    unmount();
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
+  });
+
+  it('still clears the result after 5 seconds while mounted', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+    await waitFor(() => expect(screen.getByText('Saved!')).toBeTruthy());
+    vi.useFakeTimers();
+    try {
+      // Timer was scheduled with real timers; re-click under fake timers to schedule a fake one.
+      fireEvent.click(screen.getByRole('button', { name: /Saved!/i }));
+      await vi.waitFor(() => expect(mockFetch.mock.calls.length).toBeGreaterThan(8));
+      await vi.runAllTimersAsync();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('SaveButton with invalid manual fixtures (#78)', () => {
   it('blocks the save and says why', () => {
     const fetchSpy = vi.fn();
