@@ -51,8 +51,9 @@ FROM_EMAIL = "noreply@touchlinehq.co.uk"
 # Player enquiry form (#73) uses Cloudflare Turnstile. TURNSTILE_SECRET_KEY is
 # a secret (`wrangler pages secret put TURNSTILE_SECRET_KEY`); TURNSTILE_SITE_KEY
 # is public and goes in each [env.*.vars] block. Both are required: if either
-# is unset or blank the form is hidden, POST /api/enquiries answers 503 and a
-# warning is logged once, so it never runs unprotected.
+# is unset or blank the form is hidden, POST /api/enquiries answers 503 after
+# the honeypot check (honeypot hits still get 200) and a warning is logged
+# once, so it never runs unprotected.
 # No Cron Trigger here: Pages Functions cannot run them, so the 6-month purge of
 # stale enquiry contacts runs on each submission and admin list load instead.
 # Uncomment to enable pitch booking features (pitch schedule, booking requests)

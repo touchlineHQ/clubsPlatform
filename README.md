@@ -391,9 +391,10 @@ npx wrangler pages secret put TURNSTILE_SECRET_KEY --project-name clubsplatform 
 
 **It fails closed.** `getTurnstileConfig()` returns `null` unless **both** are
 set and non-blank. Then `GET /api/enquiries` reports `enabled: false` with no
-site key, the form renders nothing (no broken widget), `POST /api/enquiries`
-answers `503 "Enquiries are not configured for this club yet"` without storing
-anything, and a warning naming the missing variable is logged once per
+site key, the form renders nothing (no broken widget), and (after the honeypot
+check) `POST /api/enquiries` answers `503 "Enquiries are not configured for this
+club yet"` without storing anything — honeypot hits still get `200` and store
+nothing. A warning naming the missing variable is logged once per
 isolate. It never accepts unverified enquiries: a public form that stores
 contact details and sends mail is not safe on the honeypot and rate limit
 alone. If the form is missing from a club site, check these first.
