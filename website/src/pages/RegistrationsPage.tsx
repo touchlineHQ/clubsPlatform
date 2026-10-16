@@ -13,6 +13,7 @@ import { RegistrationsSummary } from './registrations/RegistrationsSummary';
 import { RegistrationsTable } from './registrations/RegistrationsTable';
 import { ClubRegistrationsTab } from './registrations/ClubRegistrationsTab';
 import { TeamBreakdownTab } from './registrations/TeamBreakdownTab';
+import { EnquiriesTab } from './registrations/EnquiriesTab';
 import type { RegistrationRow, SubscriptionLevel } from './registrations/types';
 
 interface PersonalResponse {
@@ -204,6 +205,7 @@ export function RegistrationsPage() {
             <Tabs.Tab value="mine">My Registrations</Tabs.Tab>
             <Tabs.Tab value="club">Club Registrations</Tabs.Tab>
             <Tabs.Tab value="teams">Team Breakdown</Tabs.Tab>
+            <Tabs.Tab value="enquiries">Enquiries</Tabs.Tab>
           </Tabs.List>
           <Tabs.Panel value="mine" pt="lg">{personalContent}</Tabs.Panel>
           <Tabs.Panel value="club" pt="lg">
@@ -220,6 +222,9 @@ export function RegistrationsPage() {
           </Tabs.Panel>
           <Tabs.Panel value="teams" pt="lg">
             <TeamBreakdownTab clubSlug={clubSlug} reloadToken={reloadToken} />
+          </Tabs.Panel>
+          <Tabs.Panel value="enquiries" pt="lg">
+            <EnquiriesTab clubSlug={clubSlug} />
           </Tabs.Panel>
         </Tabs>
       ) : (

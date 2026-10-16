@@ -325,6 +325,27 @@
     ]
   },
   {
+    "event": "player enquiry deleted",
+    "description": "Secretary erased a player enquiry with one-click delete (#73). Enquiry id only.",
+    "files": [
+      "functions/api/admin/enquiries.ts"
+    ]
+  },
+  {
+    "event": "player enquiry status changed",
+    "description": "Secretary moved a player enquiry to a new status (#73). Enquiry id and status only.",
+    "files": [
+      "functions/api/admin/enquiries.ts"
+    ]
+  },
+  {
+    "event": "player enquiry submitted",
+    "description": "Public player enquiry stored (#73). Age group, enquirer type and whether a team was chosen; never contact details.",
+    "files": [
+      "functions/api/enquiries.ts"
+    ]
+  },
+  {
     "event": "player payment deactivated",
     "description": "An admin marks a player's payment as inactive.",
     "files": [

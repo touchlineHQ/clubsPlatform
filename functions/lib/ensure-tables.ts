@@ -30,6 +30,12 @@ export const TABLE_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "idx_matchday_item_sortOrder" ON "matchday_item" ("sortOrder")`,
   `CREATE TABLE IF NOT EXISTS "manual_fixture" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "team" TEXT NOT NULL, "date" TEXT NOT NULL, "time" TEXT NOT NULL DEFAULT '', "homeAway" TEXT NOT NULL CHECK("homeAway" IN ('home', 'away')), "opponent" TEXT NOT NULL, "venue" TEXT NOT NULL DEFAULT '', "competition" TEXT NOT NULL DEFAULT '', "homeScore" INTEGER, "awayScore" INTEGER, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_manual_fixture_club_date" ON "manual_fixture" ("clubSlug", "date")`,
+  // Player enquiries (#73) — see migrations/0038.
+  `CREATE TABLE IF NOT EXISTS "player_enquiry" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "ageGroup" TEXT NOT NULL, "team" TEXT, "enquirerType" TEXT NOT NULL CHECK("enquirerType" IN ('guardian', 'player')), "contactName" TEXT, "contactEmail" TEXT, "contactPhone" TEXT, "playerFirstName" TEXT, "status" TEXT NOT NULL DEFAULT 'new' CHECK("status" IN ('new', 'contacted', 'fa_sent', 'registered', 'declined')), "consentAt" INTEGER NOT NULL, "contactPurgedAt" INTEGER, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_enquiry_club_created" ON "player_enquiry" ("clubSlug", "createdAt")`,
+  `CREATE INDEX IF NOT EXISTS "idx_player_enquiry_stale" ON "player_enquiry" ("contactPurgedAt", "updatedAt")`,
+  `CREATE TABLE IF NOT EXISTS "enquiry_rate_limit" ("key" TEXT PRIMARY KEY NOT NULL, "count" INTEGER NOT NULL, "windowStart" INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "idx_enquiry_rate_limit_window" ON "enquiry_rate_limit" ("windowStart")`,
   `CREATE TABLE IF NOT EXISTS "pitch" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "name" TEXT NOT NULL, "formats" TEXT NOT NULL, "description" TEXT, "active" INTEGER NOT NULL DEFAULT 1)`,
   `CREATE TABLE IF NOT EXISTS "booking_request" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "teamSlug" TEXT, "teamLeague" TEXT, "date" TEXT NOT NULL, "timeStart" TEXT NOT NULL, "timeEnd" TEXT NOT NULL, "format" TEXT NOT NULL, "notes" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "declineReason" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS "idx_booking_request_userId" ON "booking_request" ("userId")`,

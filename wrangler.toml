@@ -48,6 +48,12 @@ FROM_EMAIL = "noreply@touchlinehq.co.uk"
 #   node -e "const c=require('crypto');const {privateKey,publicKey}=c.generateKeyPairSync('rsa',{modulusLength:2048,publicKeyEncoding:{type:'spki',format:'der'},privateKeyEncoding:{type:'pkcs8',format:'der'}});console.log('SECRETS_TRANSPORT_PRIVATE_KEY='+privateKey.toString('base64'));console.log('SECRETS_TRANSPORT_PUBLIC_KEY='+publicKey.toString('base64'));"
 # SECRETS_TRANSPORT_PRIVATE_KEY → Cloudflare dashboard secrets (never commit); for local dev add to .dev.vars
 # SECRETS_TRANSPORT_PUBLIC_KEY  → not sensitive; add to .dev.vars and set below (or in dashboard)
+# Player enquiry form (#73) uses Cloudflare Turnstile. TURNSTILE_SECRET_KEY is
+# a secret (`wrangler pages secret put TURNSTILE_SECRET_KEY`); TURNSTILE_SITE_KEY
+# is public and goes in each [env.*.vars] block. With no secret the form is
+# hidden and POST /api/enquiries answers 503, so it never runs unprotected.
+# No Cron Trigger here: Pages Functions cannot run them, so the 6-month purge of
+# stale enquiry contacts runs on each submission and admin list load instead.
 # Uncomment to enable pitch booking features (pitch schedule, booking requests)
 # PITCH_BOOKINGS = "true"
 
