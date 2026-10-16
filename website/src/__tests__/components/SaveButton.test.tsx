@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SaveButton } from '../../components/customize/SaveButton';
 import { renderWithMantine, mockSingleClub } from '../test-utils';
 import { captureError, captureEvent } from '../../lib/posthog';
@@ -168,17 +168,35 @@ describe('SaveButton reset timer (#249)', () => {
   });
 
   it('still clears the result after 5 seconds while mounted', async () => {
-    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
-    renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
-    fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
-    await waitFor(() => expect(screen.getByText('Saved!')).toBeTruthy());
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      // Timer was scheduled with real timers; re-click under fake timers to schedule a fake one.
-      fireEvent.click(screen.getByRole('button', { name: /Saved!/i }));
-      await vi.waitFor(() => expect(mockFetch.mock.calls.length).toBeGreaterThan(8));
-      await vi.runAllTimersAsync();
-      expect(vi.getTimerCount()).toBe(0);
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+      renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+      fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+      await waitFor(() => expect(screen.getByText('Saved!')).toBeTruthy());
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByRole('button', { name: /Save to Site/i })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule a reset timer when a save finishes after unmount', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const pending: Array<(v: unknown) => void> = [];
+      mockFetch.mockImplementation(() => new Promise((r) => { pending.push(r); }));
+      const { unmount } = renderWithMantine(<SaveButton data={appData} />, { clubValue: mockSingleClub });
+      fireEvent.click(screen.getByRole('button', { name: /Save to Site/i }));
+      await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+      unmount();
+      const setSpy = vi.spyOn(globalThis, 'setTimeout');
+      pending.forEach((r) => r({ ok: true, json: async () => ({}) }));
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      await vi.waitFor(() => expect(window.location.reload).toHaveBeenCalled());
+      await act(async () => { await Promise.resolve(); });
+      expect(setSpy.mock.calls.some(([, ms]) => ms === 5000)).toBe(false);
+      setSpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }

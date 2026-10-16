@@ -18,8 +18,13 @@ export function SaveButton({ data, onSaved }: Props) {
   // The reset timer must not outlive the component: in tests it fired after
   // jsdom teardown and crashed CI with "window is not defined" (#249).
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (resetTimer.current) clearTimeout(resetTimer.current);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
   }, []);
 
   const h = (): HeadersInit => ({ 'Content-Type': 'application/json', 'X-Club-Slug': clubSlug });
@@ -61,7 +66,9 @@ export function SaveButton({ data, onSaved }: Props) {
     } finally {
       setSaving(false);
       if (resetTimer.current) clearTimeout(resetTimer.current);
-      resetTimer.current = setTimeout(() => setResult(null), 5000);
+      // A save still in flight at unmount must not schedule a timer the
+      // cleanup has already missed.
+      if (mounted.current) resetTimer.current = setTimeout(() => setResult(null), 5000);
     }
   };
 
