@@ -11,6 +11,7 @@ import {
   loadFormOptions,
   purgeStaleEnquiries,
   validateEnquiry,
+  getTurnstileConfig,
   verifyTurnstile,
   type EnquiryInput,
 } from "../lib/enquiries";
@@ -22,8 +23,10 @@ import {
  * POST → store a lead, email the secretary, acknowledge the enquirer.
  *
  * Abuse protection, in order: honeypot (silently accepted, never stored),
- * per-IP hourly rate limit, Turnstile. The form is refused outright when
- * Turnstile is not configured, rather than running unprotected.
+ * per-IP hourly rate limit, Turnstile. The form fails closed when Turnstile is
+ * not fully configured (TURNSTILE_SECRET_KEY or TURNSTILE_SITE_KEY unset or
+ * blank): GET reports it disabled, POST answers 503, and a warning is logged
+ * once. It never runs unprotected.
  */
 
 /** The decoy field. Real visitors never see it; bots fill it in. */
@@ -34,8 +37,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
   const options = await loadFormOptions(context.env.DB, clubSlug);
-  const siteKey = context.env.TURNSTILE_SECRET_KEY ? context.env.TURNSTILE_SITE_KEY ?? null : null;
-  return json({ ...options, turnstileSiteKey: siteKey, enabled: !!siteKey });
+  const turnstile = getTurnstileConfig(context.env);
+  return json({ ...options, turnstileSiteKey: turnstile?.siteKey ?? null, enabled: !!turnstile });
 };
 
 async function faRegistrationUrl(db: D1Database, clubSlug: string): Promise<string> {
@@ -121,8 +124,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const trap = body[HONEYPOT_FIELD];
   if (typeof trap === "string" && trap.trim() !== "") return json({ ok: true });
 
-  if (!env.TURNSTILE_SECRET_KEY) {
-    return json({ error: "Enquiries are not available yet" }, { status: 503 });
+  const turnstile = getTurnstileConfig(env);
+  if (!turnstile) {
+    return json({ error: "Enquiries are not configured for this club yet" }, { status: 503 });
   }
 
   const options = await loadFormOptions(env.DB, clubSlug);
@@ -138,7 +142,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const token = typeof body.turnstileToken === "string" ? body.turnstileToken : "";
-  if (!(await verifyTurnstile(env.TURNSTILE_SECRET_KEY, token, ip === "unknown" ? null : ip))) {
+  if (!(await verifyTurnstile(turnstile.secretKey, token, ip === "unknown" ? null : ip))) {
     return json({ error: "Could not verify you are not a robot. Please try again." }, { status: 403 });
   }
 

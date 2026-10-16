@@ -374,6 +374,31 @@ No scouts (scheduled agents that comb the data on a timer) are configured. The
 error tracking source emits on its own, so a scout would add cost without
 adding coverage at this volume.
 
+### Player enquiry form (Turnstile)
+
+The public enquiry form (#73) is protected by a honeypot, a per-IP hourly rate
+limit and [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/).
+
+| Value | Where it is set | Notes |
+|-------|-----------------|-------|
+| `TURNSTILE_SECRET_KEY` | Pages **secret**, per environment | Verifies tokens server-side. |
+| `TURNSTILE_SITE_KEY` | `wrangler.toml`, in **both** env blocks | Public; renders the widget. |
+
+```sh
+npx wrangler pages secret put TURNSTILE_SECRET_KEY --project-name clubsplatform
+npx wrangler pages secret put TURNSTILE_SECRET_KEY --project-name clubsplatform --env preview
+```
+
+**It fails closed.** `getTurnstileConfig()` returns `null` unless **both** are
+set and non-blank. Then `GET /api/enquiries` reports `enabled: false` with no
+site key, the form renders nothing (no broken widget), and (after the honeypot
+check) `POST /api/enquiries` answers `503 "Enquiries are not configured for this
+club yet"` without storing anything — honeypot hits still get `200` and store
+nothing. A warning naming the missing variable is logged once per
+isolate. It never accepts unverified enquiries: a public form that stores
+contact details and sends mail is not safe on the honeypot and rate limit
+alone. If the form is missing from a club site, check these first.
+
 ## API Secrets
 
 Club admins can store encrypted API keys (e.g. `GC_ACCESS_TOKEN`) via the **API Secrets** page in the admin dashboard (`/#/admin/secrets`). Values are encrypted in the browser before transmission and stored with AES-256-GCM — the plaintext never touches the network or the database.

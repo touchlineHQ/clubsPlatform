@@ -13,7 +13,7 @@ vi.mock('../../lib/email', () => ({
 
 import { onRequestGet, onRequestPost, HONEYPOT_FIELD } from '../../api/enquiries';
 import * as admin from '../../api/admin/enquiries';
-import { RATE_LIMIT_PER_HOUR, STALE_AFTER_MS, TURNSTILE_VERIFY_URL, purgeStaleEnquiries } from '../../lib/enquiries';
+import { RATE_LIMIT_PER_HOUR, STALE_AFTER_MS, TURNSTILE_VERIFY_URL, purgeStaleEnquiries, getTurnstileConfig, resetTurnstileWarning } from '../../lib/enquiries';
 
 const CLUB = { 'X-Club-Slug': 'test-club', 'CF-Connecting-IP': '203.0.113.9' };
 const ENV = { TURNSTILE_SECRET_KEY: 'secret', TURNSTILE_SITE_KEY: 'site' };
@@ -120,6 +120,50 @@ describe('/api/enquiries (#73)', () => {
 
   it('refuses submissions when Turnstile is not configured', async () => {
     expect((await post(enquiry(), { TURNSTILE_SECRET_KEY: undefined })).status).toBe(503);
+  });
+
+  describe('Turnstile env guard', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => { resetTurnstileWarning(); warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => { warn.mockRestore(); });
+
+    const getConfig = async (over: Record<string, unknown>) =>
+      (await onRequestGet(makeContext(getReq('/api/enquiries', CLUB), { env: env(over) }) as any)).json() as Promise<any>;
+
+    it('unset secret: GET disabled, POST 503 without verifying or storing, warns once', async () => {
+      const over = { TURNSTILE_SECRET_KEY: undefined };
+      expect(await getConfig(over)).toMatchObject({ turnstileSiteKey: null, enabled: false });
+      const res = await post(enquiry(), over);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ error: 'Enquiries are not configured for this club yet' });
+      expect(turnstile).not.toHaveBeenCalled();
+      expect(rows()).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('TURNSTILE_SECRET_KEY');
+    });
+
+    it('unset site key: GET does not hand out a widget, POST 503, warns once', async () => {
+      const over = { TURNSTILE_SITE_KEY: undefined };
+      expect(await getConfig(over)).toMatchObject({ turnstileSiteKey: null, enabled: false });
+      expect((await post(enquiry(), over)).status).toBe(503);
+      expect(turnstile).not.toHaveBeenCalled();
+      expect(rows()).toHaveLength(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('TURNSTILE_SITE_KEY');
+    });
+
+    it('blank values count as unset', async () => {
+      expect(getTurnstileConfig({ TURNSTILE_SECRET_KEY: '  ', TURNSTILE_SITE_KEY: '' })).toBeNull();
+      expect(String(warn.mock.calls[0][0])).toContain('TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY');
+    });
+
+    it('both set: form enabled, submission verified and stored, no warning', async () => {
+      expect(await getConfig({})).toMatchObject({ turnstileSiteKey: 'site', enabled: true });
+      expect((await post(enquiry())).status).toBe(200);
+      expect(turnstile).toHaveBeenCalledWith(TURNSTILE_VERIFY_URL, expect.anything());
+      expect(rows()).toHaveLength(1);
+      expect(warn).not.toHaveBeenCalled();
+    });
   });
 
   it('silently drops honeypot submissions', async () => {

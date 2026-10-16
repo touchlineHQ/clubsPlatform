@@ -36,6 +36,23 @@ describe('EnquiryForm (#73)', () => {
     expect(container.querySelector('form')).toBeNull();
   });
 
+  it.each([null, '', '  '])('renders no form or Turnstile widget when the site key is %j', async (key) => {
+    let configRead = false;
+    const payload = { ...config, enabled: true, turnstileSiteKey: key };
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => { configRead = true; return payload; },
+    } as Response);
+    const { container } = renderWithMantine(<EnquiryForm />);
+    // Wait until the component has consumed the config response, not merely
+    // until fetch was invoked (which can race ahead of setConfig).
+    await waitFor(() => expect(configRead).toBe(true));
+    await waitFor(() => {
+      expect(container.querySelector('form')).toBeNull();
+      expect(document.querySelector('script[src*="turnstile"]')).toBeNull();
+    });
+  });
+
   it('never renders a player email field for under 16s', async () => {
     renderWithMantine(<EnquiryForm />);
     await chooseAgeGroup('U12');
