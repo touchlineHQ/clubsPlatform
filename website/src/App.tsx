@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { Alert, Anchor, AppShell, Center, Loader, MantineProvider } from '@mantine/core';
+import { Alert, Anchor, AppShell, Button, Center, Loader, MantineProvider } from '@mantine/core';
 import { IconEyeOff } from '@tabler/icons-react';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
-import { loadAllData, loadClubRegistry } from './data';
+import { ClubNotFoundError, loadAllData, loadClubRegistry } from './data';
 import type { AppData, ClubEntry } from './types';
 import { createClubTheme, createLandingTheme, clubCssVariablesResolver } from './theme';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -25,7 +25,7 @@ import { MatchdayPage } from './pages/MatchdayPage';
 import { ContactPage } from './pages/ContactPage';
 import { PrivacyNoticePage } from './pages/PrivacyNoticePage';
 import { ParentConsentPage } from './pages/ParentConsentPage';
-import { pageview } from './lib/posthog';
+import { captureError, pageview } from './lib/posthog';
 import { FixturesResultsPage } from './pages/FixturesResultsPage';
 import { TeamPage } from './pages/TeamPage';
 import { CustomizePage } from './pages/CustomizePage';
@@ -71,6 +71,8 @@ function AppRoutes() {
   const [registry, setRegistry] = useState<{ multiClub: boolean; selfRegister: boolean; pitchBookings: boolean; clubs: ClubEntry[] } | null>(null);
   const [clubSlug, setClubSlug] = useState<string | null>(null);
   const [fetchedData, setFetchedData] = useState<AppData | null>(null);
+  // Why the club data couldn't be loaded, so the page stops spinning (#154).
+  const [loadFailure, setLoadFailure] = useState<'not-found' | 'error' | null>(null);
   const [editingData, setEditingData] = useState<AppData | null>(null);
   const [previewData, setPreviewData] = useState<AppData | null>(null);
   const [opened, { toggle, close }] = useDisclosure();
@@ -113,9 +115,28 @@ function AppRoutes() {
   // Step 2: once we have a club slug, load all club data. Skipped while the
   // club is private and the viewer isn't one of its admins: GET /api/club
   // answers 404 for them, which would reject here and hang on the loader.
+  //
+  // It can still reject: a stale registry, a club deactivated since, or an
+  // admin whose session lapsed all come back 404. That's an expected answer,
+  // shown as the private-club notice; anything else is reported and offered a
+  // retry. Either way the loader no longer hangs (#154).
   useEffect(() => {
     if (!clubSlug || !registry || !canViewSite) return;
-    loadAllData(clubSlug, registry.multiClub).then(setFetchedData);
+    let cancelled = false;
+    setLoadFailure(null);
+    loadAllData(clubSlug, registry.multiClub).then(
+      (loaded) => { if (!cancelled) setFetchedData(loaded); },
+      (err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof ClubNotFoundError) {
+          setLoadFailure('not-found');
+        } else {
+          captureError(err, { stage: 'load club data' });
+          setLoadFailure('error');
+        }
+      },
+    );
+    return () => { cancelled = true; };
   }, [clubSlug, registry, canViewSite]);
 
   const data = previewData ?? fetchedData;
@@ -193,7 +214,7 @@ function AppRoutes() {
   // Private club, and the viewer isn't one of its admins. Only /login and
   // /signup stay mounted so an admin arriving cold can still sign in; every
   // other route is turned away by PrivateClubNotice.
-  if (clubSlug && !clubPublished && !canViewPrivate) {
+  if (clubSlug && ((!clubPublished && !canViewPrivate) || loadFailure === 'not-found')) {
     if (authLoading) {
       return (
         <Center h="100vh">
@@ -218,6 +239,19 @@ function AppRoutes() {
           </HashRouter>
         </MantineProvider>
       </ClubContext.Provider>
+    );
+  }
+
+  if (!data && loadFailure === 'error') {
+    return (
+      <Center h="100vh" px="md">
+        <Alert variant="light" color="red" radius="md" title="Couldn't load this club" maw={420}>
+          Something went wrong loading the site.{' '}
+          <Button variant="subtle" size="compact-sm" onClick={() => window.location.reload()}>
+            Try again
+          </Button>
+        </Alert>
+      </Center>
     );
   }
 

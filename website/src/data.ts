@@ -135,8 +135,22 @@ function clubHeaders(clubSlug: string): HeadersInit {
   return { 'X-Club-Slug': clubSlug };
 }
 
+/**
+ * GET /api/club answered 404: the club doesn't exist, has been deactivated, or
+ * is private and this viewer isn't on its committee (the API deliberately
+ * gives all three the same answer). An expected outcome, not a crash, so the
+ * app shows a notice instead of reporting it (#154).
+ */
+export class ClubNotFoundError extends Error {
+  constructor(clubSlug: string) {
+    super(`Club not found: ${clubSlug}`);
+    this.name = 'ClubNotFoundError';
+  }
+}
+
 async function loadClubFromApi(clubSlug: string): Promise<Club> {
   const res = await fetch('/api/club', { headers: clubHeaders(clubSlug) });
+  if (res.status === 404) throw new ClubNotFoundError(clubSlug);
   if (!res.ok) throw new Error(`Failed to load club: ${res.status}`);
   return res.json() as Promise<Club>;
 }
