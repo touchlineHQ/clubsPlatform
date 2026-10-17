@@ -7,9 +7,17 @@ const renderApp = (ui: React.ReactElement) => render(<MantineProvider>{ui}</Mant
 
 const mockLoadClubRegistry = vi.hoisted(() => vi.fn());
 const mockLoadAllData = vi.hoisted(() => vi.fn());
+const MockClubNotFoundError = vi.hoisted(() => class ClubNotFoundError extends Error {});
 vi.mock('../data', () => ({
   loadClubRegistry: mockLoadClubRegistry,
   loadAllData: mockLoadAllData,
+  ClubNotFoundError: MockClubNotFoundError,
+}));
+
+const mockCaptureError = vi.hoisted(() => vi.fn());
+vi.mock('../lib/posthog', () => ({
+  pageview: vi.fn(),
+  captureError: mockCaptureError,
 }));
 
 vi.mock('react-router-dom', () => ({
@@ -265,6 +273,57 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByTestId('landing-page')).toBeTruthy();
     });
+  });
+});
+
+describe('App — club data fails to load (#154)', () => {
+  const liveMultiClubRegistry = {
+    multiClub: true,
+    selfRegister: false,
+    pitchBookings: false,
+    clubs: [{ id: 'c1', slug: 'test-club', name: 'Test FC', published: true }],
+  };
+
+  const atClubPath = () => Object.defineProperty(window, 'location', {
+    writable: true,
+    value: { hash: '', pathname: '/test-club/', replace: vi.fn(), reload: vi.fn() },
+  });
+
+  it('shows the notice, not an endless loader, when the API answers 404', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(liveMultiClubRegistry);
+    mockLoadAllData.mockRejectedValue(new MockClubNotFoundError('test-club'));
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Not live yet')).toBeTruthy();
+    });
+    expect(document.querySelector('.mantine-Loader-root')).toBeNull();
+    // A 404 is an expected answer, not an exception worth alerting on.
+    expect(mockCaptureError).not.toHaveBeenCalled();
+  });
+
+  it('keeps the login page reachable after a 404 so a lapsed admin can sign back in', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(liveMultiClubRegistry);
+    mockLoadAllData.mockRejectedValue(new MockClubNotFoundError('test-club'));
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByText('Login')).toBeTruthy();
+    });
+  });
+
+  it('reports any other failure and offers a retry', async () => {
+    atClubPath();
+    mockLoadClubRegistry.mockResolvedValue(liveMultiClubRegistry);
+    const boom = new Error('Failed to load club: 500');
+    mockLoadAllData.mockRejectedValue(boom);
+    renderApp(<App />);
+    await waitFor(() => {
+      expect(screen.getByText("Couldn't load this club")).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(mockCaptureError).toHaveBeenCalledWith(boom, { stage: 'load club data' });
+    expect(screen.queryByText('Not live yet')).toBeNull();
   });
 });
 

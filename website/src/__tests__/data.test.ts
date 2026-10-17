@@ -7,6 +7,7 @@ import {
   loadTeamFeed,
   loadClubRegistry,
   loadAllData,
+  ClubNotFoundError,
 } from '../data';
 
 const mockFetch = vi.fn();
@@ -282,6 +283,22 @@ function makeSingleClubFetch() {
     return Promise.resolve({ ok: false });
   };
 }
+
+describe('loadAllData (multi-club) — GET /api/club failures (#154)', () => {
+  it('throws ClubNotFoundError when the API answers 404', async () => {
+    mockFetch.mockImplementation((url: string) =>
+      Promise.resolve(url.toString().includes('/api/club') ? { ok: false, status: 404 } : { ok: false, status: 500 }));
+    await expect(loadAllData('gone-club', true)).rejects.toBeInstanceOf(ClubNotFoundError);
+  });
+
+  it('throws a plain error for any other failure status', async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    const err = await loadAllData('test-club', true).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ClubNotFoundError);
+    expect((err as Error).message).toBe('Failed to load club: 503');
+  });
+});
 
 describe('loadAllData (single-club)', () => {
   it('returns AppData with club from static file', async () => {
