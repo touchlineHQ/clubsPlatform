@@ -1,4 +1,5 @@
 import { D1Database } from "@cloudflare/workers-types";
+import { retryTransientD1 } from "./d1-retry";
 
 /**
  * The full current schema, idempotent.
@@ -183,7 +184,9 @@ let ensureTablesPromise: Promise<void> | null = null;
 export const ensureTables = (db: D1Database): Promise<void> => {
   if (!ensureTablesPromise) {
     ensureTablesPromise = (async () => {
-      await db.exec(ALL_SQL);
+      // Idempotent (IF NOT EXISTS / OR IGNORE) but not read-only, so D1 will
+      // not retry it on a transient error itself (#251).
+      await retryTransientD1(() => db.exec(ALL_SQL));
       // Run column migrations individually — each may fail if the column already exists
       for (const sql of COLUMN_MIGRATIONS) {
         try { await db.prepare(sql).run(); } catch { /* column already exists */ }

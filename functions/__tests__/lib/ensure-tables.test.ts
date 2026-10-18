@@ -65,4 +65,27 @@ describe('ensureTables', () => {
     await ensureTables(db);
     expect(execMock).toHaveBeenCalledTimes(2);
   });
+
+  it('retries db.exec on a transient D1 error instead of failing the request (#251)', async () => {
+    const execMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('D1_ERROR: Network connection lost.'))
+      .mockResolvedValue({ results: [], count: 0, duration: 0 });
+    const runMock = vi.fn(async () => ({ results: [], success: true, meta: { changes: 0 } }));
+    const db = {
+      exec: execMock,
+      prepare: vi.fn(() => ({ run: runMock, bind: vi.fn(() => ({ run: runMock })) })),
+    } as unknown as D1Database;
+
+    await expect(ensureTables(db)).resolves.toBeUndefined();
+    expect(execMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry db.exec on a non-transient error', async () => {
+    const execMock = vi.fn(async () => { throw new Error('D1_ERROR: near "x": syntax error'); });
+    const db = { exec: execMock, prepare: vi.fn() } as unknown as D1Database;
+
+    await expect(ensureTables(db)).rejects.toThrow('syntax error');
+    expect(execMock).toHaveBeenCalledOnce();
+  });
 });
