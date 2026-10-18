@@ -294,10 +294,12 @@ describe('App — club data fails to load (#154)', () => {
     mockLoadClubRegistry.mockResolvedValue(liveMultiClubRegistry);
     mockLoadAllData.mockRejectedValue(new MockClubNotFoundError('test-club'));
     renderApp(<App />);
+    // Wait for both: notice visible AND every Loader gone. Asserting the
+    // loader outside waitFor races a still-resolving Suspense/lazy Loader on CI.
     await waitFor(() => {
       expect(screen.getByText('Not live yet')).toBeTruthy();
+      expect(document.querySelector('.mantine-Loader-root')).toBeNull();
     });
-    expect(document.querySelector('.mantine-Loader-root')).toBeNull();
     // A 404 is an expected answer, not an exception worth alerting on.
     expect(mockCaptureError).not.toHaveBeenCalled();
   });
@@ -320,6 +322,7 @@ describe('App — club data fails to load (#154)', () => {
     renderApp(<App />);
     await waitFor(() => {
       expect(screen.getByText("Couldn't load this club")).toBeTruthy();
+      expect(document.querySelector('.mantine-Loader-root')).toBeNull();
     });
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
     expect(mockCaptureError).toHaveBeenCalledWith(boom, { stage: 'load club data' });
