@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  // Lint only. Formatting is deliberately off: the repo has no agreed style,
+  // and turning the formatter on means one large mechanical diff (see #101).
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    // Source only. Test files are out of scope until the #102 boundary is
+    // settled; the generated OpenAPI types are not ours to lint.
+    "includes": [
+      "functions/**/*.ts",
+      "website/src/**/*.{ts,tsx}",
+      "!**/__tests__",
+      "!**/*.test.{ts,tsx}",
+      "!website/src/api/schema.d.ts"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      // Posture: errors block, warnings are a visible baseline that does not
+      // fail `npm run lint`. The rules below are recommended-as-error but
+      // already have many hits on main, and fixing them changes behaviour,
+      // so they start as warnings. Promote each back to "error" once its
+      // count reaches zero.
+      "correctness": {
+        // 41 hits on main. Adding the missing deps changes when effects
+        // re-run, so each one needs its own look rather than a mass edit.
+        "useExhaustiveDependencies": "warn"
+      },
+      "suspicious": {
+        // 35 hits on main, mostly static lists where index keys are harmless.
+        "noArrayIndexKey": "warn"
+      },
+      "security": {
+        // 4 hits: club-admin-authored HTML (home banner, about/matchday copy).
+        // Kept visible as warnings; sanitising it is a separate change.
+        "noDangerouslySetInnerHtml": "warn"
+      }
+    }
+  }
+}

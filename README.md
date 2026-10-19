@@ -37,6 +37,7 @@ make db-migrate-prod    # Apply migrations to production D1
 ### Checks
 
 ```bash
+npm run lint         # Biome over functions/ and website/src (source, not tests)
 npm run typecheck    # tsc over functions/, website/src, and their tests
 npm run test         # vitest, both halves
 npm run test:coverage   # same, with the 80% thresholds enforced
@@ -68,7 +69,17 @@ against the root one (where vitest and `@testing-library/*` live). Root
 `@testing-library/*` as devDependencies so vitest can run the website's tests
 from the repo root.
 
-There is no `npm run lint` yet — no linter is configured in this repo.
+**Linting is [Biome](https://biomejs.dev), lint only** — the formatter is
+switched off in `biome.jsonc`, so it never rewrites style. ESLint was the first
+choice for `eslint-plugin-react-hooks`, but typescript-eslint cannot parse with
+TypeScript 7 (it needs the JS compiler API, which TS 7 no longer ships), while
+Biome has its own parser and its own hooks rules
+(`useExhaustiveDependencies`, `useHookAtTopLevel`). Errors fail `npm run lint`;
+warnings are a baseline that does not. A few recommended rules start as
+warnings because main already has many hits and fixing them changes behaviour —
+the reasons are commented next to each in `biome.jsonc`. Promote a rule back to
+`error` once its count is zero. Test files are not linted yet (see #102).
+Editor integration: install the Biome extension and it picks up `biome.jsonc`.
 
 ### Data protection
 
