@@ -76,14 +76,31 @@ describe('GET /api/health', () => {
       expect(text).not.toContain('D1_ERROR');
       expect(text).not.toMatch(/\bat .*:\d+:\d+/);
       const body = JSON.parse(text) as Record<string, any>;
-      expect(body.tables_error).toBeTruthy();
-      expect(body.migrations_error).toBeTruthy();
+      const failureFields = [
+        'tables_error',
+        'migrations_error',
+        'exec_test',
+        'tables_after_test_error',
+        'user_table_exec',
+        'tables_final_error',
+      ];
+      for (const field of failureFields) {
+        expect(body).toHaveProperty(field);
+        const value = JSON.stringify(body[field]);
+        expect(value).not.toContain(secret);
+        expect(value).not.toContain('D1_ERROR');
+        expect(value).not.toMatch(/\bat .*:\d+:\d+/);
+      }
       expect(body.exec_test).toMatchObject({ success: false });
       expect(body.user_table_exec).toMatchObject({ success: false });
-      expect(body.tables_final_error).toBeTruthy();
-      expect(errSpy).toHaveBeenCalled();
-      const logged = errSpy.mock.calls.flat().some((a) => a instanceof Error && a.message === secret);
-      expect(logged).toBe(true);
+      const checks = ['tables', 'migrations', 'exec_test', 'tables_after_test', 'user_table_exec', 'tables_final'];
+      for (const check of checks) {
+        const logged = errSpy.mock.calls.some(
+          ([message, error]) =>
+            message === `[health] ${check} check failed` && error instanceof Error && error.message === secret,
+        );
+        expect(logged, `missing log for ${check}`).toBe(true);
+      }
     });
   });
 });
