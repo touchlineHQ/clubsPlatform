@@ -8,6 +8,7 @@ import {
 import { getPostHog, clubGroups } from "../../lib/posthog";
 import {
   ContactPurgeError,
+  type ContactPurgeResult,
   purgeContactsForClub,
   purgeContactsForTeam,
   purgePlayerContact,
@@ -68,7 +69,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   try {
-    let purged;
+    let purged: ContactPurgeResult[];
     let remaining = 0;
     let nextCursor: string | null = null;
     let scope: "contact" | "team" | "club";
