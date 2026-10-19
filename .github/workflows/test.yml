@@ -35,6 +35,10 @@ jobs:
       # vitest strips its types with esbuild and never checks them.
       - name: Typecheck
         run: npm run typecheck
+      # Biome over functions/ and website/src source (see biome.jsonc).
+      # Errors fail the gate; warnings are the documented baseline.
+      - name: Lint
+        run: npm run lint
 
       # The generator is isolated in website/tools/openapi (TS 5.x); fail if
       # the committed schema.d.ts is out of sync with openapi.yaml.

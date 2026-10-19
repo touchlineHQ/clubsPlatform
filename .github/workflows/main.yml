@@ -35,6 +35,9 @@ jobs:
       # stops the release rather than shipping.
       - name: Typecheck
         run: npm run typecheck
+      # Same lint gate as test.yml, so a lint error also stops the release.
+      - name: Lint
+        run: npm run lint
       - name: Run tests with coverage
         run: npm run test:coverage
 
