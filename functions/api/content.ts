@@ -138,6 +138,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
     return json({ error: "Invalid file path" }, { status: 400 });
   } catch (err) {
-    return json({ error: "Failed to save", details: String(err) }, { status: 500 });
+    console.error("[content] failed to save", err);
+    return json({ error: "Failed to save" }, { status: 500 });
   }
 };

@@ -567,6 +567,25 @@ describe('content POST (bulk import)', () => {
     expect(body.ok).toBe(true);
   });
 
+  it('returns a generic 500 without error details when the save fails, and logs it', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const secret = 'D1_ERROR: secret internal detail';
+    const db = makeDb() as any;
+    db.batch = async () => { throw new Error(secret); };
+    const req = postReq('/api/content', {
+      file: 'website/public/data/news.json',
+      content: { items: [] },
+    });
+    const ctx = makeContext(req, { env: { DB: db } });
+    const res = await contentPost(ctx as any);
+    expect(res.status).toBe(500);
+    const text = await res.text();
+    expect(text).not.toContain(secret);
+    expect(JSON.parse(text)).toEqual({ error: 'Failed to save' });
+    expect(errSpy.mock.calls.flat().some((a) => a instanceof Error && a.message === secret)).toBe(true);
+    errSpy.mockRestore();
+  });
+
   it('returns 400 for an invalid file path', async () => {
     const req = postReq('/api/content', {
       file: 'website/public/data/unknown.json',
