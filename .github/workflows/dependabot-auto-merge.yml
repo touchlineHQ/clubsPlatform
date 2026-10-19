@@ -17,7 +17,7 @@ permissions: {}
 jobs:
   auto-merge:
     # Pinned to a commit SHA: this runs with a write token.
-    uses: touchlineHQ/.github/.github/workflows/dependabot-auto-merge.yml@9fae98818be96768fcbb44c3592b5b5367af6918
+    uses: touchlineHQ/.github/.github/workflows/dependabot-auto-merge.yml@a3804fbef15f56c2bf5611480b5370f527ef1e7b
     permissions:
       contents: write
       pull-requests: write
