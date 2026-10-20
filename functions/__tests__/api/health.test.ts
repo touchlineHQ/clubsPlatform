@@ -1,106 +1,111 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { makeDb, makeContext, makeEnv, getReq } from '../test-utils';
+import { makeContext, getReq } from '../test-utils';
 import { onRequestGet } from '../../api/health';
 
-describe('GET /api/health', () => {
-  it('returns 200 with d1_bound=true when DB is present', async () => {
-    const db = makeDb({
-      all: [
-        [{ name: '_migrations' }],
-        [{ name: '_migrations_test', applied_at: 1234567890 }],
-        [{ name: '_migrations' }, { name: '_health_test' }],
-        [{ name: '_migrations' }],
-      ] as unknown[],
-    });
-    const ctx = makeContext(getReq('/api/health'), { env: { DB: db as never } });
-    const res = await onRequestGet(ctx as never);
-    const body = await res.json() as Record<string, unknown>;
-    expect(res.status).toBe(200);
-    expect(body.d1_bound).toBe(true);
-  });
+type Probe = () => Promise<unknown>;
 
-  it('returns 200 with has_auth_secret=true when BETTER_AUTH_SECRET is set', async () => {
-    const db = makeDb({
-      all: [[], [], [], []] as unknown[],
-    });
-    const ctx = makeContext(getReq('/api/health'), {
-      env: { DB: db as never, BETTER_AUTH_SECRET: 'my-secret' } as never,
-    });
-    const res = await onRequestGet(ctx as never);
-    const body = await res.json() as Record<string, unknown>;
-    expect(body.has_auth_secret).toBe(true);
-  });
-
-  it('returns 200 even when DB prepare throws', async () => {
-    const badDb = {
-      exec: async () => ({ results: [], count: 0, duration: 0 }),
-      prepare: () => ({
-        all: async () => { throw new Error('DB error'); },
-        first: async () => null,
-        run: async () => ({ results: [], success: true }),
-        bind: () => ({
-          all: async () => { throw new Error('DB error'); },
-          first: async () => null,
-          run: async () => ({ results: [], success: true }),
-        }),
-      }),
-      batch: async () => [],
-    };
-    const ctx = makeContext(getReq('/api/health'), { env: { DB: badDb as never } });
-    const res = await onRequestGet(ctx as never);
-    expect(res.status).toBe(200);
-    const body = await res.json() as Record<string, unknown>;
-    expect(body.tables_error).toBeTruthy();
-  });
-
-  describe('when D1 calls throw', () => {
-    afterEach(() => vi.restoreAllMocks());
-
-    const secret = 'D1_ERROR: secret internal detail';
-    const throwingDb = () => {
-      const boom = async () => { throw new Error(secret); };
-      return {
-        exec: boom,
-        prepare: () => ({ all: boom, first: boom, run: boom, bind: () => ({ all: boom, first: boom, run: boom }) }),
-        batch: boom,
+/** A D1 stub that records every SQL statement and exec call. */
+function spyDb(first: Probe = async () => ({ 1: 1 })) {
+  const prepared: string[] = [];
+  const exec = vi.fn(async () => ({ count: 0, duration: 0 }));
+  const batch = vi.fn(async () => []);
+  const db = {
+    exec,
+    batch,
+    prepare: (sql: string) => {
+      prepared.push(sql);
+      const stmt = {
+        first,
+        all: async () => ({ results: [] }),
+        run: async () => ({ success: true }),
+        bind: () => stmt,
       };
-    };
+      return stmt;
+    },
+  };
+  return { db, prepared, exec, batch };
+}
 
-    it('returns generic failure flags with no error text or stack, and logs the error', async () => {
-      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      const ctx = makeContext(getReq('/api/health'), { env: { DB: throwingDb() as never } });
-      const res = await onRequestGet(ctx as never);
-      expect(res.status).toBe(200);
-      const text = await res.text();
-      expect(text).not.toContain(secret);
-      expect(text).not.toContain('D1_ERROR');
-      expect(text).not.toMatch(/\bat .*:\d+:\d+/);
-      const body = JSON.parse(text) as Record<string, any>;
-      const failureFields = [
-        'tables_error',
-        'migrations_error',
-        'exec_test',
-        'tables_after_test_error',
-        'user_table_exec',
-        'tables_final_error',
-      ];
-      for (const field of failureFields) {
-        expect(body).toHaveProperty(field);
-        const value = JSON.stringify(body[field]);
-        expect(value).not.toContain(secret);
-        expect(value).not.toContain('D1_ERROR');
-        expect(value).not.toMatch(/\bat .*:\d+:\d+/);
-      }
-      expect(body.exec_test).toMatchObject({ success: false });
-      expect(body.user_table_exec).toMatchObject({ success: false });
-      const checks = ['tables', 'migrations', 'exec_test', 'tables_after_test', 'user_table_exec', 'tables_final'];
-      for (const check of checks) {
-        const logged = errSpy.mock.calls.some(
-          ([message, error]) =>
-            message === `[health] ${check} check failed` && error instanceof Error && error.message === secret,
-        );
-        expect(logged, `missing log for ${check}`).toBe(true);
-      }
+/** Overrides are merged over makeEnv's defaults; pass `undefined` to unset one. */
+async function call(env: Record<string, unknown>) {
+  const ctx = makeContext(getReq('/api/health'), { env: env as never });
+  const res = await onRequestGet(ctx as never);
+  const text = await res.text();
+  return { res, text, body: JSON.parse(text) as Record<string, any> };
+}
+
+describe('GET /api/health', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('returns 200 ok when D1 answers and auth is configured', async () => {
+    const { db } = spyDb();
+    const { res, body } = await call({ DB: db, BETTER_AUTH_SECRET: 'super-secret-value' });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/json');
+    expect(res.headers.get('Cache-Control')).toBe('no-store');
+    expect(body).toEqual({ status: 'ok', checks: { d1: 'ok', auth_configured: true } });
+  });
+
+  it('reports auth_configured=false when the secret is unset', async () => {
+    const { db } = spyDb();
+    const { res, body } = await call({ DB: db, BETTER_AUTH_SECRET: undefined });
+    expect(res.status).toBe(200);
+    expect(body.checks.auth_configured).toBe(false);
+  });
+
+  it('exposes no secret length, token presence, table names or migrations', async () => {
+    const { db } = spyDb();
+    const { text, body } = await call({
+      DB: db,
+      BETTER_AUTH_SECRET: 'super-secret-value',
+      GITHUB_TOKEN: 'ghp_example',
     });
+    expect(Object.keys(body).sort()).toEqual(['checks', 'status']);
+    expect(Object.keys(body.checks).sort()).toEqual(['auth_configured', 'd1']);
+    for (const leaked of [
+      'auth_secret_length',
+      'has_github_token',
+      'tables',
+      'migrations',
+      '_migrations',
+      'super-secret-value',
+      'ghp_example',
+      String('super-secret-value'.length),
+    ]) {
+      expect(text).not.toContain(leaked);
+    }
+  });
+
+  it('only runs a read-only probe: no exec, batch or DDL', async () => {
+    const { db, prepared, exec, batch } = spyDb();
+    await call({ DB: db, BETTER_AUTH_SECRET: 'x' });
+    expect(exec).not.toHaveBeenCalled();
+    expect(batch).not.toHaveBeenCalled();
+    expect(prepared).toEqual(['SELECT 1']);
+  });
+
+  it('returns 503 degraded with d1=unbound when DB is missing', async () => {
+    const { res, body } = await call({ DB: undefined, BETTER_AUTH_SECRET: 'x' });
+    expect(res.status).toBe(503);
+    expect(body).toEqual({ status: 'degraded', checks: { d1: 'unbound', auth_configured: true } });
+  });
+
+  it('returns 503 with no error text when the D1 probe throws, and logs the error', async () => {
+    const secret = 'D1_ERROR: secret internal detail';
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db } = spyDb(async () => {
+      throw new Error(secret);
+    });
+    const { res, text, body } = await call({ DB: db, BETTER_AUTH_SECRET: undefined });
+    expect(res.status).toBe(503);
+    expect(body).toEqual({ status: 'degraded', checks: { d1: 'error', auth_configured: false } });
+    expect(text).not.toContain('D1_ERROR');
+    expect(text).not.toMatch(/\bat .*:\d+:\d+/);
+    expect(
+      errSpy.mock.calls.some(
+        ([message, error]) =>
+          message === '[health] d1 check failed' && error instanceof Error && error.message === secret,
+      ),
+    ).toBe(true);
   });
 });
