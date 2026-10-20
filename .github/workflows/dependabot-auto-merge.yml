@@ -18,9 +18,13 @@ jobs:
   auto-merge:
     # Pinned to a commit SHA: this runs with a write token.
     uses: touchlineHQ/.github/.github/workflows/dependabot-auto-merge.yml@b226a1565c7b9bc39da2941494d63f23888325c4
+    # Must cover every permission any job in the reusable workflow declares,
+    # or GitHub rejects the whole run at startup (startup_failure). The label
+    # job declares issues: write to create automerge-label on first use.
     permissions:
       contents: write
       pull-requests: write
+      issues: write
       checks: read
       actions: write
     with:
