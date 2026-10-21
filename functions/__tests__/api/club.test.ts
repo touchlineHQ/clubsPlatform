@@ -343,3 +343,21 @@ describe('PATCH /api/club', () => {
     expect(sql).not.toMatch(/PRAGMA/);
   });
 });
+
+describe('PATCH /api/club channelUrl (#74)', () => {
+  it('rejects a non-https WhatsApp Channel link', async () => {
+    const db = makeDb({ first: { id: 'c1', data: clubRow.data } });
+    const ctx = makeContext(patchReq('/api/club', { channelUrl: 'javascript:alert(1)' }, { 'X-Club-Slug': 'test-club' }), { env: { DB: db as never } });
+    const res = await onRequestPatch(ctx as never);
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts an https link or an empty value', async () => {
+    for (const channelUrl of ['https://whatsapp.com/channel/abc', '']) {
+      const db = makeDb({ first: { id: 'c1', data: clubRow.data } });
+      const ctx = makeContext(patchReq('/api/club', { channelUrl }, { 'X-Club-Slug': 'test-club' }), { env: { DB: db as never } });
+      const res = await onRequestPatch(ctx as never);
+      expect(res.status).toBe(200);
+    }
+  });
+});

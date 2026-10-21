@@ -49,6 +49,7 @@ export const TABLE_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "user_team_role" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT, "userId" TEXT NOT NULL REFERENCES "user"("id") ON DELETE CASCADE, "teamSlug" TEXT NOT NULL, "teamLeague" TEXT NOT NULL, "teamName" TEXT NOT NULL, "role" TEXT NOT NULL CHECK("role" IN ('coach', 'manager', 'subscriber')), "createdAt" INTEGER NOT NULL, UNIQUE("userId", "teamSlug", "teamLeague"))`,
   `CREATE INDEX IF NOT EXISTS "idx_user_team_role_userId" ON "user_team_role" ("userId")`,
   `CREATE INDEX IF NOT EXISTS "idx_user_team_role_teamSlug" ON "user_team_role" ("teamSlug", "teamLeague")`,
+  `CREATE TABLE IF NOT EXISTS "team_group_link" ("clubSlug" TEXT NOT NULL, "teamSlug" TEXT NOT NULL, "teamLeague" TEXT NOT NULL, "url" TEXT NOT NULL, "updatedBy" TEXT, "updatedAt" INTEGER NOT NULL, PRIMARY KEY ("clubSlug", "teamSlug", "teamLeague"))`,
   `CREATE TABLE IF NOT EXISTS "player" ("id" TEXT PRIMARY KEY NOT NULL, "fanId" TEXT NOT NULL UNIQUE, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS "player_registration" ("id" TEXT PRIMARY KEY NOT NULL, "clubSlug" TEXT NOT NULL, "playerId" TEXT NOT NULL REFERENCES "player"("id") ON DELETE CASCADE, "teamName" TEXT NOT NULL, "ageGroup" TEXT, "registrationExpiry" TEXT, "registrationStatus" TEXT, "createdAt" INTEGER NOT NULL, "updatedAt" INTEGER NOT NULL, UNIQUE("clubSlug", "playerId", "teamName"))`,
   `CREATE INDEX IF NOT EXISTS "idx_player_registration_clubSlug" ON "player_registration" ("clubSlug")`,

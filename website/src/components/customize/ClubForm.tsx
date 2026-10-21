@@ -72,6 +72,13 @@ export function ClubForm({ club, onChange, clubSlugs }: Props) {
         <TextInput label="Twitter / X URL" value={club.socials.twitter} onChange={e => update('socials', { ...club.socials, twitter: e.target.value })} />
       </Group>
       <TextInput
+        label="WhatsApp Channel link"
+        description="Shown on the site as “Follow our updates”. Use your Channel link, never a group invite: group members can see each other's phone numbers."
+        placeholder="https://whatsapp.com/channel/…"
+        value={club.channelUrl ?? ''}
+        onChange={e => update('channelUrl', e.target.value)}
+      />
+      <TextInput
         label="Club Shop URL"
         description="If set, a Shop link appears in the sidebar. Leave blank to hide."
         placeholder="https://shop.yourclub.co.uk"

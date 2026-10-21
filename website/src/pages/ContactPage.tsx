@@ -1,6 +1,6 @@
 import { Text, SimpleGrid, Paper, ThemeIcon, Group, Stack, Box } from '@mantine/core';
 import {
-  IconMail, IconMapPin, IconBrandFacebook, IconBrandInstagram, IconBrandTwitter,
+  IconMail, IconMapPin, IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconBrandWhatsapp,
 } from '@tabler/icons-react';
 import type { Club } from '../types';
 import { PageHeader } from '../components/club/PageHeader';
@@ -91,6 +91,13 @@ export const ContactPage = ({ club }: Props) => {
           <ContactCard icon={<IconBrandTwitter size={18} />} title="Twitter / X" iconColor="cyan">
             <Text component="a" href={club.socials.twitter} target="_blank" rel="noopener noreferrer" c="cyan.7" size="sm" fw={600} style={{ textDecoration: 'none' }}>
               Follow us on X
+            </Text>
+          </ContactCard>
+        )}
+        {club.channelUrl && (
+          <ContactCard icon={<IconBrandWhatsapp size={18} />} title="WhatsApp" iconColor="green">
+            <Text component="a" href={club.channelUrl} target="_blank" rel="noopener noreferrer" c="green.7" size="sm" fw={600} style={{ textDecoration: 'none' }}>
+              Follow our updates
             </Text>
           </ContactCard>
         )}
