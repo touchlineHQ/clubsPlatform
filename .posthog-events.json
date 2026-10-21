@@ -14,6 +14,13 @@
     ]
   },
   {
+    "event": "announcement published",
+    "description": "A club editor publishes an announcement from the composer (#74). Properties: club_slug and emailed (whether an email audience was chosen). No content, no recipients.",
+    "files": [
+      "website/src/components/customize/AnnouncementForm.tsx"
+    ]
+  },
+  {
     "event": "booking deleted",
     "description": "An admin deletes a confirmed pitch booking.",
     "files": [

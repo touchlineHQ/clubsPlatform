@@ -11,6 +11,7 @@ import { ClubForm } from '../components/customize/ClubForm';
 import { TeamsForm } from '../components/customize/TeamsForm';
 import { CommitteeForm } from '../components/customize/CommitteeForm';
 import { NewsForm } from '../components/customize/NewsForm';
+import { AnnouncementForm } from '../components/customize/AnnouncementForm';
 import { RegistrationForm } from '../components/customize/RegistrationForm';
 import { GalleryForm } from '../components/customize/GalleryForm';
 import { MatchdayForm } from '../components/customize/MatchdayForm';
@@ -208,10 +209,15 @@ export function CustomizePage({
         </Tabs.Panel>
 
         <Tabs.Panel value="news" pt="md">
+          <Stack gap="xl">
+          <AnnouncementForm
+            onPublished={item => set(d => ({ ...d, news: [item, ...d.news] }))}
+          />
           <NewsForm
             news={localData.news}
             onChange={news => set(d => ({ ...d, news }))}
           />
+          </Stack>
         </Tabs.Panel>
 
         <Tabs.Panel value="registration" pt="md">

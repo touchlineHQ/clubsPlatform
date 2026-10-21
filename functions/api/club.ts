@@ -4,6 +4,7 @@ import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib
 import { seedClubData } from "../lib/seed";
 import { type Env, json, getClubSlug, requirePermission } from "../lib/api-helpers";
 import { hasPermission } from "../lib/permissions";
+import { isWhatsAppChannelUrl } from "../lib/announcement";
 
 type ClubRow = {
   slug: string;
@@ -106,6 +107,13 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
   const body = parsedBody as Record<string, unknown>;
   if ('published' in body && typeof body.published !== 'boolean') {
     return json({ error: "published must be a boolean" }, { status: 400 });
+  }
+  // The WhatsApp Channel link is public by design (#74) — a Channel exposes no
+  // follower's number — but it is rendered as a link on every page, so only an
+  // WhatsApp Channel URL (or an empty value, to clear it) is accepted; a group
+  // invite here would publish every member's phone number.
+  if ('channelUrl' in body && body.channelUrl !== null && body.channelUrl !== '' && !isWhatsAppChannelUrl(body.channelUrl)) {
+    return json({ error: "channelUrl must be a WhatsApp Channel link (https://whatsapp.com/channel/…)" }, { status: 400 });
   }
   // Content editors can save the Customise page; taking the site live or
   // offline stays admin-only (#79).

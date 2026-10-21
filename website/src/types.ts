@@ -58,6 +58,8 @@ export interface Club {
   teamSlugPrefix?: string;
   homeBanner?: string;
   shopUrl?: string;
+  /** WhatsApp Channel invite link (#74). Public: a Channel exposes no follower's number. */
+  channelUrl?: string;
   groundImage?: string;
   groundImageAlt?: string;
   matchdayBadges?: MatchdayBadge[];

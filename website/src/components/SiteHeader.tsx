@@ -1,7 +1,7 @@
 import { Burger, Group, Text, ActionIcon, Badge, Box, Button, Menu, UnstyledButton } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import {
-  IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconUser, IconLogout,
+  IconBrandFacebook, IconBrandInstagram, IconBrandTwitter, IconBrandWhatsapp, IconUser, IconLogout,
   IconSettings, IconUsers, IconArrowLeft, IconChevronRight,
 } from '@tabler/icons-react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -122,6 +122,21 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             )}
           </Box>
         </Group>
+
+        {club.channelUrl && (
+          <ActionIcon
+            component="a"
+            href={club.channelUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="subtle"
+            color="var(--cp-surface-text)"
+            aria-label="Follow our updates on WhatsApp"
+            style={{ flexShrink: 0 }}
+          >
+            <IconBrandWhatsapp size={18} />
+          </ActionIcon>
+        )}
 
         {!authLoading && !user && (
           <UnstyledButton
@@ -294,6 +309,18 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
             aria-label="Twitter / X"
           >
             <IconBrandTwitter size={18} />
+          </ActionIcon>
+        )}
+        {club.channelUrl && (
+          <ActionIcon
+            component="a"
+            href={club.channelUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="subtle"
+            aria-label="Follow our updates on WhatsApp"
+          >
+            <IconBrandWhatsapp size={18} />
           </ActionIcon>
         )}
 

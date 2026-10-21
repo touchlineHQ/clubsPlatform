@@ -8,6 +8,7 @@ import { IconCalendar, IconTrophy, IconAlertCircle, IconCopy, IconCheck, IconArr
 import type { LiveTeam, TeamFeed, TeamContact } from '../types';
 import { loadTeamFeed, teamCalendarUrl } from '../data';
 import { useAuth } from '../context/AuthContext';
+import { TeamGroupLink } from '../components/club/TeamGroupLink';
 import { clubDesign } from '../theme';
 
 const FORM_GAMES = 5;
@@ -80,7 +81,7 @@ function formatDate(iso: string): string {
 
 export function TeamPage({ liveTeams }: Props) {
   const { teamSlug, league } = useParams<{ teamSlug: string; league?: string }>();
-  const { user, teamRoles, refresh: refreshAuth } = useAuth();
+  const { user, teamRoles, refresh: refreshAuth, can } = useAuth();
   const [feed, setFeed] = useState<TeamFeed | null | undefined>(undefined);
   const [contacts, setContacts] = useState<TeamContact[]>([]);
   const [subscribing, setSubscribing] = useState(false);
@@ -194,6 +195,10 @@ export function TeamPage({ liveTeams }: Props) {
           Paste the copied link into Google Calendar, Apple Calendar, or Outlook to subscribe.
         </Text>
       </Paper>
+
+      {user && (can('content') || myRole?.role === 'coach' || myRole?.role === 'manager') && (
+        <TeamGroupLink slug={teamMeta.slug} league={teamMeta.league} canEdit={can('content')} />
+      )}
 
       {contacts.length > 0 && (
         <Paper p="md" withBorder radius="md">
