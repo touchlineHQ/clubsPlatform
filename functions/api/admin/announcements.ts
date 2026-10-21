@@ -46,6 +46,9 @@ function parseEmailAudience(value: unknown): SendAudience | null | "invalid" {
   return "invalid";
 }
 
+/** Resend rejects subjects longer than this. */
+const MAX_EMAIL_SUBJECT = 256;
+
 export const onRequestPost: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
   const auth = await requirePermission(context, "content");
@@ -101,6 +104,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
+  // Resolve the subject before writing, so an over-long subject is refused
+  // up front instead of leaving a published item whose email can never send.
+  const identity = await getClubIdentity(context.env.DB, clubSlug);
+  const clubName = identity?.name ?? "Your club";
+  const subject = `${clubName}: ${title}`;
+  if (audience && subject.length > MAX_EMAIL_SUBJECT) {
+    return json(
+      { error: `Title is too long for an email subject (max ${MAX_EMAIL_SUBJECT} characters including the club name)`, code: "subject_too_long" },
+      { status: 400 },
+    );
+  }
+
   const origin = new URL(context.request.url).origin;
   const newsUrl = `${clubSiteBase(origin, clubSlug, isMultiClubMode(context.env))}#/news`;
   const id = randomId("news");
@@ -113,8 +128,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     .bind(id, clubSlug, title, text, longBody, "#", "Read More", sections ? JSON.stringify(sections) : null, ts, ts)
     .run();
 
-  const identity = await getClubIdentity(context.env.DB, clubSlug);
-  const clubName = identity?.name ?? "Your club";
   const copyText = whatsappCopyText({ clubName, title, text, body: longBody, link: newsUrl });
 
   let email: null | {
@@ -122,26 +135,33 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     mailConfigured: boolean;
     sentCount: number;
     droppedCount: number;
-  } = null;
+  } | { error: "email_failed" } = null;
+  // The item is already published; a mail failure must not hide its id, or a
+  // retry would create a duplicate announcement.
   if (audience) {
-    const plain = [text, longBody, `Read it on the club site: ${newsUrl}`].filter(Boolean).join("\n\n");
-    const result = await sendClubEmail(context.env, context.env.DB, {
-      clubSlug,
-      purpose: "operational",
-      audience,
-      subject: `${clubName}: ${title}`,
-      html: textToHtml(plain),
-      text: plain,
-      initiatedBy: (auth.session.user as Record<string, unknown>).id as string,
-      clubName,
-      origin,
-    });
-    email = {
-      batchId: result.batchId,
-      mailConfigured: result.mailConfigured,
-      sentCount: result.sent.filter((s) => s.outcome === "sent").length,
-      droppedCount: result.dropped.length,
-    };
+    try {
+      const plain = [text, longBody, `Read it on the club site: ${newsUrl}`].filter(Boolean).join("\n\n");
+      const result = await sendClubEmail(context.env, context.env.DB, {
+        clubSlug,
+        purpose: "operational",
+        audience,
+        subject,
+        html: textToHtml(plain),
+        text: plain,
+        initiatedBy: (auth.session.user as Record<string, unknown>).id as string,
+        clubName,
+        origin,
+      });
+      email = {
+        batchId: result.batchId,
+        mailConfigured: result.mailConfigured,
+        sentCount: result.sent.filter((s) => s.outcome === "sent").length,
+        droppedCount: result.dropped.length,
+      };
+    } catch (err) {
+      console.error("announcement email failed", { id, err: err instanceof Error ? err.message : String(err) });
+      email = { error: "email_failed" };
+    }
   }
 
   return json(

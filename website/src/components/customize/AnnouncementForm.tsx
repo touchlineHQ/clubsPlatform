@@ -15,7 +15,7 @@ interface Props {
 
 type Result = {
   copyText: string;
-  email: null | { sentCount: number; droppedCount: number; mailConfigured: boolean };
+  email: null | { error: 'email_failed' } | { sentCount: number; droppedCount: number; mailConfigured: boolean };
 };
 
 const NO_EMAIL = 'none';
@@ -126,7 +126,10 @@ export function AnnouncementForm({ onPublished }: Props) {
         <Paper p="sm" withBorder>
           <Stack gap="xs">
             <Text size="sm" fw={600}>Published to the club site.</Text>
-            {result.email && (
+            {result.email && 'error' in result.email && (
+              <Alert color="orange">The email could not be sent. The announcement is published, so do not post it again.</Alert>
+            )}
+            {result.email && !('error' in result.email) && (
               <Text size="sm">
                 {result.email.mailConfigured
                   ? `Emailed ${result.email.sentCount} member${result.email.sentCount === 1 ? '' : 's'}`

@@ -99,6 +99,28 @@ describe('announcement composer (#74)', () => {
     expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM news_item`).get()).toEqual({ n: 0 });
   });
 
+  it('refuses an emailed announcement whose subject would be too long, before publishing', async () => {
+    const res = await post({ title: 'x'.repeat(260), text: 'y', email: { type: 'club' } });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'subject_too_long' });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM news_item`).get()).toEqual({ n: 0 });
+    expect((await post({ title: 'x'.repeat(260), text: 'y' })).status).toBe(201);
+  });
+
+  it('returns the published id with an email error when sending throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down'); }));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await post(
+      { title: 'Kit day', text: 'Saturday 10am.', email: { type: 'club' } },
+      { RESEND_API_KEY: 'k', FROM_EMAIL: 'noreply@example.com' },
+    );
+    spy.mockRestore();
+    expect(res.status).toBe(201);
+    const body = await res.json() as { item: { id: string }; email: unknown };
+    expect(body.item.id).toBeTruthy();
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM news_item`).get()).toEqual({ n: 1 });
+  });
+
   it('formats WhatsApp copy as plain text', () => {
     expect(whatsappCopyText({ clubName: 'FC', title: '*Big* news', text: 'a\n\n\n\nb', link: 'https://x/#/news' }))
       .toBe('*FC: Big news*\n\na\n\nb\n\nhttps://x/#/news');
@@ -152,6 +174,8 @@ describe('team group link access (#74)', () => {
     mockGetSession.mockResolvedValue(adminSession);
     const put = (url: unknown) => groupPut(makeContext(putReq(q, { url }, H), { env: { DB: d1Over(sqlite) as any } }) as any);
     expect((await put('javascript:alert(1)')).status).toBe(400);
+    expect((await put('https://evil.example.com/phish')).status).toBe(400);
+    expect((await put('https://whatsapp.com/channel/abc')).status).toBe(400);
     expect((await put('https://chat.whatsapp.com/new')).status).toBe(200);
     expect(await (await get()).json()).toEqual({ url: 'https://chat.whatsapp.com/new' });
     expect((await put(null)).status).toBe(200);

@@ -24,6 +24,13 @@ export function isWhatsAppChannelUrl(value: unknown): value is string {
   return (u.hostname === "whatsapp.com" || u.hostname === "www.whatsapp.com") && /^\/channel\/[^/]+/.test(u.pathname);
 }
 
+/** True for a WhatsApp group invite link (https://chat.whatsapp.com/...). */
+export function isWhatsAppGroupInviteUrl(value: unknown): value is string {
+  if (!isHttpsUrl(value)) return false;
+  const u = new URL(value.trim());
+  return u.hostname === "chat.whatsapp.com" && /^\/[^/]+/.test(u.pathname);
+}
+
 /** Site base for a club, matching how the other mail links are built. */
 export function clubSiteBase(origin: string, clubSlug: string, multiClub: boolean): string {
   const root = origin.replace(/\/$/, "");

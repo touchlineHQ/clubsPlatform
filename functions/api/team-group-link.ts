@@ -2,7 +2,7 @@ import { ensureTables } from "../lib/ensure-tables";
 import { type Env, json, nowMs, getClubSlug } from "../lib/api-helpers";
 import { createAuth } from "../lib/auth";
 import { hasPermission } from "../lib/permissions";
-import { isHttpsUrl } from "../lib/announcement";
+import { isWhatsAppGroupInviteUrl } from "../lib/announcement";
 
 /**
  * A team's WhatsApp group invite link (#74).
@@ -96,7 +96,9 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
       .run();
     return json({ ok: true, url: null });
   }
-  if (!isHttpsUrl(raw)) return json({ error: "url must be an https:// link" }, { status: 400 });
+  if (!isWhatsAppGroupInviteUrl(raw)) {
+    return json({ error: "url must be a WhatsApp group invite link (https://chat.whatsapp.com/…)" }, { status: 400 });
+  }
 
   const url = raw.trim();
   await context.env.DB
