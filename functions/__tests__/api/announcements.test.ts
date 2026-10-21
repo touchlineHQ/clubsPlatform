@@ -175,3 +175,10 @@ describe('team group link access (#74)', () => {
     expect(JSON.stringify(await res.json())).not.toContain('chat.whatsapp.com');
   });
 });
+
+describe('whatsappCopyText title (#74)', () => {
+  it('keeps a multi-line title on one bold line', () => {
+    const out = whatsappCopyText({ clubName: 'Test FC', title: 'Training\ncancelled', text: 'Pitch waterlogged.' });
+    expect(out.split('\n')[0]).toBe('*Test FC: Training cancelled*');
+  });
+});

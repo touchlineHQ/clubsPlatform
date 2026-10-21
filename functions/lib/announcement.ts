@@ -13,6 +13,17 @@ export function isHttpsUrl(value: unknown): value is string {
   }
 }
 
+/**
+ * True for a WhatsApp Channel link (https://whatsapp.com/channel/...). This is
+ * the only link shown publicly, so a group invite (chat.whatsapp.com), which
+ * exposes every member's phone number, or any other site is refused.
+ */
+export function isWhatsAppChannelUrl(value: unknown): value is string {
+  if (!isHttpsUrl(value)) return false;
+  const u = new URL(value.trim());
+  return (u.hostname === "whatsapp.com" || u.hostname === "www.whatsapp.com") && /^\/channel\/[^/]+/.test(u.pathname);
+}
+
 /** Site base for a club, matching how the other mail links are built. */
 export function clubSiteBase(origin: string, clubSlug: string, multiClub: boolean): string {
   const root = origin.replace(/\/$/, "");
@@ -34,7 +45,7 @@ export type AnnouncementCopyInput = {
  */
 export function whatsappCopyText(input: AnnouncementCopyInput): string {
   const clean = (s: string) => s.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-  const title = input.title.replace(/\*/g, "").trim();
+  const title = input.title.replace(/\*/g, "").replace(/\s+/g, " ").trim();
   const parts = [`*${input.clubName}: ${title}*`, clean(input.text)];
   if (input.body?.trim()) parts.push(clean(input.body));
   if (input.link?.trim()) parts.push(input.link.trim());

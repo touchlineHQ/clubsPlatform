@@ -123,6 +123,21 @@ export function SiteHeader({ club, sections, navOpen, onNavToggle }: Props) {
           </Box>
         </Group>
 
+        {club.channelUrl && (
+          <ActionIcon
+            component="a"
+            href={club.channelUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="subtle"
+            color="var(--cp-surface-text)"
+            aria-label="Follow our updates on WhatsApp"
+            style={{ flexShrink: 0 }}
+          >
+            <IconBrandWhatsapp size={18} />
+          </ActionIcon>
+        )}
+
         {!authLoading && !user && (
           <UnstyledButton
             component={Link}
