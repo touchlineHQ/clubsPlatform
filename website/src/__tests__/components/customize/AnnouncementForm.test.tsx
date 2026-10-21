@@ -35,7 +35,7 @@ describe('AnnouncementForm (#74)', () => {
     await waitFor(() => expect(onPublished).toHaveBeenCalledWith(expect.objectContaining({ id: 'news_1' })));
     const post = mockFetch.mock.calls.find(([u]) => u === '/api/admin/announcements');
     expect(JSON.parse(post?.[1].body)).toEqual({ title: 'Training cancelled', text: 'Pitch waterlogged.' });
-    expect((screen.getByTestId('whatsapp-copy') as HTMLTextAreaElement).value).toContain('*Test FC: Training cancelled*');
+    expect(((await screen.findByTestId('whatsapp-copy')) as HTMLTextAreaElement).value).toContain('*Test FC: Training cancelled*');
     expect(screen.getByRole('button', { name: /Copy for WhatsApp/ })).toBeTruthy();
   });
 });
