@@ -134,7 +134,7 @@ export function AnnouncementForm({ onPublished }: Props) {
                 {result.email.droppedCount > 0 ? `; ${result.email.droppedCount} skipped (not activated or not registered).` : '.'}
               </Text>
             )}
-            <Textarea label="WhatsApp copy" value={result.copyText} readOnly minRows={4} data-testid="whatsapp-copy" />
+            <Textarea label="WhatsApp copy" value={result.copyText} readOnly rows={4} data-testid="whatsapp-copy" />
             <CopyButton value={result.copyText} timeout={2000}>
               {({ copied, copy }) => (
                 <Button
