@@ -144,6 +144,18 @@ describe('arrears view and reminders (#77)', () => {
     expect(h.history[0].reasons).toEqual(expect.arrayContaining(['no_operational_opt_in', 'pending']));
   });
 
+  it('skips a failed_payment reminder for a registration with no open failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'm1' }), { status: 200 })));
+    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW);
+    const res = await remindPost(makeContext(
+      postReq('/api/admin/arrears-reminders', { registrationIds: ['r_unpaid', 'r_failed'], template: 'failed_payment' }, H),
+      { env: env({ RESEND_API_KEY: 'k', FROM_EMAIL: 'noreply@example.com' }) },
+    ) as any);
+    const body = await res.json() as { results: Array<{ registrationId: string }>; skipped: Array<{ registrationId: string; reason: string }> };
+    expect(body.results.map((r) => r.registrationId)).toEqual(['r_failed']);
+    expect(body.skipped).toEqual([{ registrationId: 'r_unpaid', reason: 'no_failed_payment' }]);
+  });
+
   it('validates the template and batch', async () => {
     mockGetSession.mockResolvedValue(adminSession);
     const post = (b: unknown) => remindPost(makeContext(postReq('/api/admin/arrears-reminders', b, H), { env: env() }) as any);

@@ -67,9 +67,36 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     )
     .bind(clubSlug, ...unique)
     .all<{ registrationId: string; playerId: string; teamName: string; fanId: string }>();
-  const regs = found.results ?? [];
-  const foundIds = new Set(regs.map((r) => r.registrationId));
+  const foundRegs = found.results ?? [];
+  const foundIds = new Set(foundRegs.map((r) => r.registrationId));
   const notFound = unique.filter((id) => !foundIds.has(id));
+
+  // "A Direct Debit payment failed" is only true for a registration whose
+  // billing row has an unresolved failure; anyone else is skipped and reported
+  // rather than sent a message that isn't true.
+  let skipped: Array<{ registrationId: string; reason: "no_failed_payment" }> = [];
+  let regs = foundRegs;
+  if (template === "failed_payment" && foundRegs.length > 0) {
+    const ph = foundRegs.map(() => "?").join(", ");
+    const failing = await context.env.DB
+      .prepare(
+        `SELECT pr."id" AS registrationId
+           FROM "player_registration" pr
+           LEFT JOIN "registration_merge" rm0
+             ON rm0."registrationId" = pr."id" AND rm0."clubSlug" = pr."clubSlug"
+          WHERE pr."clubSlug" = ? AND pr."id" IN (${ph})
+            AND EXISTS (SELECT 1 FROM "payment_failure" pf
+                         WHERE pf."registrationId" = COALESCE(rm0."primaryRegistrationId", pr."id")
+                           AND pf."resolvedAt" IS NULL)`,
+      )
+      .bind(clubSlug, ...foundRegs.map((r) => r.registrationId))
+      .all<{ registrationId: string }>();
+    const ok = new Set((failing.results ?? []).map((r) => r.registrationId));
+    regs = foundRegs.filter((r) => ok.has(r.registrationId));
+    skipped = foundRegs
+      .filter((r) => !ok.has(r.registrationId))
+      .map((r) => ({ registrationId: r.registrationId, reason: "no_failed_payment" as const }));
+  }
 
   const identity = await getClubIdentity(context.env.DB, clubSlug);
   const clubName = identity?.name ?? "Your club";
@@ -137,7 +164,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     );
   }
 
-  return json({ ok: true, template, results, notFound });
+  return json({ ok: true, template, results, notFound, skipped });
 };
 
 type HistoryRow = { createdAt: number; adminId: string; adminName: string | null; template: string | null; note: string | null };

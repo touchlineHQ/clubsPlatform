@@ -113,22 +113,33 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
     setSending(true);
     setSendSummary(null);
     try {
-      const res = await fetch('/api/admin/arrears-reminders', {
-        method: 'POST',
-        headers: { ...clubHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ registrationIds: [...selected], template }),
-      });
-      const d = await res.json().catch(() => ({})) as {
-        error?: string;
-        results?: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }>;
-      };
-      if (!res.ok || !d.results) throw new Error(d.error ?? 'Sending failed');
-      const sent = d.results.reduce((n, r) => n + r.sent, 0);
-      const dropped = d.results.reduce((n, r) => n + r.dropped.length, 0);
-      const configured = d.results.every(r => r.mailConfigured);
-      setSendSummary(configured
-        ? `Reminders sent to ${sent} contact${sent === 1 ? '' : 's'} for ${d.results.length} registration${d.results.length === 1 ? '' : 's'}${dropped ? `; ${dropped} excluded` : ''}.`
-        : 'Email is not set up for this club yet, so nothing was sent. The attempt is still recorded.');
+      // The server takes at most 100 registrations per request; a club-wide
+      // select-all can be 500, so send in chunks and add the results up.
+      const ids = [...selected];
+      const results: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }> = [];
+      let skipped = 0;
+      for (let i = 0; i < ids.length; i += 100) {
+        const res = await fetch('/api/admin/arrears-reminders', {
+          method: 'POST',
+          headers: { ...clubHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ registrationIds: ids.slice(i, i + 100), template }),
+        });
+        const d = await res.json().catch(() => ({})) as {
+          error?: string;
+          results?: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }>;
+          skipped?: unknown[];
+        };
+        if (!res.ok || !d.results) throw new Error(d.error ?? 'Sending failed');
+        results.push(...d.results);
+        skipped += d.skipped?.length ?? 0;
+      }
+      const sent = results.reduce((n, r) => n + r.sent, 0);
+      const dropped = results.reduce((n, r) => n + r.dropped.length, 0);
+      const configured = results.every(r => r.mailConfigured);
+      const skippedText = skipped ? ` ${skipped} skipped: no failed payment on record.` : '';
+      setSendSummary((configured
+        ? `Reminders sent to ${sent} contact${sent === 1 ? '' : 's'} for ${results.length} registration${results.length === 1 ? '' : 's'}${dropped ? `; ${dropped} excluded` : ''}.`
+        : 'Email is not set up for this club yet, so nothing was sent. The attempt is still recorded.') + skippedText);
       setHistory({});
       await load();
     } catch (e) {
