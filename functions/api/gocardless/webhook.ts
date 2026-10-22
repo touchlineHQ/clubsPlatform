@@ -1,4 +1,5 @@
 import { ensureTables } from '../../lib/ensure-tables';
+import { recordPaymentOutcome } from '../../lib/payment-failure';
 import { nowMs } from '../../lib/api-helpers';
 import { decryptSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
@@ -232,7 +233,10 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
 
   if (ev.resource_type === 'payments' && paymentId) {
     // Single payment events don't change mandate/subscription status — a single
-    // failed collection is recoverable. We log for visibility only.
+    // failed collection is recoverable. But the treasurer needs to see it (#77),
+    // so a failure is recorded against the registration the mandate pays for,
+    // and cleared when a later collection on that mandate is confirmed.
+    await recordPaymentOutcome(env.DB, ev.action, paymentId, mandateId, ev.details?.cause ?? null, now);
     if (posthog) {
       // Fire-and-forget: don't block webhook response on PostHog
       posthog.captureImmediate({

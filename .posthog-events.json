@@ -21,6 +21,13 @@
     ]
   },
   {
+    "event": "arrears reminders sent",
+    "description": "A treasurer sends arrears reminders from the Arrears tab (#77). Counts only: template, registrations, sent and dropped. No FAN numbers, no addresses.",
+    "files": [
+      "functions/api/admin/arrears-reminders.ts"
+    ]
+  },
+  {
     "event": "booking deleted",
     "description": "An admin deletes a confirmed pitch booking.",
     "files": [
