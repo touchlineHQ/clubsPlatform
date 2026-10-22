@@ -161,7 +161,7 @@ describe('arrears view and reminders (#77)', () => {
     const post = (b: unknown) => remindPost(makeContext(postReq('/api/admin/arrears-reminders', b, H), { env: env() }) as any);
     expect((await post({ registrationIds: ['r_unpaid'], template: 'shouty' })).status).toBe(400);
     expect((await post({ registrationIds: [], template: 'outstanding' })).status).toBe(400);
-    expect((await post({ registrationIds: Array.from({ length: 101 }, (_, i) => `r${i}`), template: 'outstanding' })).status).toBe(400);
+    expect((await post({ registrationIds: Array.from({ length: 100 }, (_, i) => `r${i}`), template: 'outstanding' })).status).toBe(400);
     mockGetSession.mockResolvedValue(secretarySession);
     expect((await post({ registrationIds: ['r_unpaid'], template: 'outstanding' })).status).toBe(403);
   });

@@ -25,7 +25,9 @@ import { ARREARS_REMINDER_ACTION, isReminderTemplate, reminderMessage } from "..
  * GET ?registrationId= returns that history.
  */
 
-const MAX_REMINDER_BATCH = 100;
+// D1 allows 100 bound parameters per statement, and the lookups bind the
+// club slug plus every id, so 99 ids is the most one request can carry.
+const MAX_REMINDER_BATCH = 99;
 
 type SendBody = { registrationIds?: unknown; template?: unknown };
 

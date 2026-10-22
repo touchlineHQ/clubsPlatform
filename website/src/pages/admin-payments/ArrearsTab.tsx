@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Badge, Button, Center, Checkbox, Group, Loader, Paper, Select, Stack, Table, Text,
 } from '@mantine/core';
@@ -47,6 +47,8 @@ const TEMPLATE_OPTIONS = [
   { value: 'failed_payment', label: 'Payment failed' },
 ];
 
+const CHUNK = 99;
+
 const fmtDate = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 function excludedText(r: ArrearsRow): string | null {
@@ -81,7 +83,11 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       .catch(() => setTeams([]));
   }, [clubHeaders]);
 
+  // Only the latest request may write state: a slow response for a previous
+  // filter must not replace the table under the filter now shown.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setRows(null);
     setError(null);
     const qs = new URLSearchParams();
@@ -91,10 +97,12 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       const res = await fetch(`/api/admin/arrears?${qs}`, { headers: clubHeaders });
       if (!res.ok) throw new Error(`Failed to load arrears (${res.status})`);
       const d = await res.json() as { rows: ArrearsRow[]; truncated: boolean };
+      if (seq !== loadSeq.current) return;
       setRows(d.rows);
       setTruncated(d.truncated);
       setSelected(new Set());
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       captureError(e, { op: 'arrears.load' });
       setError(e instanceof Error ? e.message : 'Failed to load arrears');
       setRows([]);
@@ -113,16 +121,16 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
     setSending(true);
     setSendSummary(null);
     try {
-      // The server takes at most 100 registrations per request; a club-wide
-      // select-all can be 500, so send in chunks and add the results up.
+      // The server takes at most 99 registrations per request (D1's bind limit);
+      // a club-wide select-all can be 500, so send in chunks and add them up.
       const ids = [...selected];
       const results: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }> = [];
       let skipped = 0;
-      for (let i = 0; i < ids.length; i += 100) {
+      for (let i = 0; i < ids.length; i += CHUNK) {
         const res = await fetch('/api/admin/arrears-reminders', {
           method: 'POST',
           headers: { ...clubHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ registrationIds: ids.slice(i, i + 100), template }),
+          body: JSON.stringify({ registrationIds: ids.slice(i, i + CHUNK), template }),
         });
         const d = await res.json().catch(() => ({})) as {
           error?: string;
@@ -195,7 +203,7 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
 
       {rows === null ? (
         <Center py="xl"><Loader /></Center>
-      ) : rows.length === 0 ? (
+      ) : error ? null : rows.length === 0 ? (
         <Text c="dimmed" ta="center" py="lg">Nobody is outstanding for this selection.</Text>
       ) : (
         <Table.ScrollContainer minWidth={760}>
