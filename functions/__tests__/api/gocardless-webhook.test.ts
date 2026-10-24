@@ -309,6 +309,7 @@ describe('POST /api/gocardless/webhook', () => {
       events: [
         {
           id: 'EV-pay-2',
+          created_at: '2026-10-20T09:00:00.000Z',
           resource_type: 'payments',
           action: 'failed',
           links: { payment: 'PM-2' },
@@ -331,7 +332,10 @@ describe('POST /api/gocardless/webhook', () => {
     expect(String(fetchSpy.mock.calls[0][0])).toContain('/payments/PM-2');
     expect(failureCalls).toHaveLength(1);
     expect(failureCalls[0].sql).toContain('INSERT INTO "payment_failure"');
-    expect(failureCalls[0].binds).toEqual(['PM-2', 'MND-2', 'insufficient_funds', expect.any(Number), 'MND-2']);
+    // Ordered by the event's own time; the receipt time only marks resolution.
+    const eventAt = Date.parse('2026-10-20T09:00:00.000Z');
+    expect(failureCalls[0].binds).toEqual(['PM-2', 'MND-2', 'insufficient_funds', eventAt, 'MND-2', eventAt, expect.any(Number), 'MND-2']);
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
     fetchSpy.mockRestore();
   });
 

@@ -1,5 +1,6 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { makeContext, makeDb, makeEnv, adminSession, platformAdminSession, getReq, postReq, deleteReq } from '../test-utils';
+import { createSchemaDb, d1Over } from '../sqlite-harness';
 
 const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('../../lib/auth', () => ({
@@ -168,7 +169,8 @@ describe('POST /api/admin/secrets', () => {
 
   it('refuses a platform-wide GC_WEBHOOK_SECRET until the platform GC_ACCESS_TOKEN is set', async () => {
     mockGetSession.mockResolvedValue(platformAdminSession);
-    const db = makeDb({ first: [null] });
+    // The guarded insert writes nothing when the platform token is missing.
+    const db = makeDb({ run: { meta: { changes: 0 } } });
     const ctx = makeContext(
       postReq('/api/admin/secrets', { key: 'GC_WEBHOOK_SECRET', encryptedValue: 'rsa-encrypted-base64' }, PLATFORM),
       { env: { DB: db as any,
@@ -180,7 +182,7 @@ describe('POST /api/admin/secrets', () => {
     const res = await onRequestPost(ctx as any);
     expect(res.status).toBe(400);
     expect(((await res.json()) as any).error).toMatch(/GC_ACCESS_TOKEN/);
-    expect((db.prepare as any).mock.calls.some(([sql]: [string]) => sql.includes('INSERT INTO "club_secret"'))).toBe(false);
+
   });
 
   it('stores a platform-wide GC_WEBHOOK_SECRET when the platform GC_ACCESS_TOKEN exists', async () => {
@@ -246,7 +248,7 @@ describe('DELETE /api/admin/secrets', () => {
     mockGetSession.mockResolvedValue(platformAdminSession);
     const ctx = makeContext(
       deleteReq('/api/admin/secrets?key=GC_ACCESS_TOKEN', PLATFORM),
-      { env: { DB: makeDb({ first: [{ present: 1 }] }) as any } },
+      { env: { DB: makeDb({ run: { meta: { changes: 0 } }, first: [{ present: 1 }] }) as any } },
     );
 
     const res = await onRequestDelete(ctx as any);
@@ -286,5 +288,54 @@ describe('DELETE /api/admin/secrets', () => {
 
     const res = await onRequestDelete(ctx as any);
     expect(res.status).toBe(401);
+  });
+});
+
+describe('platform secret pair guard against real SQL', () => {
+  const ENV = {
+    SECRETS_ENCRYPTION_KEY: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+    SECRETS_TRANSPORT_PRIVATE_KEY: 'private-key-base64',
+  };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetSession.mockResolvedValue(platformAdminSession);
+  });
+
+  it('enforces the pair inside the write and delete statements themselves', async () => {
+    const sqlite = createSchemaDb();
+    const DB = d1Over(sqlite) as any;
+    const keys = () => sqlite.prepare(
+      `SELECT COALESCE(clubSlug,'') AS club, key FROM club_secret ORDER BY club, key`,
+    ).all();
+    const post = (key: string, headers: Record<string, string> = PLATFORM) => onRequestPost(makeContext(
+      postReq('/api/admin/secrets', { key, encryptedValue: 'rsa-encrypted-base64' }, headers),
+      { env: { DB, ...ENV } },
+    ) as any);
+    const del = (key: string, headers: Record<string, string> = PLATFORM) => onRequestDelete(makeContext(
+      deleteReq(`/api/admin/secrets?key=${key}`, headers), { env: { DB } },
+    ) as any);
+    try {
+      expect((await post('GC_WEBHOOK_SECRET')).status).toBe(400);
+      expect(keys()).toEqual([]);
+      // A club's own webhook secret doesn't depend on the platform token.
+      expect((await post('GC_WEBHOOK_SECRET', { 'X-Club-Slug': 'test-club' })).status).toBe(200);
+
+      expect((await post('GC_ACCESS_TOKEN')).status).toBe(200);
+      expect((await post('GC_WEBHOOK_SECRET')).status).toBe(200);
+      expect((await post('GC_WEBHOOK_SECRET')).status).toBe(200); // update in place
+
+      expect((await del('GC_ACCESS_TOKEN')).status).toBe(409);
+      expect(keys()).toEqual([
+        { club: '', key: 'GC_ACCESS_TOKEN' },
+        { club: '', key: 'GC_WEBHOOK_SECRET' },
+        { club: 'test-club', key: 'GC_WEBHOOK_SECRET' },
+      ]);
+
+      expect((await del('GC_WEBHOOK_SECRET')).status).toBe(200);
+      expect((await del('GC_ACCESS_TOKEN')).status).toBe(200);
+      expect(keys()).toEqual([{ club: 'test-club', key: 'GC_WEBHOOK_SECRET' }]);
+    } finally {
+      sqlite.close();
+    }
   });
 });

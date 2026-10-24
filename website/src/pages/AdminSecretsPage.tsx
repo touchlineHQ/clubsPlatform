@@ -96,6 +96,7 @@ export function AdminSecretsPage() {
   };
 
   const handleDelete = async (key: string) => {
+    setError('');
     setDeleting(key);
     try {
       const res = await fetch(`/api/admin/secrets?key=${encodeURIComponent(key)}`, {

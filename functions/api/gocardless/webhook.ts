@@ -114,6 +114,8 @@ async function lookupPaymentMandate(
       'GoCardless-Version': '2015-07-06',
       Accept: 'application/json',
     },
+    // A stalled lookup throws, so the batch gets a 500 and GoCardless retries.
+    signal: AbortSignal.timeout(10_000),
   });
   if (res.status >= 500 || res.status === 408 || res.status === 429) throw new Error(`GoCardless payment lookup failed (${res.status})`);
   if (!res.ok) {
@@ -281,7 +283,10 @@ async function handleEvent(env: Env, ev: GCWebhookEvent, clubSlug: string | null
     // usually has to come from the API.
     const paymentMandateId = mandateId
       ?? (PAYMENT_OUTCOME_ACTIONS.has(ev.action) ? await lookupPaymentMandate(env, clubSlug, paymentId) : null);
-    await recordPaymentOutcome(env.DB, ev.action, paymentId, paymentMandateId, ev.details?.cause ?? null, now);
+    // Order outcomes by when they happened, not when they arrived.
+    const createdAt = ev.created_at ? Date.parse(ev.created_at) : NaN;
+    const eventAt = Number.isFinite(createdAt) ? createdAt : now;
+    await recordPaymentOutcome(env.DB, ev.action, paymentId, paymentMandateId, ev.details?.cause ?? null, eventAt, now);
     if (posthog) {
       // Fire-and-forget: don't block webhook response on PostHog
       posthog.captureImmediate({

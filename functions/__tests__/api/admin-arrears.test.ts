@@ -90,20 +90,39 @@ describe('arrears view and reminders (#77)', () => {
   });
 
   it('distinguishes a failed Direct Debit from no mandate, and clears it when a payment succeeds', async () => {
-    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW);
+    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW, NOW);
     let { body } = await list('?team=U12%20Blues');
     expect(body.rows.find((r) => r.registrationId === 'r_failed')).toMatchObject({
       reason: 'failed_payment', failureCause: 'insufficient_funds',
     });
     expect(body.rows.find((r) => r.registrationId === 'r_unpaid')?.reason).toBe('no_payment');
 
-    await recordPaymentOutcome(d1Over(sqlite) as any, 'confirmed', 'PM2', 'MD_FAIL', null, NOW + 1);
+    await recordPaymentOutcome(d1Over(sqlite) as any, 'confirmed', 'PM2', 'MD_FAIL', null, NOW + 1, NOW + 1);
     ({ body } = await list('?team=U12%20Blues'));
     expect(body.rows.map((r) => r.registrationId)).toEqual(['r_unpaid']);
   });
 
+  it('orders outcomes by event time when GoCardless delivers them out of order', async () => {
+    const db = d1Over(sqlite) as any;
+    const open = () => sqlite.prepare(
+      `SELECT paymentId FROM payment_failure WHERE resolvedAt IS NULL ORDER BY paymentId`,
+    ).all();
+    // A newer success arrives first: the older failure is recorded already resolved.
+    await recordPaymentOutcome(db, 'confirmed', 'PM2', 'MD_FAIL', null, NOW, NOW);
+    await recordPaymentOutcome(db, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW - DAY, NOW + 1);
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM payment_failure').get()).toEqual({ n: 1 });
+    expect(open()).toEqual([]);
+    // An older success arriving after a newer failure doesn't clear it.
+    await recordPaymentOutcome(db, 'failed', 'PM3', 'MD_FAIL', 'insufficient_funds', NOW + DAY, NOW + 2);
+    await recordPaymentOutcome(db, 'paid_out', 'PM0', 'MD_FAIL', null, NOW - 2 * DAY, NOW + 3);
+    expect(open()).toEqual([{ paymentId: 'PM3' }]);
+    // A stale retry of an earlier failure for the same payment can't reopen it.
+    await recordPaymentOutcome(db, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW - 3 * DAY, NOW + 4);
+    expect(open()).toEqual([{ paymentId: 'PM3' }]);
+  });
+
   it('ignores a failure on a mandate it does not know', async () => {
-    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PMX', 'MD_UNKNOWN', null, NOW);
+    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PMX', 'MD_UNKNOWN', null, NOW, NOW);
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM payment_failure').get()).toEqual({ n: 0 });
   });
 
@@ -155,7 +174,7 @@ describe('arrears view and reminders (#77)', () => {
 
   it('skips a failed_payment reminder for a registration with no open failure', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'm1' }), { status: 200 })));
-    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW);
+    await recordPaymentOutcome(d1Over(sqlite) as any, 'failed', 'PM1', 'MD_FAIL', 'insufficient_funds', NOW, NOW);
     const res = await remindPost(makeContext(
       postReq('/api/admin/arrears-reminders', { registrationIds: ['r_unpaid', 'r_failed'], template: 'failed_payment' }, H),
       { env: env({ RESEND_API_KEY: 'k', FROM_EMAIL: 'noreply@example.com' }) },

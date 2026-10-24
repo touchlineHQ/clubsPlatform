@@ -8,6 +8,11 @@ function isAllowedKey(key: string): key is AllowedKey {
   return (ALLOWED_KEYS as readonly string[]).includes(key);
 }
 
+const PLATFORM_TOKEN_EXISTS_SQL =
+  `EXISTS (SELECT 1 FROM "club_secret" WHERE clubSlug IS NULL AND key = 'GC_ACCESS_TOKEN')`;
+const PLATFORM_WEBHOOK_SECRET_EXISTS_SQL =
+  `EXISTS (SELECT 1 FROM "club_secret" s2 WHERE s2.clubSlug IS NULL AND s2.key = 'GC_WEBHOOK_SECRET')`;
+
 /**
  * A platform-wide (null-club) GC_WEBHOOK_SECRET verifies events for clubs that
  * have no secret of their own, and payment events then need a GC_ACCESS_TOKEN
@@ -65,13 +70,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!transportCiphertext) {
     return json({ error: "encryptedValue is required" }, { status: 400 });
   }
-  if (key === "GC_WEBHOOK_SECRET" && !getClubSlug(context.request)
-      && !(await hasPlatformSecret(context.env.DB, "GC_ACCESS_TOKEN"))) {
-    return json(
-      { error: "Set the platform GC_ACCESS_TOKEN first: a platform-wide GC_WEBHOOK_SECRET needs it to look up payments." },
-      { status: 400 },
-    );
-  }
   if (!context.env.SECRETS_TRANSPORT_PRIVATE_KEY) {
     return json({ error: "Transport key not configured" }, { status: 500 });
   }
@@ -81,17 +79,26 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const { encryptedValue, iv } = await encryptSecret(context.env, plaintext);
   const now = nowMs();
 
-  await context.env.DB
+  // The pair guard lives in the write itself, so a concurrent DELETE of the
+  // platform GC_ACCESS_TOKEN can't slip between a check and this insert.
+  const write = await context.env.DB
     .prepare(
       `INSERT INTO "club_secret" (id, clubSlug, key, encryptedValue, iv, createdAt, updatedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+       SELECT ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT (COALESCE(?,'') = '' AND ? = 'GC_WEBHOOK_SECRET') OR ${PLATFORM_TOKEN_EXISTS_SQL}
        ON CONFLICT(COALESCE(clubSlug,''), key) DO UPDATE SET
          encryptedValue = excluded.encryptedValue,
          iv             = excluded.iv,
          updatedAt      = excluded.updatedAt`,
     )
-    .bind(randomId("secret"), clubSlug, key, encryptedValue, iv, now, now)
+    .bind(randomId("secret"), clubSlug, key, encryptedValue, iv, now, now, clubSlug, key)
     .run();
+  if (!write.meta?.changes) {
+    return json(
+      { error: "Set the platform GC_ACCESS_TOKEN first: a platform-wide GC_WEBHOOK_SECRET needs it to look up payments." },
+      { status: 400 },
+    );
+  }
 
   return json({ ok: true });
 };
@@ -106,20 +113,23 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   }
 
   const clubSlug = getClubSlug(context.request);
-  if (key === "GC_ACCESS_TOKEN" && !clubSlug && (await hasPlatformSecret(context.env.DB, "GC_WEBHOOK_SECRET"))) {
+  // Guarded in the same statement as the POST guard above, so the pair can't
+  // be split by concurrent requests.
+  const removed = await context.env.DB
+    .prepare(
+      `DELETE FROM "club_secret"
+       WHERE COALESCE(clubSlug,'') = COALESCE(?,'') AND key = ?
+         AND NOT (clubSlug IS NULL AND key = 'GC_ACCESS_TOKEN' AND ${PLATFORM_WEBHOOK_SECRET_EXISTS_SQL})`,
+    )
+    .bind(clubSlug, key)
+    .run();
+  if (!removed.meta?.changes && key === "GC_ACCESS_TOKEN" && !clubSlug
+      && (await hasPlatformSecret(context.env.DB, "GC_WEBHOOK_SECRET"))) {
     return json(
       { error: "Remove the platform GC_WEBHOOK_SECRET first: it needs the platform GC_ACCESS_TOKEN to look up payments." },
       { status: 409 },
     );
   }
-
-  await context.env.DB
-    .prepare(
-      `DELETE FROM "club_secret"
-       WHERE COALESCE(clubSlug,'') = COALESCE(?,'') AND key = ?`,
-    )
-    .bind(clubSlug, key)
-    .run();
 
   return json({ ok: true });
 };

@@ -127,6 +127,9 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
     setSendSummary(null);
     const ids = [...selected];
     let sentChunks = 0;
+    // A 4xx is refused before anything is sent; any other failure may come
+    // after the mail provider already accepted some of the chunk's messages.
+    let failedChunkUnsent = false;
     try {
       // The server takes at most ARREARS_SEND_CHUNK registrations per request (D1's query
       // budget); a club-wide select-all can be 500, so send in chunks and add them up.
@@ -143,7 +146,10 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
           results?: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }>;
           skipped?: unknown[];
         };
-        if (!res.ok || !d.results) throw new Error(d.error ?? 'Sending failed');
+        if (!res.ok || !d.results) {
+          failedChunkUnsent = res.status >= 400 && res.status < 500;
+          throw new Error(d.error ?? 'Sending failed');
+        }
         results.push(...d.results);
         skipped += d.skipped?.length ?? 0;
         sentChunks++;
@@ -158,12 +164,19 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       setHistory({});
       await load();
     } catch (e) {
-      setSendSummary(e instanceof Error ? e.message : 'Sending failed');
+      const message = e instanceof Error ? e.message : 'Sending failed';
       // Earlier chunks already went out and the server doesn't suppress repeat
-      // sends, so reload to show them and keep only the unsent registrations
-      // selected; a retry then can't remind the same people twice.
-      if (sentChunks > 0) {
-        const remaining = new Set(ids.slice(sentChunks * ARREARS_SEND_CHUNK));
+      // sends, so reload to show them and keep only registrations known to be
+      // unsent selected; a retry then can't remind the same people twice. A
+      // chunk that failed after sending started may have gone out in part, so
+      // it is left unselected for the admin to check its chase history.
+      const unsentFrom = (sentChunks + (failedChunkUnsent ? 0 : 1)) * ARREARS_SEND_CHUNK;
+      const unclear = failedChunkUnsent ? 0 : ids.slice(sentChunks * ARREARS_SEND_CHUNK, unsentFrom).length;
+      setSendSummary(unclear
+        ? `${message}. Some of the ${unclear} registration${unclear === 1 ? '' : 's'} in the failed batch may have been reminded; check their chase history before sending again.`
+        : message);
+      if (sentChunks > 0 || unclear) {
+        const remaining = new Set(ids.slice(unsentFrom));
         setHistory({});
         const fresh = await load();
         if (fresh) setSelected(new Set(fresh.map(r => r.registrationId).filter(id => remaining.has(id))));
