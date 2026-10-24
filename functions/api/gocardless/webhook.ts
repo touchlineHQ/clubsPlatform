@@ -92,8 +92,8 @@ const PAYMENT_OUTCOME_ACTIONS = new Set(['failed', 'confirmed', 'paid_out']);
 /**
  * GoCardless payment events link only the payment, not its mandate, so ask the
  * API for it with the token of the club whose webhook secret signed the batch.
- * Throws on a network or 5xx error so GoCardless retries the batch; returns
- * null when there is no token or GoCardless doesn't know the payment.
+ * Throws on a network error, 5xx, 408 or 429 so GoCardless retries the batch;
+ * returns null when there is no token or GoCardless doesn't know the payment.
  */
 async function lookupPaymentMandate(
   env: Env,
@@ -115,7 +115,7 @@ async function lookupPaymentMandate(
       Accept: 'application/json',
     },
   });
-  if (res.status >= 500) throw new Error(`GoCardless payment lookup failed (${res.status})`);
+  if (res.status >= 500 || res.status === 408 || res.status === 429) throw new Error(`GoCardless payment lookup failed (${res.status})`);
   if (!res.ok) {
     console.error('GoCardless payment lookup rejected', { clubSlug, paymentId, status: res.status });
     return null;

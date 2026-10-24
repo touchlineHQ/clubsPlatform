@@ -352,6 +352,36 @@ describe('POST /api/gocardless/webhook', () => {
     fetchSpy.mockRestore();
   });
 
+  it.each([408, 429])('returns 500 so GoCardless retries when the payment lookup gets HTTP %i', async (status) => {
+    const body = JSON.stringify({
+      events: [{ id: `EV-pay-${status}`, resource_type: 'payments', action: 'failed', links: { payment: 'PM-4' } }],
+    });
+    const { db, failureCalls, insertCalls } = makeWebhookDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status }));
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const res = await webhookOnRequestPost(makeContext(makeWebhookReq(body, sig), { env }) as any);
+    expect(res.status).toBe(500);
+    expect(failureCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+    fetchSpy.mockRestore();
+  });
+
+  it('acknowledges the event without a failure row when GoCardless does not know the payment (404)', async () => {
+    const body = JSON.stringify({
+      events: [{ id: 'EV-pay-404', resource_type: 'payments', action: 'failed', links: { payment: 'PM-5' } }],
+    });
+    const { db, failureCalls, insertCalls } = makeWebhookDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const res = await webhookOnRequestPost(makeContext(makeWebhookReq(body, sig), { env }) as any);
+    expect(res.status).toBe(204);
+    expect(failureCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(1);
+    fetchSpy.mockRestore();
+  });
+
   it('returns 400 on malformed JSON body (after passing signature)', async () => {
     const body = 'not-json';
     const { db } = makeWebhookDb();

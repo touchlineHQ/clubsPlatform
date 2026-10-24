@@ -8,6 +8,22 @@ function isAllowedKey(key: string): key is AllowedKey {
   return (ALLOWED_KEYS as readonly string[]).includes(key);
 }
 
+/**
+ * A platform-wide (null-club) GC_WEBHOOK_SECRET verifies events for clubs that
+ * have no secret of their own, and payment events then need a GC_ACCESS_TOKEN
+ * from the same scope to look up the payment's mandate (#77). Without the pair
+ * those failures would be acknowledged and never recorded, so the platform
+ * token must exist before the platform webhook secret, and can't be removed
+ * while it is set.
+ */
+async function hasPlatformSecret(db: D1Database, key: AllowedKey): Promise<boolean> {
+  const row = await db
+    .prepare(`SELECT 1 AS present FROM "club_secret" WHERE clubSlug IS NULL AND key = ?`)
+    .bind(key)
+    .first<{ present: number }>();
+  return !!row;
+}
+
 interface SecretRow {
   id: string;
   key: string;
@@ -49,6 +65,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   if (!transportCiphertext) {
     return json({ error: "encryptedValue is required" }, { status: 400 });
   }
+  if (key === "GC_WEBHOOK_SECRET" && !getClubSlug(context.request)
+      && !(await hasPlatformSecret(context.env.DB, "GC_ACCESS_TOKEN"))) {
+    return json(
+      { error: "Set the platform GC_ACCESS_TOKEN first: a platform-wide GC_WEBHOOK_SECRET needs it to look up payments." },
+      { status: 400 },
+    );
+  }
   if (!context.env.SECRETS_TRANSPORT_PRIVATE_KEY) {
     return json({ error: "Transport key not configured" }, { status: 500 });
   }
@@ -83,6 +106,12 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   }
 
   const clubSlug = getClubSlug(context.request);
+  if (key === "GC_ACCESS_TOKEN" && !clubSlug && (await hasPlatformSecret(context.env.DB, "GC_WEBHOOK_SECRET"))) {
+    return json(
+      { error: "Remove the platform GC_WEBHOOK_SECRET first: it needs the platform GC_ACCESS_TOKEN to look up payments." },
+      { status: 409 },
+    );
+  }
 
   await context.env.DB
     .prepare(

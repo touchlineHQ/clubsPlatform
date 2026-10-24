@@ -25,9 +25,20 @@ import { ARREARS_REMINDER_ACTION, isReminderTemplate, reminderMessage } from "..
  * GET ?registrationId= returns that history.
  */
 
-// D1 allows 100 bound parameters per statement, and the lookups bind the
-// club slug plus every id, so 99 ids is the most one request can carry.
-const MAX_REMINDER_BATCH = 99;
+// A batch is bounded by D1 work, not just bind parameters. Each registration
+// costs one contact lookup, then per contact a registration probe, an
+// unsubscribe-token insert and a send-event insert, then one audit insert. An
+// imported player has at most 11 contacts (player + 10 parent emails, see
+// IMPORT_LIMITS), so 35 queries. Against the 1,000 queries a Worker invocation
+// may make, with headroom for auth, ensureTables and the lookups, that is 27.
+// ArrearsTab's CHUNK mirrors this. (27 ids also stays under the 100-bind limit.)
+export const REMINDER_QUERY_BUDGET = 1000;
+export const REMINDER_FIXED_QUERIES = 50;
+export const REMINDER_MAX_CONTACTS = 11;
+export const REMINDER_QUERIES_PER_REGISTRATION = 1 + 3 * REMINDER_MAX_CONTACTS + 1;
+export const MAX_REMINDER_BATCH = Math.floor(
+  (REMINDER_QUERY_BUDGET - REMINDER_FIXED_QUERIES) / REMINDER_QUERIES_PER_REGISTRATION,
+);
 
 type SendBody = { registrationIds?: unknown; template?: unknown };
 

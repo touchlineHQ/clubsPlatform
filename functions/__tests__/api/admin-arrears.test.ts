@@ -8,7 +8,16 @@ vi.mock('../../lib/auth', () => ({
 }));
 
 import { onRequestGet as arrearsGet } from '../../api/admin/arrears';
-import { onRequestPost as remindPost, onRequestGet as historyGet } from '../../api/admin/arrears-reminders';
+import {
+  onRequestPost as remindPost,
+  onRequestGet as historyGet,
+  MAX_REMINDER_BATCH,
+  REMINDER_FIXED_QUERIES,
+  REMINDER_QUERIES_PER_REGISTRATION,
+  REMINDER_QUERY_BUDGET,
+} from '../../api/admin/arrears-reminders';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { recordPaymentOutcome } from '../../lib/payment-failure';
 
 const NOW = Date.now();
@@ -161,8 +170,17 @@ describe('arrears view and reminders (#77)', () => {
     const post = (b: unknown) => remindPost(makeContext(postReq('/api/admin/arrears-reminders', b, H), { env: env() }) as any);
     expect((await post({ registrationIds: ['r_unpaid'], template: 'shouty' })).status).toBe(400);
     expect((await post({ registrationIds: [], template: 'outstanding' })).status).toBe(400);
-    expect((await post({ registrationIds: Array.from({ length: 100 }, (_, i) => `r${i}`), template: 'outstanding' })).status).toBe(400);
+    expect((await post({ registrationIds: Array.from({ length: MAX_REMINDER_BATCH + 1 }, (_, i) => `r${i}`), template: 'outstanding' })).status).toBe(400);
+    expect((await post({ registrationIds: Array.from({ length: MAX_REMINDER_BATCH }, (_, i) => `r${i}`), template: 'outstanding' })).status).toBe(200);
     mockGetSession.mockResolvedValue(secretarySession);
     expect((await post({ registrationIds: ['r_unpaid'], template: 'outstanding' })).status).toBe(403);
+  });
+
+  it('sizes a reminder batch to the D1 query budget, and the admin page sends in batches of that size', () => {
+    expect(REMINDER_QUERIES_PER_REGISTRATION).toBe(35);
+    expect(MAX_REMINDER_BATCH * REMINDER_QUERIES_PER_REGISTRATION + REMINDER_FIXED_QUERIES).toBeLessThanOrEqual(REMINDER_QUERY_BUDGET);
+    expect(MAX_REMINDER_BATCH).toBeLessThan(100);
+    const tab = readFileSync(resolve(__dirname, '../../../website/src/pages/admin-payments/ArrearsTab.tsx'), 'utf8');
+    expect(tab).toContain(`export const ARREARS_SEND_CHUNK = ${MAX_REMINDER_BATCH};`);
   });
 });

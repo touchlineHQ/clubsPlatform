@@ -47,7 +47,9 @@ const TEMPLATE_OPTIONS = [
   { value: 'failed_payment', label: 'Payment failed' },
 ];
 
-const CHUNK = 99;
+// Mirrors MAX_REMINDER_BATCH in functions/api/admin/arrears-reminders.ts:
+// registrations per request, sized to D1's per-request query budget.
+export const ARREARS_SEND_CHUNK = 27;
 
 const fmtDate = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -126,15 +128,15 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
     const ids = [...selected];
     let sentChunks = 0;
     try {
-      // The server takes at most 99 registrations per request (D1's bind limit);
-      // a club-wide select-all can be 500, so send in chunks and add them up.
+      // The server takes at most ARREARS_SEND_CHUNK registrations per request (D1's query
+      // budget); a club-wide select-all can be 500, so send in chunks and add them up.
       const results: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }> = [];
       let skipped = 0;
-      for (let i = 0; i < ids.length; i += CHUNK) {
+      for (let i = 0; i < ids.length; i += ARREARS_SEND_CHUNK) {
         const res = await fetch('/api/admin/arrears-reminders', {
           method: 'POST',
           headers: { ...clubHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ registrationIds: ids.slice(i, i + CHUNK), template }),
+          body: JSON.stringify({ registrationIds: ids.slice(i, i + ARREARS_SEND_CHUNK), template }),
         });
         const d = await res.json().catch(() => ({})) as {
           error?: string;
@@ -161,7 +163,7 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       // sends, so reload to show them and keep only the unsent registrations
       // selected; a retry then can't remind the same people twice.
       if (sentChunks > 0) {
-        const remaining = new Set(ids.slice(sentChunks * CHUNK));
+        const remaining = new Set(ids.slice(sentChunks * ARREARS_SEND_CHUNK));
         setHistory({});
         const fresh = await load();
         if (fresh) setSelected(new Set(fresh.map(r => r.registrationId).filter(id => remaining.has(id))));

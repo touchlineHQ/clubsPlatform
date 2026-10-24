@@ -102,7 +102,11 @@ export function AdminSecretsPage() {
         method: 'DELETE',
         headers: clubHeaders,
       });
-      if (!res.ok) { setError('Failed to delete secret'); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        setError(data.error ?? 'Failed to delete secret');
+        return;
+      }
       setSecrets(prev => prev.filter(s => s.key !== key));
     } catch (e) {
       captureError(e, { op: 'adminSecrets.delete' });
