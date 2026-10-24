@@ -86,7 +86,7 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
   // Only the latest request may write state: a slow response for a previous
   // filter must not replace the table under the filter now shown.
   const loadSeq = useRef(0);
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<ArrearsRow[] | null> => {
     const seq = ++loadSeq.current;
     setRows(null);
     setSelected(new Set());
@@ -98,15 +98,17 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       const res = await fetch(`/api/admin/arrears?${qs}`, { headers: clubHeaders });
       if (!res.ok) throw new Error(`Failed to load arrears (${res.status})`);
       const d = await res.json() as { rows: ArrearsRow[]; truncated: boolean };
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current) return null;
       setRows(d.rows);
       setTruncated(d.truncated);
       setSelected(new Set());
+      return d.rows;
     } catch (e) {
-      if (seq !== loadSeq.current) return;
+      if (seq !== loadSeq.current) return null;
       captureError(e, { op: 'arrears.load' });
       setError(e instanceof Error ? e.message : 'Failed to load arrears');
       setRows([]);
+      return null;
     }
   }, [team, minDays, clubHeaders]);
 
@@ -121,10 +123,11 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
   const send = async () => {
     setSending(true);
     setSendSummary(null);
+    const ids = [...selected];
+    let sentChunks = 0;
     try {
       // The server takes at most 99 registrations per request (D1's bind limit);
       // a club-wide select-all can be 500, so send in chunks and add them up.
-      const ids = [...selected];
       const results: Array<{ sent: number; dropped: unknown[]; mailConfigured: boolean }> = [];
       let skipped = 0;
       for (let i = 0; i < ids.length; i += CHUNK) {
@@ -141,6 +144,7 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
         if (!res.ok || !d.results) throw new Error(d.error ?? 'Sending failed');
         results.push(...d.results);
         skipped += d.skipped?.length ?? 0;
+        sentChunks++;
       }
       const sent = results.reduce((n, r) => n + r.sent, 0);
       const dropped = results.reduce((n, r) => n + r.dropped.length, 0);
@@ -153,6 +157,15 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       await load();
     } catch (e) {
       setSendSummary(e instanceof Error ? e.message : 'Sending failed');
+      // Earlier chunks already went out and the server doesn't suppress repeat
+      // sends, so reload to show them and keep only the unsent registrations
+      // selected; a retry then can't remind the same people twice.
+      if (sentChunks > 0) {
+        const remaining = new Set(ids.slice(sentChunks * CHUNK));
+        setHistory({});
+        const fresh = await load();
+        if (fresh) setSelected(new Set(fresh.map(r => r.registrationId).filter(id => remaining.has(id))));
+      }
     } finally {
       setSending(false);
     }
