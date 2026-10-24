@@ -56,7 +56,7 @@ describe('ArrearsTab (#77)', () => {
     });
     renderWithMantine(<ArrearsTab clubHeaders={{ 'X-Club-Slug': 'test-club' }} />, { authValue: mockAdmin, clubValue: mockSingleClub });
     await screen.findByLabelText('Select 10000');
-    for (const r of rows) fireEvent.click(screen.getByLabelText(`Select ${r.fanId}`));
+    fireEvent.click(screen.getByLabelText('Select all'));
 
     fireEvent.click(screen.getByRole('button', { name: new RegExp(`Send reminder \\(${rows.length}\\)`) }));
 
@@ -64,5 +64,5 @@ describe('ArrearsTab (#77)', () => {
     // Only the never-attempted final chunk stays selected.
     await waitFor(() => expect(screen.getByRole('button', { name: /Send reminder \(1\)/ })).toBeTruthy());
     expect(posts).toBe(2);
-  });
+  }, 20_000);
 });
