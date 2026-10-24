@@ -89,6 +89,7 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
   const load = useCallback(async () => {
     const seq = ++loadSeq.current;
     setRows(null);
+    setSelected(new Set());
     setError(null);
     const qs = new URLSearchParams();
     if (team) qs.set('team', team);
@@ -163,9 +164,16 @@ export function ArrearsTab({ clubHeaders: rawHeaders }: { clubHeaders: HeadersIn
       return;
     }
     setHistory(h => ({ ...h, [id]: 'loading' }));
-    const res = await fetch(`/api/admin/arrears-reminders?registrationId=${encodeURIComponent(id)}`, { headers: clubHeaders });
-    const d = res.ok ? await res.json() as { history: HistoryEntry[] } : { history: [] };
-    setHistory(h => ({ ...h, [id]: d.history }));
+    try {
+      const res = await fetch(`/api/admin/arrears-reminders?registrationId=${encodeURIComponent(id)}`, { headers: clubHeaders });
+      if (!res.ok) throw new Error(`Failed to load history (${res.status})`);
+      const d = await res.json() as { history: HistoryEntry[] };
+      setHistory(h => ({ ...h, [id]: d.history }));
+    } catch (e) {
+      captureError(e, { op: 'arrears.history' });
+      setHistory(h => { const { [id]: _, ...rest } = h; return rest; });
+      setSendSummary('Could not load chase history. Try again.');
+    }
   };
 
   return (
