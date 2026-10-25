@@ -195,6 +195,18 @@ describe('arrears view and reminders (#77)', () => {
     expect((await post({ registrationIds: ['r_unpaid'], template: 'outstanding' })).status).toBe(403);
   });
 
+  it('refuses a batch whose real contact count would overrun the D1 query budget, before sending anything', async () => {
+    reg('r_crowded', 'p_crowd', 'U12 Blues');
+    for (let i = 0; i < 300; i++) contact(`c_crowd_${i}`, 'p_crowd', 'confirmed', 1);
+    const res = await remindPost(makeContext(
+      postReq('/api/admin/arrears-reminders', { registrationIds: ['r_unpaid', 'r_crowded'], template: 'outstanding' }, H),
+      { env: env() },
+    ) as any);
+    expect(res.status).toBe(400);
+    const audits = sqlite.prepare(`SELECT COUNT(*) AS n FROM "admin_audit_log"`).get() as { n: number };
+    expect(audits.n).toBe(0);
+  });
+
   it('sizes a reminder batch to the D1 query budget, and the admin page sends in batches of that size', () => {
     expect(REMINDER_QUERIES_PER_REGISTRATION).toBe(35);
     expect(MAX_REMINDER_BATCH * REMINDER_QUERIES_PER_REGISTRATION + REMINDER_FIXED_QUERIES).toBeLessThanOrEqual(REMINDER_QUERY_BUDGET);

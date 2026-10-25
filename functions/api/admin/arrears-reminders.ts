@@ -30,10 +30,13 @@ import { ARREARS_REMINDER_ACTION, isReminderTemplate, reminderMessage } from "..
 // unsubscribe-token insert and a send-event insert, then one audit insert. An
 // imported player has at most 11 contacts (player + 10 parent emails, see
 // IMPORT_LIMITS), so 35 queries. Against the 1,000 queries a Worker invocation
-// may make, with headroom for auth, ensureTables and the lookups, that is 27.
-// ArrearsTab's CHUNK mirrors this. (27 ids also stays under the 100-bind limit.)
+// may make, the fixed reserve covers auth and the lookups (50) plus a cold-start
+// ensureTables (133 statements), which leaves room for 23. ArrearsTab's CHUNK
+// mirrors this. Contacts can also be added by hand, so onRequestPost re-checks
+// the batch against each player's actual contact count before sending anything.
 export const REMINDER_QUERY_BUDGET = 1000;
-export const REMINDER_FIXED_QUERIES = 50;
+export const REMINDER_COLD_START_QUERIES = 133;
+export const REMINDER_FIXED_QUERIES = 50 + REMINDER_COLD_START_QUERIES;
 export const REMINDER_MAX_CONTACTS = 11;
 export const REMINDER_QUERIES_PER_REGISTRATION = 1 + 3 * REMINDER_MAX_CONTACTS + 1;
 export const MAX_REMINDER_BATCH = Math.floor(
@@ -109,6 +112,33 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     skipped = foundRegs
       .filter((r) => !ok.has(r.registrationId))
       .map((r) => ({ registrationId: r.registrationId, reason: "no_failed_payment" as const }));
+  }
+
+  // Project the real D1 cost from each player's contact count and refuse the
+  // whole batch up front, so a request never runs out of queries part-way
+  // through and leaves some reminders sent and others not.
+  if (regs.length > 0) {
+    const playerIds = [...new Set(regs.map((r) => r.playerId))];
+    const counts = await context.env.DB
+      .prepare(
+        `SELECT "playerId" AS playerId, COUNT(*) AS contactCount
+           FROM "player_contact"
+          WHERE "clubSlug" = ? AND "playerId" IN (${playerIds.map(() => "?").join(", ")})
+          GROUP BY "playerId"`,
+      )
+      .bind(clubSlug, ...playerIds)
+      .all<{ playerId: string; contactCount: number }>();
+    const contactCounts = new Map((counts.results ?? []).map((r) => [r.playerId, Number(r.contactCount)]));
+    const projected = REMINDER_FIXED_QUERIES + regs.reduce(
+      (total, r) => total + 2 + 3 * (contactCounts.get(r.playerId) ?? 0),
+      0,
+    );
+    if (projected > REMINDER_QUERY_BUDGET) {
+      return json(
+        { error: "These players have too many contacts to remind in one send. Select fewer registrations." },
+        { status: 400 },
+      );
+    }
   }
 
   const identity = await getClubIdentity(context.env.DB, clubSlug);

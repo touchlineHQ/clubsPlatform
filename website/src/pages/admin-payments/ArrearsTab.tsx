@@ -49,7 +49,7 @@ const TEMPLATE_OPTIONS = [
 
 // Mirrors MAX_REMINDER_BATCH in functions/api/admin/arrears-reminders.ts:
 // registrations per request, sized to D1's per-request query budget.
-export const ARREARS_SEND_CHUNK = 27;
+export const ARREARS_SEND_CHUNK = 23;
 
 const fmtDate = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
