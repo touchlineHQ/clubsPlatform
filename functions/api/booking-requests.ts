@@ -1,5 +1,5 @@
 import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
-import { CLUB_PITCH, requireClubFeature } from "../lib/club-features";
+import { CLUB_PITCH, requireClubFeature, soleActiveClubSlug } from "../lib/club-features";
 import { getPostHog, clubGroups } from "../lib/posthog";
 
 type BookingRequestRow = {
@@ -206,11 +206,14 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
   // Every read and write below is bound to this club, so the feature guard and
   // the admin's club check apply to the same club as the request being changed.
-  const clubSlug = getClubSlug(context.request);
-  const featureOff = await requireClubFeature(context.env, clubSlug, "pitchBookings");
+  const headerSlug = getClubSlug(context.request);
+  const featureOff = await requireClubFeature(context.env, headerSlug, "pitchBookings");
   if (featureOff) return featureOff;
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
+  // Like requireClubFeature, a header-less request on a single-club deployment
+  // acts on the only active club, so it still finds that club's requests.
+  const clubSlug = headerSlug ?? (await soleActiveClubSlug(context.env.DB));
 
   const url = new URL(context.request.url);
   const id = url.searchParams.get("id") ?? "";

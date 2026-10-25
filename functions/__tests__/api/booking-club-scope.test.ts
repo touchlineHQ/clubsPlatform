@@ -98,6 +98,14 @@ describe('pitch bookings are club-scoped (#83)', () => {
     expect(res.status).toBe(409);
   });
 
+  it('lets an unbound admin approve header-less on a single-club deployment', async () => {
+    sqlite.exec(`UPDATE club_config SET active = 0 WHERE slug = 'other-club'`);
+    const id = await submit(A);
+    mockGetSession.mockResolvedValue({ ...adminSession, user: { ...adminSession.user, clubSlug: null } });
+    expect((await approve(id, {})).status).toBe(200);
+    expect(sqlite.prepare(`SELECT status FROM booking_request WHERE id = ?`).get(id)).toEqual({ status: 'approved' });
+  });
+
   describe('migration 0042 backfill', () => {
     const migration = readFileSync(resolve(__dirname, '../../../migrations/0042_scope_bookings_to_club.sql'), 'utf8');
     const seedLegacy = () => {

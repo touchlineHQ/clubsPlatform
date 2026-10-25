@@ -23,7 +23,10 @@ export function FeatureToggles({ pitchBookings, onFeaturesChange }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const onChangeRef = useRef(onFeaturesChange);
-  onChangeRef.current = onFeaturesChange;
+  // Update after commit (not during render), and before the GET effect below.
+  useEffect(() => {
+    onChangeRef.current = onFeaturesChange;
+  }, [onFeaturesChange]);
 
   useEffect(() => {
     let cancelled = false;

@@ -121,7 +121,7 @@ export async function requireClubFeature(
 export const CLUB_PITCH = `(clubSlug IS NULL OR clubSlug = ?)`;
 
 /** The slug of the only active club, or null when there are none or several. */
-async function soleActiveClubSlug(db: D1Database): Promise<string | null> {
+export async function soleActiveClubSlug(db: D1Database): Promise<string | null> {
   const res = await db
     .prepare(`SELECT slug FROM club_config WHERE active = 1 LIMIT 2`)
     .all<{ slug: string }>();
