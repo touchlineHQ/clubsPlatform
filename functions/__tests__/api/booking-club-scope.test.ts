@@ -16,6 +16,7 @@ import {
   onRequestPost as requestsPost,
   onRequestPatch as requestsPatch,
 } from '../../api/booking-requests';
+import { onRequestPost as importFixturesPost } from '../../api/admin/import-fixtures';
 
 const NOW = 1_700_000_000_000;
 const A = { 'X-Club-Slug': 'test-club' };
@@ -104,6 +105,56 @@ describe('pitch bookings are club-scoped (#83)', () => {
     mockGetSession.mockResolvedValue({ ...adminSession, user: { ...adminSession.user, clubSlug: null } });
     expect((await approve(id, {})).status).toBe(200);
     expect(sqlite.prepare(`SELECT status FROM booking_request WHERE id = ?`).get(id)).toEqual({ status: 'approved' });
+  });
+
+  it('reads and deletes header-less on a single-club deployment, still requiring the header for a club-bound admin', async () => {
+    const id = await submit(A);
+    expect((await approve(id, A)).status).toBe(200);
+    const bookingId = (sqlite.prepare(`SELECT id FROM booking WHERE requestId = ?`).get(id) as { id: string }).id;
+    sqlite.exec(`UPDATE club_config SET active = 0 WHERE slug = 'other-club'`);
+
+    // A club-bound admin is still refused without the header (requireAdmin's scope check).
+    expect((await call(bookingsDelete, deleteReq(`/api/bookings?id=${bookingId}`, {}))).status).toBe(403);
+
+    mockGetSession.mockResolvedValue({ ...adminSession, user: { ...adminSession.user, clubSlug: null } });
+    const bkgs = (await (await call(bookingsGet, getReq('/api/bookings', {}))).json()) as { bookings: { id: string }[] };
+    expect(bkgs.bookings.map(b => b.id)).toEqual([bookingId]);
+    expect((await call(bookingsDelete, deleteReq(`/api/bookings?id=${bookingId}`, {}))).status).toBe(200);
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM booking`).get()).toEqual({ n: 0 });
+    expect(sqlite.prepare(`SELECT status FROM booking_request WHERE id = ?`).get(id)).toEqual({ status: 'pending' });
+  });
+
+  describe('fixture import', () => {
+    const fixture = { id: 'f1', date: '2099-03-15', time: '10:00', home_team: 'U9s', away_team: 'Away FC', team: 'U9s', home_away: 'home', division: 'Sunday League' };
+    // Built by hand: postReq adds a default X-Club-Slug to /api/admin/ paths.
+    const importReq = (headers: Record<string, string>) =>
+      new Request('https://example.com/api/admin/import-fixtures', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ clubFeedSlug: 'feed' }),
+      });
+    let fetchSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ fixtures: [fixture] }), { status: 200 }));
+    });
+    afterEach(() => fetchSpy.mockRestore());
+
+    it('is refused, without fetching or inserting, when the club has pitch bookings off', async () => {
+      sqlite.exec(`INSERT INTO "club_feature" (clubSlug, feature, enabled, updatedAt) VALUES ('test-club','pitchBookings',0,${NOW})`);
+      expect((await call(importFixturesPost, importReq(A))).status).toBe(404);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM booking_request`).get()).toEqual({ n: 0 });
+    });
+
+    it('stores imports against the sole active club when sent header-less, and dedupes there', async () => {
+      sqlite.exec(`UPDATE club_config SET active = 0 WHERE slug = 'other-club'`);
+      mockGetSession.mockResolvedValue({ ...adminSession, user: { ...adminSession.user, clubSlug: null } });
+      expect(await (await call(importFixturesPost, importReq({}))).json()).toMatchObject({ created: 1, skipped: 0 });
+      expect(sqlite.prepare(`SELECT clubSlug FROM booking_request`).all()).toEqual([{ clubSlug: 'test-club' }]);
+      // The same fixture sent with the header is a duplicate of that club's row.
+      mockGetSession.mockResolvedValue(adminSession);
+      expect(await (await call(importFixturesPost, importReq(A))).json()).toMatchObject({ created: 0, skipped: 1 });
+    });
   });
 
   describe('migration 0042 backfill', () => {

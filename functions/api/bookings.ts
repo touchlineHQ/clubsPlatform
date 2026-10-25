@@ -1,5 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
-import { requireClubFeature } from "../lib/club-features";
+import { requireClubFeature, soleActiveClubSlug } from "../lib/club-features";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
 import { getPostHog, clubGroups } from "../lib/posthog";
 
@@ -24,7 +24,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   if (featureOff) return featureOff;
   await ensureTables(context.env.DB);
 
-  const clubSlug = getClubSlug(context.request);
+  // Like requireClubFeature, a header-less request on a single-club deployment
+  // reads the only active club's bookings.
+  const clubSlug = getClubSlug(context.request) ?? (await soleActiveClubSlug(context.env.DB));
   const url = new URL(context.request.url);
   const date = url.searchParams.get("date");
   const month = url.searchParams.get("month");
@@ -71,16 +73,20 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
-  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  const headerSlug = getClubSlug(context.request);
+  const featureOff = await requireClubFeature(context.env, headerSlug, "pitchBookings");
   if (featureOff) return featureOff;
+  // requireAdmin checks the header slug, so a club-bound admin still needs it.
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
+  // Every read and write below uses the same club the feature check used: a
+  // header-less request on a single-club deployment acts on the only active club.
+  const clubSlug = headerSlug ?? (await soleActiveClubSlug(context.env.DB));
 
   const url = new URL(context.request.url);
   const id = url.searchParams.get("id") ?? "";
   if (!id) return json({ error: "id query param required" }, { status: 400 });
 
-  const clubSlug = getClubSlug(context.request);
   const ts = nowMs();
 
   // Verify booking belongs to this club before deleting

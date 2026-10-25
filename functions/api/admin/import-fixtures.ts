@@ -1,4 +1,5 @@
 import { type Env, json, requireAdmin, getClubSlug } from "../../lib/api-helpers";
+import { requireClubFeature, soleActiveClubSlug } from "../../lib/club-features";
 import { getPostHog, clubGroups } from "../../lib/posthog";
 
 interface LiveFixture {
@@ -34,9 +35,17 @@ function addDuration(time: string, hours: number): string {
 }
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
+  // Imports create booking requests, so they need pitch bookings on for the club.
+  const headerSlug = getClubSlug(context.request);
+  const featureOff = await requireClubFeature(context.env, headerSlug, "pitchBookings");
+  if (featureOff) return featureOff;
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
   const { session } = result;
+  // Imported requests belong to the importing club (#83), like any other request.
+  // Same rule as approval: a header-less request on a single-club deployment
+  // acts on the only active club.
+  const clubSlug = headerSlug ?? (await soleActiveClubSlug(context.env.DB));
 
   const body = await context.request.json() as { clubFeedSlug?: string };
   const { clubFeedSlug } = body;
@@ -58,8 +67,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ ok: true, created: 0, skipped: 0 });
   }
 
-  // Imported requests belong to the importing club (#83), like any other request.
-  const clubSlug = getClubSlug(context.request);
   const ts = Date.now();
   let created = 0;
   let skipped = 0;
@@ -105,7 +112,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       event: 'fixtures imported',
       // club_feed_slug below is the fixtures-feed identifier, not the club's
       // own slug — the group needs the latter.
-      ...clubGroups(getClubSlug(context.request)),
+      ...clubGroups(clubSlug),
       properties: {
         club_feed_slug: clubFeedSlug,
         fixtures_created: created,

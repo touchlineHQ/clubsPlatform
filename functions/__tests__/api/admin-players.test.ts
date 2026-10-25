@@ -1256,7 +1256,7 @@ describe('import-fixtures POST', () => {
       { clubFeedSlug: 'my-club' },
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(200);
@@ -1291,7 +1291,7 @@ describe('import-fixtures POST', () => {
       { clubFeedSlug: 'my-club' },
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(200);
@@ -1308,7 +1308,7 @@ describe('import-fixtures POST', () => {
       {},
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(400);
@@ -1327,7 +1327,7 @@ describe('import-fixtures POST', () => {
       { clubFeedSlug: 'nonexistent-club' },
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(502);
@@ -1349,7 +1349,7 @@ describe('import-fixtures POST', () => {
       { clubFeedSlug: 'my-club' },
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(200);
@@ -1369,7 +1369,7 @@ describe('import-fixtures POST', () => {
       { clubFeedSlug: 'my-club' },
       { 'X-Club-Slug': 'test-club' },
     );
-    const ctx = makeContext(req, { env: { DB: db as any } });
+    const ctx = makeContext(req, { env: { DB: db as any, PITCH_BOOKINGS: 'true' } });
 
     const res = await importFixturesPost(ctx as any);
     expect(res.status).toBe(401);
