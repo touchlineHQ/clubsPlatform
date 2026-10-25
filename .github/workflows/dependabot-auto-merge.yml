@@ -28,8 +28,11 @@ jobs:
       checks: read
       actions: write
     with:
-      # clubsPlatform merges every classified semver bump.
-      allowed-updates: major
+      # Patch and minor only. Majors (including a grouped PR containing one) are
+      # left for Scott to review (adamsuk/software-factory#10). Once
+      # touchlineHQ/.github#4 is merged, bump the pin above to its merge commit and
+      # add `reviewers: adamsuk` so a review is requested when the checks below pass.
+      allowed-updates: minor
       allow-unclassified: "true"
       skip-ecosystems: github_actions
       required-checks: |
