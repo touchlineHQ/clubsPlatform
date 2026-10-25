@@ -1,5 +1,5 @@
 import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
-import { requireClubFeature } from "../lib/club-features";
+import { CLUB_PITCH, requireClubFeature } from "../lib/club-features";
 import { getPostHog, clubGroups } from "../lib/posthog";
 
 type BookingRequestRow = {
@@ -247,10 +247,10 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       return json({ error: "Booking request not found or not pending" }, { status: 404 });
     }
 
-    // Check pitch exists
+    // Check the pitch exists and is one this club can book
     const pitch = await context.env.DB
-      .prepare(`SELECT id, formats FROM pitch WHERE id = ?`)
-      .bind(pitchId)
+      .prepare(`SELECT id, formats FROM pitch WHERE id = ? AND ${CLUB_PITCH}`)
+      .bind(pitchId, clubSlug)
       .first<PitchRow>();
 
     if (!pitch) {
@@ -266,13 +266,15 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
       );
     }
 
-    // Check for conflicts on the same pitch/date
+    // Check for conflicts on the same pitch/date within this club. The default
+    // pitch set is shared by id, so another club's booking is not a clash (and
+    // its team name must not leak into this club's error message).
     const conflict = await context.env.DB
       .prepare(
         `SELECT teamName, timeStart, timeEnd FROM booking
-         WHERE pitchId = ? AND date = ? AND timeStart < ? AND timeEnd > ?`
+         WHERE pitchId = ? AND date = ? AND timeStart < ? AND timeEnd > ? AND ${SAME_CLUB}`
       )
-      .bind(pitchId, request.date, timeEnd, timeStart)
+      .bind(pitchId, request.date, timeEnd, timeStart, clubSlug, clubSlug)
       .first<{ teamName: string; timeStart: string; timeEnd: string }>();
 
     if (conflict) {

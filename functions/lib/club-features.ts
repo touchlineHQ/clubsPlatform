@@ -113,6 +113,13 @@ export async function requireClubFeature(
   });
 }
 
+/**
+ * Pitches a club can see and book: its own, plus the club-less default set
+ * (seeded by 0004 / ensure-tables, and there is no pitch admin yet). A request
+ * with no club sees only the default set. Bind the slug once.
+ */
+export const CLUB_PITCH = `(clubSlug IS NULL OR clubSlug = ?)`;
+
 /** The slug of the only active club, or null when there are none or several. */
 async function soleActiveClubSlug(db: D1Database): Promise<string | null> {
   const res = await db

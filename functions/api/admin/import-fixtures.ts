@@ -58,14 +58,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     return json({ ok: true, created: 0, skipped: 0 });
   }
 
+  // Imported requests belong to the importing club (#83), like any other request.
+  const clubSlug = getClubSlug(context.request);
   const ts = Date.now();
   let created = 0;
   let skipped = 0;
 
   for (const fixture of homeFixtures) {
     const existing = await context.env.DB
-      .prepare("SELECT id FROM booking_request WHERE teamName = ? AND date = ? AND timeStart = ?")
-      .bind(fixture.team, fixture.date, fixture.time)
+      .prepare(
+        "SELECT id FROM booking_request WHERE teamName = ? AND date = ? AND timeStart = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))"
+      )
+      .bind(fixture.team, fixture.date, fixture.time, clubSlug, clubSlug)
       .first<{ id: string }>();
 
     if (existing) { skipped++; continue; }
@@ -73,11 +77,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const format = inferFormat(fixture.team);
     await context.env.DB
       .prepare(
-        `INSERT INTO booking_request (id, userId, teamName, date, timeStart, timeEnd, format, notes, status, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+        `INSERT INTO booking_request (id, clubSlug, userId, teamName, date, timeStart, timeEnd, format, notes, status, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
       )
       .bind(
         `req_${crypto.randomUUID()}`,
+        clubSlug,
         session.user.id,
         fixture.team,
         fixture.date,

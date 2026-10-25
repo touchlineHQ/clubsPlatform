@@ -94,12 +94,13 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     context.env.DB
       .prepare(
         `UPDATE booking_request SET status = 'pending', updatedAt = ?
-         WHERE id = (SELECT requestId FROM booking WHERE id = ?)`
+         WHERE id = (SELECT requestId FROM booking WHERE id = ?)
+           AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`
       )
-      .bind(ts, id),
+      .bind(ts, id, clubSlug, clubSlug),
     context.env.DB
-      .prepare(`DELETE FROM booking WHERE id = ?`)
-      .bind(id),
+      .prepare(`DELETE FROM booking WHERE id = ? AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`)
+      .bind(id, clubSlug, clubSlug),
   ]);
 
   const adminId = (result.session.user as Record<string, unknown>).id as string;

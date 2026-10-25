@@ -81,7 +81,7 @@ export function PitchSchedulePage() {
 
   useEffect(() => {
     const fetches: Promise<void>[] = [
-      fetch('/api/bookings')
+      fetch('/api/bookings', { headers: { 'X-Club-Slug': clubSlug } })
         .then(r => r.ok ? r.json() as Promise<{ bookings: Booking[] }> : Promise.reject())
         .then(d => setBookings(d.bookings))
         .catch(() => setError('Failed to load bookings')),
@@ -89,7 +89,7 @@ export function PitchSchedulePage() {
 
     if (canManage) {
       fetches.push(
-        fetch('/api/booking-requests')
+        fetch('/api/booking-requests', { headers: { 'X-Club-Slug': clubSlug } })
           .then(r => r.ok ? r.json() as Promise<{ requests: BookingRequest[] }> : Promise.reject())
           .then(d => setRequests([...d.requests].sort((a, b) => b.createdAt - a.createdAt)))
           .catch(() => {})
@@ -97,24 +97,24 @@ export function PitchSchedulePage() {
     }
 
     Promise.all(fetches).finally(() => setLoading(false));
-  }, [canManage]);
+  }, [canManage, clubSlug]);
 
   useEffect(() => {
-    fetch('/api/pitches')
+    fetch('/api/pitches', { headers: { 'X-Club-Slug': clubSlug } })
       .then(r => r.ok ? r.json() as Promise<{ pitches: Pitch[] }> : Promise.reject())
       .then(d => setDayPitches(d.pitches))
       .catch(() => {});
-  }, []);
+  }, [clubSlug]);
 
   useEffect(() => {
     if (!selectedDate) return;
     setDayLoading(true);
-    fetch(`/api/bookings?date=${selectedDate}`)
+    fetch(`/api/bookings?date=${selectedDate}`, { headers: { 'X-Club-Slug': clubSlug } })
       .then(r => r.ok ? r.json() as Promise<{ bookings: Booking[] }> : Promise.reject())
       .then(d => setDayBookings(d.bookings))
       .catch(() => setDayBookings([]))
       .finally(() => setDayLoading(false));
-  }, [selectedDate]);
+  }, [selectedDate, clubSlug]);
 
   if (loading) {
     return <Center h={200}><Loader /></Center>;

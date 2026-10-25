@@ -65,3 +65,19 @@ describe('PitchBookingPage', () => {
     });
   });
 });
+
+// #83: the booking APIs are club-scoped, so every call must name the club.
+function expectClubHeaderOnBookingCalls(mockFetch: ReturnType<typeof vi.fn>, apis: string[]) {
+  const calls = mockFetch.mock.calls.filter(([url]) => /\/api\/(pitches|bookings|booking-requests)/.test(String(url)));
+  for (const api of apis) expect(calls.some(([url]) => String(url).startsWith(api))).toBe(true);
+  for (const [url, init] of calls) {
+    expect(new Headers((init as RequestInit | undefined)?.headers).get('X-Club-Slug'), String(url)).toBe('test-club');
+  }
+}
+
+describe('club scoping (#83)', () => {
+  it('sends the current club\'s X-Club-Slug on every booking API call', async () => {
+    renderWithMantine(<PitchBookingPage liveTeams={[]} />, { authValue: mockLoggedOut, clubValue: mockSingleClub });
+    await waitFor(() => expectClubHeaderOnBookingCalls(mockFetch, ['/api/pitches', '/api/booking-requests']));
+  });
+});
