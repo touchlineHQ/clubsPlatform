@@ -1,7 +1,7 @@
 import { ensureTables } from "../lib/ensure-tables";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
 import { prepareAuditLog } from "../lib/audit-log";
-import { deploymentDefault, getClubFeatures, isClubFeature } from "../lib/club-features";
+import { deploymentDefault, getClubFeatures, getStoredClubFeature, isClubFeature } from "../lib/club-features";
 
 /**
  * Per-club feature switches (#83).
@@ -25,6 +25,13 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
   const clubSlug = getClubSlug(context.request);
   if (!clubSlug) return json({ error: "X-Club-Slug header required" }, { status: 400 });
+  // Same existence check as PUT, so an unknown slug is a 404 rather than the
+  // deployment default dressed up as a club's answer.
+  const club = await context.env.DB
+    .prepare(`SELECT id FROM club_config WHERE slug = ? AND active = 1`)
+    .bind(clubSlug)
+    .first<{ id: string }>();
+  if (!club) return json({ error: "Club not found" }, { status: 404 });
   return json(await describe(context.env, clubSlug));
 };
 
@@ -52,7 +59,11 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     .first<{ id: string }>();
   if (!club) return json({ error: "Club not found" }, { status: 404 });
 
-  const before = (await getClubFeatures(context.env, context.env.DB, clubSlug))[feature];
+  // The audit trail records what the club had chosen, not the resolved value:
+  // under the kill switch the resolved value is always off, which would hide a
+  // stored "on". No stored row means the deployment default applied.
+  const stored = await getStoredClubFeature(context.env.DB, clubSlug, feature);
+  const before = stored ?? deploymentDefault(context.env, feature) === "on";
   const adminId = (auth.session.user as Record<string, unknown>).id as string;
 
   await context.env.DB.batch([

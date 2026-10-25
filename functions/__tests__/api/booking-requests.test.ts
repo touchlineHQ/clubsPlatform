@@ -2,6 +2,13 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { makeContext, makeDb, makeEnv, adminSession, managerSession, memberSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 
 const { mockGetSession } = vi.hoisted(() => ({ mockGetSession: vi.fn() }));
+// Pitch bookings are a per-club switch since #83; these tests cover the
+// handlers with it on. club-features.test.ts covers a club with it off.
+vi.mock('../../lib/club-features', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/club-features')>()),
+  requireClubFeature: vi.fn(async () => null),
+}));
+
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));

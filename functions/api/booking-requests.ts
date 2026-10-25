@@ -1,4 +1,5 @@
 import { type Env, json, nowMs, randomId, requireAdmin, requireManagerOrAdmin, requireAuth, getClubSlug } from "../lib/api-helpers";
+import { requireClubFeature } from "../lib/club-features";
 import { getPostHog, clubGroups } from "../lib/posthog";
 
 type BookingRequestRow = {
@@ -31,6 +32,8 @@ type PitchRow = {
 const VALID_FORMATS = ["11v11", "9v9", "7v7", "5v5"];
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   const result = await requireAuth(context);
   if ("error" in result) return result.error;
 
@@ -132,6 +135,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPost: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   const result = await requireManagerOrAdmin(context);
   if ("error" in result) return result.error;
 
@@ -196,6 +201,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 

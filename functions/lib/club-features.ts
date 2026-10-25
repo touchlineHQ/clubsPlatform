@@ -1,5 +1,6 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { Env } from "./api-helpers";
+import { ensureTables } from "./ensure-tables";
 
 /**
  * Per-club feature switches (#83).
@@ -86,4 +87,39 @@ export async function getClubFeatures(env: Env, db: D1Database, clubSlug: string
     if (isClubFeature(row.feature)) settings[row.feature] = row.enabled === 1;
   }
   return resolveClubFeatures(env, settings);
+}
+
+/**
+ * Guard for a feature's API routes: null when the request's club has the
+ * feature on, otherwise a 404 to return as-is. A request with no club (a
+ * single-club deployment that sends no X-Club-Slug) gets the deployment default.
+ */
+export async function requireClubFeature(
+  env: Env,
+  clubSlug: string | null,
+  feature: ClubFeature,
+): Promise<Response | null> {
+  // Some handlers run this before their own ensureTables; it is a singleton.
+  await ensureTables(env.DB);
+  const enabled = clubSlug
+    ? (await getClubFeatures(env, env.DB, clubSlug))[feature]
+    : resolveClubFeatures(env, undefined)[feature];
+  if (enabled) return null;
+  return new Response(JSON.stringify({ error: "This feature is not enabled for this club" }), {
+    status: 404,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** The club's own stored setting, or undefined when it has never chosen. */
+export async function getStoredClubFeature(
+  db: D1Database,
+  clubSlug: string,
+  feature: ClubFeature,
+): Promise<boolean | undefined> {
+  const row = await db
+    .prepare(`SELECT enabled FROM "club_feature" WHERE clubSlug = ? AND feature = ?`)
+    .bind(clubSlug, feature)
+    .first<{ enabled: number }>();
+  return row ? row.enabled === 1 : undefined;
 }

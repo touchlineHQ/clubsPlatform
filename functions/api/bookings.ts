@@ -1,4 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
+import { requireClubFeature } from "../lib/club-features";
 import { type Env, json, nowMs, requireAdmin, getClubSlug } from "../lib/api-helpers";
 import { getPostHog, clubGroups } from "../lib/posthog";
 
@@ -19,6 +20,8 @@ type BookingRow = {
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   await ensureTables(context.env.DB);
 
   const clubSlug = getClubSlug(context.request);
@@ -68,6 +71,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
 

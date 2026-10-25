@@ -9,6 +9,10 @@ vi.mock('../../lib/auth', () => ({
 
 import { onRequestGet as featuresGet, onRequestPut as featuresPut } from '../../api/club-features';
 import { onRequestGet as clubsGet } from '../../api/clubs';
+import { onRequestGet as pitchesGet } from '../../api/pitches';
+import { onRequestGet as bookingsGet } from '../../api/bookings';
+import { onRequestPost as bookingRequestPost } from '../../api/booking-requests';
+import { postReq } from '../test-utils';
 import { deploymentDefault, resolveFeature } from '../../lib/club-features';
 import { isPitchBookingsEnabled } from '../../lib/api-helpers';
 
@@ -74,6 +78,31 @@ describe('per-club feature switches (#83)', () => {
     expect(sqlite.prepare(`SELECT action, targetId, oldStatus, newStatus FROM admin_audit_log`).all()).toEqual([
       { action: 'club.feature', targetId: 'test-club:pitchBookings', oldStatus: 'off', newStatus: 'on' },
     ]);
+  });
+
+  it('refuses the pitch and booking APIs for a club with the feature off, and serves them once on', async () => {
+    const H = { 'X-Club-Slug': 'test-club' };
+    const call = (h: any, req: Request) => h(makeContext(req, { env: env() }) as any);
+    expect((await call(pitchesGet, getReq('/api/pitches', H))).status).toBe(404);
+    expect((await call(bookingsGet, getReq('/api/bookings', H))).status).toBe(404);
+    expect((await call(bookingRequestPost, postReq('/api/booking-requests', {}, H))).status).toBe(404);
+
+    await put(true);
+    expect((await call(pitchesGet, getReq('/api/pitches', H))).status).toBe(200);
+    // Another club on the same deployment is still refused.
+    expect((await call(pitchesGet, getReq('/api/pitches', { 'X-Club-Slug': 'other-club' }))).status).toBe(404);
+  });
+
+  it('audits the stored setting, not the killed resolved value', async () => {
+    await put(true);
+    await put(false, 'test-club', { PITCH_BOOKINGS: 'off' });
+    const rows = sqlite.prepare(`SELECT oldStatus, newStatus FROM admin_audit_log ORDER BY rowid`).all();
+    expect(rows[1]).toEqual({ oldStatus: 'on', newStatus: 'off' });
+  });
+
+  it('GET is a 404 for an unknown club', async () => {
+    const res = await featuresGet(makeContext(getReq('/api/club-features', { 'X-Club-Slug': 'nope' }), { env: env() }) as any);
+    expect(res.status).toBe(404);
   });
 
   it('validates the body', async () => {

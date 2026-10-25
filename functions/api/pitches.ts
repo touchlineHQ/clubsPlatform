@@ -1,4 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
+import { requireClubFeature } from "../lib/club-features";
 import { type Env, json, getClubSlug } from "../lib/api-helpers";
 
 type PitchRow = {
@@ -11,6 +12,8 @@ type PitchRow = {
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   await ensureTables(context.env.DB);
 
   const clubSlug = getClubSlug(context.request);
