@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Group, Paper, Stack, Switch, Text } from '@mantine/core';
 import { useClub } from '../../context/ClubContext';
 import { captureError, captureEvent } from '../../lib/posthog';
@@ -18,12 +18,35 @@ export function FeatureToggles({ pitchBookings, onFeaturesChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [killed, setKilled] = useState(false);
+  // The switch stays disabled until GET succeeds: until then we don't know
+  // whether the platform has the feature killed, or what this club has stored.
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const onChangeRef = useRef(onFeaturesChange);
+  onChangeRef.current = onFeaturesChange;
 
   useEffect(() => {
+    let cancelled = false;
+    setLoaded(false);
+    setLoadError(null);
     fetch('/api/club-features', { headers: { 'X-Club-Slug': clubSlug } })
-      .then(r => (r.ok ? r.json() : null))
-      .then((d: { killed?: { pitchBookings?: boolean } } | null) => setKilled(!!d?.killed?.pitchBookings))
-      .catch(() => setKilled(false));
+      .then(async r => {
+        if (!r.ok) throw new Error(`Failed to load features: ${r.status}`);
+        return r.json() as Promise<{ features?: { pitchBookings: boolean }; killed?: { pitchBookings?: boolean } }>;
+      })
+      .then(d => {
+        if (cancelled) return;
+        setKilled(!!d.killed?.pitchBookings);
+        // Show the club's current setting, not the registry's possibly stale copy.
+        if (d.features) onChangeRef.current(d.features);
+        setLoaded(true);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        captureError(e, { op: 'club.feature.load', club_slug: clubSlug });
+        setLoadError('Could not load this club\'s feature settings. Reload the page to try again.');
+      });
+    return () => { cancelled = true; };
   }, [clubSlug]);
 
   const toggle = async (enabled: boolean) => {
@@ -63,10 +86,11 @@ export function FeatureToggles({ pitchBookings, onFeaturesChange }: Props) {
           <Switch
             aria-label="Pitch bookings"
             checked={pitchBookings}
-            disabled={saving || (killed && !pitchBookings)}
+            disabled={!loaded || saving || (killed && !pitchBookings)}
             onChange={e => toggle(e.currentTarget.checked)}
           />
         </Group>
+        {loadError && <Alert color="red" variant="light">{loadError}</Alert>}
         {error && <Alert color="red" variant="light">{error}</Alert>}
       </Stack>
     </Paper>

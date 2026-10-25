@@ -91,8 +91,9 @@ export async function getClubFeatures(env: Env, db: D1Database, clubSlug: string
 
 /**
  * Guard for a feature's API routes: null when the request's club has the
- * feature on, otherwise a 404 to return as-is. A request with no club (a
- * single-club deployment that sends no X-Club-Slug) gets the deployment default.
+ * feature on, otherwise a 404 to return as-is. A request with no club uses the
+ * only active club's setting when there is exactly one (a single-club
+ * deployment that sends no X-Club-Slug); otherwise the deployment default.
  */
 export async function requireClubFeature(
   env: Env,
@@ -101,14 +102,24 @@ export async function requireClubFeature(
 ): Promise<Response | null> {
   // Some handlers run this before their own ensureTables; it is a singleton.
   await ensureTables(env.DB);
-  const enabled = clubSlug
-    ? (await getClubFeatures(env, env.DB, clubSlug))[feature]
+  const slug = clubSlug ?? (await soleActiveClubSlug(env.DB));
+  const enabled = slug
+    ? (await getClubFeatures(env, env.DB, slug))[feature]
     : resolveClubFeatures(env, undefined)[feature];
   if (enabled) return null;
   return new Response(JSON.stringify({ error: "This feature is not enabled for this club" }), {
     status: 404,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/** The slug of the only active club, or null when there are none or several. */
+async function soleActiveClubSlug(db: D1Database): Promise<string | null> {
+  const res = await db
+    .prepare(`SELECT slug FROM club_config WHERE active = 1 LIMIT 2`)
+    .all<{ slug: string }>();
+  const rows = res.results ?? [];
+  return rows.length === 1 ? rows[0].slug : null;
 }
 
 /** The club's own stored setting, or undefined when it has never chosen. */

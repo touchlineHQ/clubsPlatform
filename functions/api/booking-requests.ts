@@ -31,6 +31,9 @@ type PitchRow = {
 
 const VALID_FORMATS = ["11v11", "9v9", "7v7", "5v5"];
 
+/** Matches rows of the X-Club-Slug club; a request with no club matches club-less rows. Bind the slug twice. */
+const SAME_CLUB = `(clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))`;
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
   if (featureOff) return featureOff;
@@ -201,7 +204,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 };
 
 export const onRequestPatch: PagesFunction<Env> = async (context) => {
-  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  // Every read and write below is bound to this club, so the feature guard and
+  // the admin's club check apply to the same club as the request being changed.
+  const clubSlug = getClubSlug(context.request);
+  const featureOff = await requireClubFeature(context.env, clubSlug, "pitchBookings");
   if (featureOff) return featureOff;
   const result = await requireAdmin(context);
   if ("error" in result) return result.error;
@@ -233,8 +239,8 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
     // Check request exists and is pending
     const request = await context.env.DB
-      .prepare(`SELECT id, teamName, teamSlug, teamLeague, date, format FROM booking_request WHERE id = ? AND status = 'pending'`)
-      .bind(id)
+      .prepare(`SELECT id, teamName, teamSlug, teamLeague, date, format FROM booking_request WHERE id = ? AND status = 'pending' AND ${SAME_CLUB}`)
+      .bind(id, clubSlug, clubSlug)
       .first<{ id: string; teamName: string; teamSlug: string | null; teamLeague: string | null; date: string; format: string }>();
 
     if (!request) {
@@ -281,18 +287,13 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
     // Get the full request for denormalised fields
     const fullRequest = await context.env.DB
-      .prepare(`SELECT teamName, teamSlug, teamLeague FROM booking_request WHERE id = ?`)
-      .bind(id)
-      .first<{ teamName: string; teamSlug: string | null; teamLeague: string | null }>();
+      .prepare(`SELECT clubSlug, teamName, teamSlug, teamLeague FROM booking_request WHERE id = ? AND ${SAME_CLUB}`)
+      .bind(id, clubSlug, clubSlug)
+      .first<{ clubSlug: string | null; teamName: string; teamSlug: string | null; teamLeague: string | null }>();
 
     if (!fullRequest) {
       return json({ error: "Booking request not found" }, { status: 404 });
     }
-
-    const reqClubSlug = await context.env.DB
-      .prepare(`SELECT clubSlug FROM booking_request WHERE id = ?`)
-      .bind(id)
-      .first<{ clubSlug: string | null }>();
 
     await context.env.DB.batch([
       context.env.DB
@@ -301,14 +302,14 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
-          bookingId, reqClubSlug?.clubSlug ?? null, id, pitchId, request.date, timeStart, timeEnd,
+          bookingId, fullRequest.clubSlug ?? null, id, pitchId, request.date, timeStart, timeEnd,
           fullRequest.teamName, fullRequest.teamSlug, fullRequest.teamLeague, request.format, notes, ts
         ),
       context.env.DB
         .prepare(
-          `UPDATE booking_request SET status = 'approved', updatedAt = ? WHERE id = ?`
+          `UPDATE booking_request SET status = 'approved', updatedAt = ? WHERE id = ? AND ${SAME_CLUB}`
         )
-        .bind(ts, id),
+        .bind(ts, id, clubSlug, clubSlug),
     ]);
 
     const adminId = (result.session.user as Record<string, unknown>).id as string;
@@ -321,7 +322,7 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
         properties: {
           booking_request_id: id,
           booking_id: bookingId,
-          club_slug: reqClubSlug?.clubSlug ?? null,
+          club_slug: fullRequest.clubSlug ?? null,
           team_name: fullRequest.teamName,
           date: request.date,
           format: request.format,
@@ -338,8 +339,8 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
     // Check request exists and is pending
     const request = await context.env.DB
-      .prepare(`SELECT id FROM booking_request WHERE id = ? AND status = 'pending'`)
-      .bind(id)
+      .prepare(`SELECT id FROM booking_request WHERE id = ? AND status = 'pending' AND ${SAME_CLUB}`)
+      .bind(id, clubSlug, clubSlug)
       .first<{ id: string }>();
 
     if (!request) {
@@ -350,9 +351,9 @@ export const onRequestPatch: PagesFunction<Env> = async (context) => {
 
     await context.env.DB
       .prepare(
-        `UPDATE booking_request SET status = 'declined', declineReason = ?, updatedAt = ? WHERE id = ?`
+        `UPDATE booking_request SET status = 'declined', declineReason = ?, updatedAt = ? WHERE id = ? AND ${SAME_CLUB}`
       )
-      .bind(reason, ts, id)
+      .bind(reason, ts, id, clubSlug, clubSlug)
       .run();
 
     const adminId = (result.session.user as Record<string, unknown>).id as string;

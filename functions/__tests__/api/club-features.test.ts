@@ -11,8 +11,8 @@ import { onRequestGet as featuresGet, onRequestPut as featuresPut } from '../../
 import { onRequestGet as clubsGet } from '../../api/clubs';
 import { onRequestGet as pitchesGet } from '../../api/pitches';
 import { onRequestGet as bookingsGet } from '../../api/bookings';
-import { onRequestPost as bookingRequestPost } from '../../api/booking-requests';
-import { postReq } from '../test-utils';
+import { onRequestPost as bookingRequestPost, onRequestPatch as bookingRequestPatch } from '../../api/booking-requests';
+import { postReq, patchReq } from '../test-utils';
 import { deploymentDefault, resolveFeature } from '../../lib/club-features';
 import { isPitchBookingsEnabled } from '../../lib/api-helpers';
 
@@ -98,6 +98,37 @@ describe('per-club feature switches (#83)', () => {
     await put(false, 'test-club', { PITCH_BOOKINGS: 'off' });
     const rows = sqlite.prepare(`SELECT oldStatus, newStatus FROM admin_audit_log ORDER BY rowid`).all();
     expect(rows[1]).toEqual({ oldStatus: 'on', newStatus: 'off' });
+  });
+
+  it('binds approve and decline to the X-Club-Slug club, so another club\'s request cannot be changed', async () => {
+    mockGetSession.mockResolvedValue(platformAdminSession);
+    await put(true); // test-club on, other-club off
+    sqlite.exec(`INSERT INTO "user" VALUES ('u_m','M','m@example.com',1,NULL,'manager','other-club',${NOW},${NOW})`);
+    sqlite.exec(`INSERT INTO "booking_request" (id, clubSlug, userId, teamName, date, timeStart, timeEnd, format, status, createdAt, updatedAt)
+      VALUES ('req_other','other-club','u_m','U9s','2026-11-01','10:00','11:00','7v7','pending',${NOW},${NOW})`);
+    sqlite.exec(`INSERT INTO "pitch" (id, clubSlug, name, formats) VALUES ('p1','test-club','P1','["7v7"]')`);
+    const patch = (body: unknown) => bookingRequestPatch(makeContext(
+      patchReq('/api/booking-requests?id=req_other', body, { 'X-Club-Slug': 'test-club' }),
+      { env: env() },
+    ) as any);
+    expect((await patch({ action: 'decline', reason: 'x' })).status).toBe(404);
+    expect((await patch({ action: 'approve', pitchId: 'p1', timeStart: '10:00', timeEnd: '11:00' })).status).toBe(404);
+    expect(sqlite.prepare(`SELECT status FROM booking_request WHERE id = 'req_other'`).get()).toEqual({ status: 'pending' });
+    expect(sqlite.prepare(`SELECT COUNT(*) AS n FROM booking`).get()).toEqual({ n: 0 });
+  });
+
+  it('a request with no X-Club-Slug uses the only active club\'s setting', async () => {
+    sqlite.exec(`DELETE FROM club_config WHERE slug = 'other-club'`);
+    const noHeader = () => pitchesGet(makeContext(getReq('/api/pitches'), { env: env() }) as any);
+    expect((await noHeader()).status).toBe(404);
+    await put(true);
+    expect((await noHeader()).status).toBe(200);
+  });
+
+  it('a request with no X-Club-Slug on a multi-club deployment gets the deployment default', async () => {
+    await put(true);
+    const res = await pitchesGet(makeContext(getReq('/api/pitches'), { env: env() }) as any);
+    expect(res.status).toBe(404);
   });
 
   it('GET is a 404 for an unknown club', async () => {
