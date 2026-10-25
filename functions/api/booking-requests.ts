@@ -43,7 +43,9 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const { session, role } = result;
   const url = new URL(context.request.url);
   const statusFilter = url.searchParams.get("status");
-  const clubSlugFilter = getClubSlug(context.request);
+  // A header-less request on a single-club deployment reads the only active
+  // club's requests, matching PATCH and requireClubFeature.
+  const clubSlugFilter = getClubSlug(context.request) ?? (await soleActiveClubSlug(context.env.DB));
 
   if (role === "admin") {
     const whereClauses: string[] = [`(br.clubSlug = ? OR (? IS NULL AND br.clubSlug IS NULL))`];
@@ -145,7 +147,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 
   const { session } = result;
   const userId = (session.user as Record<string, unknown>).id as string;
-  const clubSlug = getClubSlug(context.request);
+  // Header-less on a single-club deployment stores against the only active club.
+  const clubSlug = getClubSlug(context.request) ?? (await soleActiveClubSlug(context.env.DB));
 
   const body = (await context.request.json()) as Partial<{
     teamName: string;

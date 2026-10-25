@@ -123,11 +123,14 @@ function AppRoutes() {
   // admin whose session lapsed all come back 404. That's an expected answer,
   // shown as the private-club notice; anything else is reported and offered a
   // retry. Either way the loader no longer hangs (#154).
+  // Depends on registry.multiClub only, so registry edits (colours, published,
+  // feature switches) don't refetch the site data.
+  const registryMultiClub = registry ? registry.multiClub : null;
   useEffect(() => {
-    if (!clubSlug || !registry || !canViewSite) return;
+    if (!clubSlug || registryMultiClub === null || !canViewSite) return;
     let cancelled = false;
     setLoadFailure(null);
-    loadAllData(clubSlug, registry.multiClub).then(
+    loadAllData(clubSlug, registryMultiClub).then(
       (loaded) => { if (!cancelled) setFetchedData(loaded); },
       (err: unknown) => {
         if (cancelled) return;
@@ -140,7 +143,7 @@ function AppRoutes() {
       },
     );
     return () => { cancelled = true; };
-  }, [clubSlug, registry, canViewSite]);
+  }, [clubSlug, registryMultiClub, canViewSite]);
 
   const data = previewData ?? fetchedData;
 

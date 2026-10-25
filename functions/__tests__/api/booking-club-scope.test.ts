@@ -107,6 +107,16 @@ describe('pitch bookings are club-scoped (#83)', () => {
     expect(sqlite.prepare(`SELECT status FROM booking_request WHERE id = ?`).get(id)).toEqual({ status: 'approved' });
   });
 
+  it('submits, lists and approves header-less on a single-club deployment', async () => {
+    sqlite.exec(`UPDATE club_config SET active = 0 WHERE slug = 'other-club'`);
+    mockGetSession.mockResolvedValue({ ...adminSession, user: { ...adminSession.user, clubSlug: null } });
+    const id = await submit({});
+    expect(sqlite.prepare(`SELECT clubSlug FROM booking_request WHERE id = ?`).get(id)).toEqual({ clubSlug: 'test-club' });
+    const reqs = (await (await call(requestsGet, getReq('/api/booking-requests', {}))).json()) as { requests: { id: string }[] };
+    expect(reqs.requests.map(r => r.id)).toEqual([id]);
+    expect((await approve(id, {})).status).toBe(200);
+  });
+
   it('reads and deletes header-less on a single-club deployment, still requiring the header for a club-bound admin', async () => {
     const id = await submit(A);
     expect((await approve(id, A)).status).toBe(200);
