@@ -199,7 +199,21 @@ describe('POST /api/admin/secrets', () => {
     expect(res.status).toBe(200);
   });
 
-  it('stores a club GC_WEBHOOK_SECRET without requiring a platform token', async () => {
+  it("refuses a club GC_WEBHOOK_SECRET until the club's own GC_ACCESS_TOKEN is set", async () => {
+    const ctx = makeContext(
+      postReq('/api/admin/secrets', { key: 'GC_WEBHOOK_SECRET', encryptedValue: 'rsa-encrypted-base64' }, { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({ run: { meta: { changes: 0 } } }) as any,
+          SECRETS_ENCRYPTION_KEY: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
+          SECRETS_TRANSPORT_PRIVATE_KEY: 'private-key-base64',
+      } },
+    );
+
+    const res = await onRequestPost(ctx as any);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as any).error).toMatch(/this club's GC_ACCESS_TOKEN/);
+  });
+
+  it('stores a club GC_WEBHOOK_SECRET when the club GC_ACCESS_TOKEN exists', async () => {
     const ctx = makeContext(
       postReq('/api/admin/secrets', { key: 'GC_WEBHOOK_SECRET', encryptedValue: 'rsa-encrypted-base64' }, { 'X-Club-Slug': 'test-club' }),
       { env: { DB: makeDb({ first: [null] }) as any,
@@ -256,6 +270,17 @@ describe('DELETE /api/admin/secrets', () => {
     expect(((await res.json()) as any).error).toMatch(/GC_WEBHOOK_SECRET/);
   });
 
+  it("refuses to delete a club GC_ACCESS_TOKEN while the club's GC_WEBHOOK_SECRET is set", async () => {
+    const ctx = makeContext(
+      deleteReq('/api/admin/secrets?key=GC_ACCESS_TOKEN', { 'X-Club-Slug': 'test-club' }),
+      { env: { DB: makeDb({ run: { meta: { changes: 0 } }, first: [{ present: 1 }] }) as any } },
+    );
+
+    const res = await onRequestDelete(ctx as any);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).error).toMatch(/this club's GC_WEBHOOK_SECRET/);
+  });
+
   it('returns 400 when key is not an allowed key', async () => {
     const ctx = makeContext(
       deleteReq('/api/admin/secrets?key=UNKNOWN_KEY'),
@@ -291,7 +316,7 @@ describe('DELETE /api/admin/secrets', () => {
   });
 });
 
-describe('platform secret pair guard against real SQL', () => {
+describe('GoCardless secret pair guard against real SQL', () => {
   const ENV = {
     SECRETS_ENCRYPTION_KEY: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
     SECRETS_TRANSPORT_PRIVATE_KEY: 'private-key-base64',
@@ -317,8 +342,12 @@ describe('platform secret pair guard against real SQL', () => {
     try {
       expect((await post('GC_WEBHOOK_SECRET')).status).toBe(400);
       expect(keys()).toEqual([]);
-      // A club's own webhook secret doesn't depend on the platform token.
-      expect((await post('GC_WEBHOOK_SECRET', { 'X-Club-Slug': 'test-club' })).status).toBe(200);
+      // A club's webhook secret needs the club's own token, not the platform's.
+      const CLUB = { 'X-Club-Slug': 'test-club' };
+      expect((await post('GC_WEBHOOK_SECRET', CLUB)).status).toBe(400);
+      expect((await post('GC_ACCESS_TOKEN', CLUB)).status).toBe(200);
+      expect((await post('GC_WEBHOOK_SECRET', CLUB)).status).toBe(200);
+      expect((await del('GC_ACCESS_TOKEN', CLUB)).status).toBe(409);
 
       expect((await post('GC_ACCESS_TOKEN')).status).toBe(200);
       expect((await post('GC_WEBHOOK_SECRET')).status).toBe(200);
@@ -328,12 +357,15 @@ describe('platform secret pair guard against real SQL', () => {
       expect(keys()).toEqual([
         { club: '', key: 'GC_ACCESS_TOKEN' },
         { club: '', key: 'GC_WEBHOOK_SECRET' },
+        { club: 'test-club', key: 'GC_ACCESS_TOKEN' },
         { club: 'test-club', key: 'GC_WEBHOOK_SECRET' },
       ]);
 
       expect((await del('GC_WEBHOOK_SECRET')).status).toBe(200);
       expect((await del('GC_ACCESS_TOKEN')).status).toBe(200);
-      expect(keys()).toEqual([{ club: 'test-club', key: 'GC_WEBHOOK_SECRET' }]);
+      expect((await del('GC_WEBHOOK_SECRET', CLUB)).status).toBe(200);
+      expect((await del('GC_ACCESS_TOKEN', CLUB)).status).toBe(200);
+      expect(keys()).toEqual([]);
     } finally {
       sqlite.close();
     }

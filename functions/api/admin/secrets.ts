@@ -8,25 +8,28 @@ function isAllowedKey(key: string): key is AllowedKey {
   return (ALLOWED_KEYS as readonly string[]).includes(key);
 }
 
-const PLATFORM_TOKEN_EXISTS_SQL =
-  `EXISTS (SELECT 1 FROM "club_secret" WHERE clubSlug IS NULL AND key = 'GC_ACCESS_TOKEN')`;
-const PLATFORM_WEBHOOK_SECRET_EXISTS_SQL =
-  `EXISTS (SELECT 1 FROM "club_secret" s2 WHERE s2.clubSlug IS NULL AND s2.key = 'GC_WEBHOOK_SECRET')`;
+/** Same-scope (club or platform) row exists for `key`; binds one clubSlug. */
+const sameScopeExistsSql = (key: AllowedKey) =>
+  `EXISTS (SELECT 1 FROM "club_secret" s2 WHERE COALESCE(s2.clubSlug,'') = COALESCE(?,'') AND s2.key = '${key}')`;
 
 /**
- * A platform-wide (null-club) GC_WEBHOOK_SECRET verifies events for clubs that
- * have no secret of their own, and payment events then need a GC_ACCESS_TOKEN
- * from the same scope to look up the payment's mandate (#77). Without the pair
- * those failures would be acknowledged and never recorded, so the platform
- * token must exist before the platform webhook secret, and can't be removed
- * while it is set.
+ * GoCardless webhook secrets verify events per scope (a club, or platform-wide
+ * for clubs with no secret of their own), and payment events then need a
+ * GC_ACCESS_TOKEN from the same scope to look up the payment's mandate (#77).
+ * Without the pair those failures would be acknowledged and never recorded, so
+ * in every scope the token must exist before the webhook secret, and can't be
+ * removed while it is set.
  */
-async function hasPlatformSecret(db: D1Database, key: AllowedKey): Promise<boolean> {
+async function hasScopeSecret(db: D1Database, clubSlug: string | null, key: AllowedKey): Promise<boolean> {
   const row = await db
-    .prepare(`SELECT 1 AS present FROM "club_secret" WHERE clubSlug IS NULL AND key = ?`)
-    .bind(key)
+    .prepare(`SELECT 1 AS present FROM "club_secret" WHERE COALESCE(clubSlug,'') = COALESCE(?,'') AND key = ?`)
+    .bind(clubSlug, key)
     .first<{ present: number }>();
   return !!row;
+}
+
+function scopeLabel(clubSlug: string | null): string {
+  return clubSlug ? "this club's" : "the platform";
 }
 
 interface SecretRow {
@@ -80,22 +83,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const now = nowMs();
 
   // The pair guard lives in the write itself, so a concurrent DELETE of the
-  // platform GC_ACCESS_TOKEN can't slip between a check and this insert.
+  // same-scope GC_ACCESS_TOKEN can't slip between a check and this insert.
   const write = await context.env.DB
     .prepare(
       `INSERT INTO "club_secret" (id, clubSlug, key, encryptedValue, iv, createdAt, updatedAt)
        SELECT ?, ?, ?, ?, ?, ?, ?
-        WHERE NOT (COALESCE(?,'') = '' AND ? = 'GC_WEBHOOK_SECRET') OR ${PLATFORM_TOKEN_EXISTS_SQL}
+        WHERE ? <> 'GC_WEBHOOK_SECRET' OR ${sameScopeExistsSql("GC_ACCESS_TOKEN")}
        ON CONFLICT(COALESCE(clubSlug,''), key) DO UPDATE SET
          encryptedValue = excluded.encryptedValue,
          iv             = excluded.iv,
          updatedAt      = excluded.updatedAt`,
     )
-    .bind(randomId("secret"), clubSlug, key, encryptedValue, iv, now, now, clubSlug, key)
+    .bind(randomId("secret"), clubSlug, key, encryptedValue, iv, now, now, key, clubSlug)
     .run();
   if (!write.meta?.changes) {
     return json(
-      { error: "Set the platform GC_ACCESS_TOKEN first: a platform-wide GC_WEBHOOK_SECRET needs it to look up payments." },
+      { error: `Set ${scopeLabel(clubSlug)} GC_ACCESS_TOKEN first: a GC_WEBHOOK_SECRET needs the token from the same scope to look up payments.` },
       { status: 400 },
     );
   }
@@ -119,14 +122,14 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     .prepare(
       `DELETE FROM "club_secret"
        WHERE COALESCE(clubSlug,'') = COALESCE(?,'') AND key = ?
-         AND NOT (clubSlug IS NULL AND key = 'GC_ACCESS_TOKEN' AND ${PLATFORM_WEBHOOK_SECRET_EXISTS_SQL})`,
+         AND NOT (key = 'GC_ACCESS_TOKEN' AND ${sameScopeExistsSql("GC_WEBHOOK_SECRET")})`,
     )
-    .bind(clubSlug, key)
+    .bind(clubSlug, key, clubSlug)
     .run();
-  if (!removed.meta?.changes && key === "GC_ACCESS_TOKEN" && !clubSlug
-      && (await hasPlatformSecret(context.env.DB, "GC_WEBHOOK_SECRET"))) {
+  if (!removed.meta?.changes && key === "GC_ACCESS_TOKEN"
+      && (await hasScopeSecret(context.env.DB, clubSlug, "GC_WEBHOOK_SECRET"))) {
     return json(
-      { error: "Remove the platform GC_WEBHOOK_SECRET first: it needs the platform GC_ACCESS_TOKEN to look up payments." },
+      { error: `Remove ${scopeLabel(clubSlug)} GC_WEBHOOK_SECRET first: it needs the GC_ACCESS_TOKEN from the same scope to look up payments.` },
       { status: 409 },
     );
   }
