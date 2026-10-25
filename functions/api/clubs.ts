@@ -1,4 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
+import { loadAllClubFeatureSettings, resolveClubFeatures } from "../lib/club-features";
 import { clubPublicationUnavailable, isClubPublicationSchemaReady } from "../lib/club-publication";
 import { type Env, json, nowMs, randomId, requireAdmin, isMultiClubMode, isClubSelfRegisterAllowed, isPitchBookingsEnabled, getClubSlug } from "../lib/api-helpers";
 
@@ -17,6 +18,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   await ensureTables(context.env.DB);
   const multiClub = isMultiClubMode(context.env);
   const selfRegister = isClubSelfRegisterAllowed(context.env);
+  // The deployment default only. Each club's own answer is on its entry below
+  // (#83); this stays for older clients that read the top-level flag.
   const pitchBookings = isPitchBookingsEnabled(context.env);
 
   // published is added by migration 0021, and a Pages deployment can land before
@@ -39,6 +42,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   // club a URL belongs to from the registry, so dropping them would leave the
   // club's own admins looking at the platform landing page with no way to log
   // in. GET /api/club is what actually withholds a private club's content.
+  const featureSettings = await loadAllClubFeatureSettings(context.env.DB);
+
   let clubs = rows.results
     .filter(r => r.active === 1)
     .map(r => ({
@@ -48,6 +53,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       primaryColor: r.primaryColor ?? null,
       secondaryColor: r.secondaryColor ?? null,
       published: r.published !== 0,
+      features: resolveClubFeatures(context.env, featureSettings.get(r.slug)),
     }));
 
   // The demo club is a multi-club platform feature only — single-club forks

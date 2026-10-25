@@ -37,6 +37,8 @@ export interface ClubEntry {
   location?: string;
   /** False while the club's site is private — only its admins can see it. */
   published?: boolean;
+  /** Per-club feature switches, already resolved against the deployment default (#83). */
+  features?: { pitchBookings: boolean };
 }
 
 export interface Club {

@@ -78,6 +78,13 @@
     ]
   },
   {
+    "event": "club feature toggled",
+    "description": "A club admin switches an optional feature on or off for their club from Site Admin (#83). Properties: club_slug, feature and enabled.",
+    "files": [
+      "website/src/components/customize/FeatureToggles.tsx"
+    ]
+  },
+  {
     "event": "club published",
     "description": "An admin takes their club's site live from the Customise page, making it visible to everyone.",
     "files": [

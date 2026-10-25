@@ -107,6 +107,9 @@ function AppRoutes() {
   // admins (clubSlug === null) count everywhere — same rule as SiteSidebar.
   const registryEntry = registry?.clubs.find(c => c.slug === clubSlug) ?? null;
   const clubPublished = registryEntry?.published ?? true;
+  // Per club since #83; the top-level flag is only the deployment default, kept
+  // for an older API that doesn't send `features`.
+  const clubPitchBookings = registryEntry?.features?.pitchBookings ?? registry?.pitchBookings ?? false;
   const belongsToClub = isPlatformAdmin || user?.clubSlug === clubSlug;
   // Any committee role can see its own club's site before it goes live (#79).
   const canViewPrivate = can(['content', 'payments', 'members']) && belongsToClub;
@@ -168,6 +171,13 @@ function AppRoutes() {
     setRegistry(prev => prev ? {
       ...prev,
       clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, published } : c),
+    } : prev);
+  }, [clubSlug]);
+
+  const handleFeaturesChanged = useCallback((features: { pitchBookings: boolean }) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, features } : c),
     } : prev);
   }, [clubSlug]);
 
@@ -292,7 +302,7 @@ function AppRoutes() {
             sections={data.teams.sections}
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
-            pitchBookings={registry.pitchBookings}
+            pitchBookings={clubPitchBookings}
             visibility={data.visibility}
           />
         </AppShell.Navbar>
@@ -373,6 +383,8 @@ function AppRoutes() {
                   onSecondaryColorSaved={handleSecondaryColorSaved}
                   published={clubPublished}
                   onPublishedChange={isAdmin ? handlePublishedChanged : undefined}
+                  pitchBookings={clubPitchBookings}
+                  onFeaturesChange={isAdmin ? handleFeaturesChanged : undefined}
                 />
               </ProtectedRoute>
             } />

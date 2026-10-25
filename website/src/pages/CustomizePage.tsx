@@ -19,6 +19,7 @@ import { FixturesForm } from '../components/customize/FixturesForm';
 import { mergeManualFixtures } from '../utils/manualFixtures';
 import { SaveButton } from '../components/customize/SaveButton';
 import { PublishToggle } from '../components/customize/PublishToggle';
+import { FeatureToggles } from '../components/customize/FeatureToggles';
 import { EmailSignoffPrompt } from '../components/customize/EmailSignoffPrompt';
 import { useClub } from '../context/ClubContext';
 import { useAuth } from '../context/AuthContext';
@@ -36,6 +37,8 @@ interface Props {
   onSecondaryColorSaved?: (color: string | null) => void;
   published?: boolean;
   onPublishedChange?: (published: boolean) => void;
+  pitchBookings?: boolean;
+  onFeaturesChange?: (features: { pitchBookings: boolean }) => void;
 }
 
 export function CustomizePage({
@@ -49,6 +52,8 @@ export function CustomizePage({
   onSecondaryColorSaved,
   published = true,
   onPublishedChange,
+  pitchBookings = false,
+  onFeaturesChange,
 }: Props) {
   const { clubSlug } = useClub();
   const { isAdmin } = useAuth();
@@ -129,6 +134,10 @@ export function CustomizePage({
 
       {onPublishedChange && (
         <PublishToggle published={published} onPublishedChange={onPublishedChange} />
+      )}
+
+      {onFeaturesChange && (
+        <FeatureToggles pitchBookings={pitchBookings} onFeaturesChange={onFeaturesChange} />
       )}
 
       {isAdmin && <EmailSignoffPrompt />}
