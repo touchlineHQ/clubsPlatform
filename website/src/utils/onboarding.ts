@@ -66,7 +66,7 @@ export function onboardingSteps(data: AppData, published: boolean): OnboardingSt
     {
       id: 'live',
       label: 'Go live',
-      hint: 'Site visibility, above',
+      hint: 'Site visibility, below',
       done: published,
     },
   ];
