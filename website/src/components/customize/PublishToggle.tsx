@@ -7,6 +7,8 @@ import { captureError, captureEvent } from '../../lib/posthog';
 interface Props {
   published: boolean;
   onPublishedChange: (published: boolean) => void;
+  /** Setup steps not done yet (#85). Shown while private; never blocks going live. */
+  incomplete?: string[];
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * react-remove-scroll, which resolves a second copy of React under the repo's
  * vitest setup and cannot be rendered in a test.
  */
-export function PublishToggle({ published, onPublishedChange }: Props) {
+export function PublishToggle({ published, onPublishedChange, incomplete = [] }: Props) {
   const { clubSlug } = useClub();
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -103,6 +105,11 @@ export function PublishToggle({ published, onPublishedChange }: Props) {
           </Button>
         )}
       </Group>
+      {!published && incomplete.length > 0 && (
+        <Text size="xs" mt="xs" data-testid="publish-incomplete">
+          Still to do before your site looks ready: {incomplete.join('; ')}. You can go live now and finish these later.
+        </Text>
+      )}
       {error && <Text size="xs" c="red" mt="xs">{error}</Text>}
     </Alert>
   );
