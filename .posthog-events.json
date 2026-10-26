@@ -241,6 +241,20 @@
     ]
   },
   {
+    "event": "onboarding checklist dismissed",
+    "description": "A club editor hides the Customise onboarding checklist (#85) before finishing it. Properties: club_slug and done_count.",
+    "files": [
+      "website/src/components/customize/OnboardingChecklist.tsx"
+    ]
+  },
+  {
+    "event": "onboarding step completed",
+    "description": "A setup step on the Customise onboarding checklist (#85) goes from not done to done during an editor's visit. Properties: club_slug and step (branding, teams, fixtures, committee, channel, news or live). Derived from club data; steps already done when the page opens are not sent.",
+    "files": [
+      "website/src/components/customize/OnboardingChecklist.tsx"
+    ]
+  },
+  {
     "event": "parent consent link created",
     "description": "Admin minted a tokenised parent contact-consent URL for a FAN (copy-link flow; mail optional).",
     "files": [
