@@ -21,6 +21,13 @@
     ]
   },
   {
+    "event": "arrears reminders sent",
+    "description": "A treasurer sends arrears reminders from the Arrears tab (#77). Counts only: template, registrations, sent and dropped. No FAN numbers, no addresses.",
+    "files": [
+      "functions/api/admin/arrears-reminders.ts"
+    ]
+  },
+  {
     "event": "booking deleted",
     "description": "An admin deletes a confirmed pitch booking.",
     "files": [
@@ -238,6 +245,20 @@
     "description": "An admin rules that two of one player's registrations sharing an age group are genuinely separate subs, so the merge suggestion stops being raised — or restores one they dismissed before, which carries `restored: true`. Counts only — no FAN numbers and no team names.",
     "files": [
       "functions/api/admin/registration-merge-suggestions.ts"
+    ]
+  },
+  {
+    "event": "onboarding checklist dismissed",
+    "description": "A club editor hides the Customise onboarding checklist (#85) before finishing it. Properties: club_slug and done_count.",
+    "files": [
+      "website/src/components/customize/OnboardingChecklist.tsx"
+    ]
+  },
+  {
+    "event": "onboarding step completed",
+    "description": "A setup step on the Customise onboarding checklist (#85) goes from not done to done during an editor's visit. Properties: club_slug and step (branding, teams, fixtures, committee, channel, news or live). Derived from club data; steps already done when the page opens are not sent.",
+    "files": [
+      "website/src/components/customize/OnboardingChecklist.tsx"
     ]
   },
   {

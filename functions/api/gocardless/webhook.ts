@@ -1,6 +1,7 @@
 import { ensureTables } from '../../lib/ensure-tables';
+import { recordPaymentOutcome } from '../../lib/payment-failure';
 import { nowMs } from '../../lib/api-helpers';
-import { decryptSecret } from '../../lib/secrets';
+import { decryptSecret, getSecret } from '../../lib/secrets';
 import { getPostHog } from '../../lib/posthog';
 import { resolveFanIdFromGCResource } from '../../lib/posthog-identity';
 import { NOT_PAID_IN_FULL_SQL } from '../../lib/payment-status';
@@ -55,19 +56,20 @@ async function computeHmacHex(secret: string, body: string): Promise<string> {
 }
 
 /**
- * Try every configured GC_WEBHOOK_SECRET until one HMAC matches. Returns true if
- * verified. With one club, this is a single iteration; with N clubs, at most N.
+ * Try every configured GC_WEBHOOK_SECRET until one HMAC matches. Returns the
+ * club whose secret matched (null for a platform-wide secret), or false if none
+ * did. With one club, this is a single iteration; with N clubs, at most N.
  */
 async function verifySignature(
   env: Env,
   rawBody: string,
   signatureHeader: string,
-): Promise<boolean> {
+): Promise<{ clubSlug: string | null } | false> {
   const rows = await env.DB
     .prepare(
-      `SELECT encryptedValue, iv FROM "club_secret" WHERE key = 'GC_WEBHOOK_SECRET'`,
+      `SELECT clubSlug, encryptedValue, iv FROM "club_secret" WHERE key = 'GC_WEBHOOK_SECRET'`,
     )
-    .all<{ encryptedValue: string; iv: string }>();
+    .all<{ clubSlug?: string | null; encryptedValue: string; iv: string }>();
   if (!rows.results || rows.results.length === 0) return false;
   for (const row of rows.results) {
     let secret: string;
@@ -77,9 +79,51 @@ async function verifySignature(
       continue;
     }
     const expected = await computeHmacHex(secret, rawBody);
-    if (constantTimeEqual(expected, signatureHeader.toLowerCase())) return true;
+    if (constantTimeEqual(expected, signatureHeader.toLowerCase())) {
+      return { clubSlug: row.clubSlug ?? null };
+    }
   }
   return false;
+}
+
+/** Payment actions recordPaymentOutcome acts on; others need no mandate. */
+const PAYMENT_OUTCOME_ACTIONS = new Set(['failed', 'confirmed', 'paid_out']);
+
+/**
+ * GoCardless payment events link only the payment, not its mandate, so ask the
+ * API for it with the token of the club whose webhook secret signed the batch.
+ * Throws on a network error, 5xx, 408 or 429 so GoCardless retries the batch;
+ * returns null when there is no token or GoCardless doesn't know the payment.
+ */
+async function lookupPaymentMandate(
+  env: Env,
+  clubSlug: string | null,
+  paymentId: string,
+): Promise<string | null> {
+  const gcToken = await getSecret(env.DB, env, clubSlug, 'GC_ACCESS_TOKEN');
+  if (!gcToken) {
+    console.error('payment event without mandate and no GC_ACCESS_TOKEN', { clubSlug, paymentId });
+    return null;
+  }
+  const gcBase = env.GC_ENVIRONMENT === 'live'
+    ? 'https://api.gocardless.com'
+    : 'https://api-sandbox.gocardless.com';
+  const res = await fetch(`${gcBase}/payments/${encodeURIComponent(paymentId)}`, {
+    headers: {
+      Authorization: `Bearer ${gcToken}`,
+      'GoCardless-Version': '2015-07-06',
+      Accept: 'application/json',
+    },
+    // A stalled lookup throws, so the batch gets a 500 and GoCardless retries.
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (res.status >= 500 || res.status === 408 || res.status === 429) throw new Error(`GoCardless payment lookup failed (${res.status})`);
+  if (!res.ok) {
+    console.error('GoCardless payment lookup rejected', { clubSlug, paymentId, status: res.status });
+    return null;
+  }
+  const d = await res.json() as { payments?: { links?: { mandate?: string } } };
+  return d.payments?.links?.mandate ?? null;
 }
 
 /** Map a GC mandate action to our internal player_payment status. */
@@ -120,7 +164,7 @@ function subscriptionActionToStatus(action: string): 'completed' | 'inactive' | 
   }
 }
 
-async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
+async function handleEvent(env: Env, ev: GCWebhookEvent, clubSlug: string | null): Promise<void> {
   const now = nowMs();
   const mandateId = ev.links?.mandate ?? null;
   const subscriptionId = ev.links?.subscription ?? null;
@@ -232,7 +276,17 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
 
   if (ev.resource_type === 'payments' && paymentId) {
     // Single payment events don't change mandate/subscription status — a single
-    // failed collection is recoverable. We log for visibility only.
+    // failed collection is recoverable. But the treasurer needs to see it (#77),
+    // so a failure is recorded against the registration the mandate pays for,
+    // and cleared when a later collection on that mandate is confirmed.
+    // GoCardless sends payment events with only links.payment, so the mandate
+    // usually has to come from the API.
+    const paymentMandateId = mandateId
+      ?? (PAYMENT_OUTCOME_ACTIONS.has(ev.action) ? await lookupPaymentMandate(env, clubSlug, paymentId) : null);
+    // Order outcomes by when they happened, not when they arrived.
+    const createdAt = ev.created_at ? Date.parse(ev.created_at) : NaN;
+    const eventAt = Number.isFinite(createdAt) ? createdAt : now;
+    await recordPaymentOutcome(env.DB, ev.action, paymentId, paymentMandateId, ev.details?.cause ?? null, eventAt, now);
     if (posthog) {
       // Fire-and-forget: don't block webhook response on PostHog
       posthog.captureImmediate({
@@ -240,7 +294,7 @@ async function handleEvent(env: Env, ev: GCWebhookEvent): Promise<void> {
         event: `gc payment ${ev.action}`,
         properties: {
           payment_id: paymentId,
-          mandate_id: mandateId,
+          mandate_id: paymentMandateId,
           subscription_id: subscriptionId,
           action: ev.action,
           cause: ev.details?.cause,
@@ -287,7 +341,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   let anyFailed = false;
   for (const ev of body.events) {
     try {
-      await handleEvent(env, ev);
+      await handleEvent(env, ev, verified.clubSlug);
     } catch (e) {
       anyFailed = true;
       console.error('webhook event handler failed', { eventId: ev.id, error: e });

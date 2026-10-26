@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Tabs, Stack, Text, Group, Button, Paper, Badge } from '@mantine/core';
 import {
   IconUsers, IconId, IconNews, IconRefresh, IconBuildingStore,
@@ -20,6 +20,8 @@ import { mergeManualFixtures } from '../utils/manualFixtures';
 import { SaveButton } from '../components/customize/SaveButton';
 import { PublishToggle } from '../components/customize/PublishToggle';
 import { FeatureToggles } from '../components/customize/FeatureToggles';
+import { OnboardingChecklist } from '../components/customize/OnboardingChecklist';
+import { onboardingSteps, incompleteBeforeLive } from '../utils/onboarding';
 import { EmailSignoffPrompt } from '../components/customize/EmailSignoffPrompt';
 import { useClub } from '../context/ClubContext';
 import { useAuth } from '../context/AuthContext';
@@ -68,6 +70,13 @@ export function CustomizePage({
     loadAllFeedTeams().then(setFeedTeams);
     loadClubSlugs().then(setClubSlugs);
   }, []);
+
+  // Derived from the data being edited, so the checklist ticks as the admin
+  // fills things in (#85).
+  const steps = useMemo(
+    () => (editingData ? onboardingSteps(editingData, published) : []),
+    [editingData, published],
+  );
 
   if (!editingData) return null;
 
@@ -132,8 +141,14 @@ export function CustomizePage({
         }
       />
 
+      <OnboardingChecklist steps={steps} />
+
       {onPublishedChange && (
-        <PublishToggle published={published} onPublishedChange={onPublishedChange} />
+        <PublishToggle
+          published={published}
+          onPublishedChange={onPublishedChange}
+          incomplete={incompleteBeforeLive(steps)}
+        />
       )}
 
       {onFeaturesChange && (
