@@ -1,4 +1,5 @@
 import { ensureTables } from "../lib/ensure-tables";
+import { CLUB_PITCH, requireClubFeature } from "../lib/club-features";
 import { type Env, json, getClubSlug } from "../lib/api-helpers";
 
 type PitchRow = {
@@ -11,6 +12,8 @@ type PitchRow = {
 };
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const featureOff = await requireClubFeature(context.env, getClubSlug(context.request), "pitchBookings");
+  if (featureOff) return featureOff;
   await ensureTables(context.env.DB);
 
   const clubSlug = getClubSlug(context.request);
@@ -18,10 +21,10 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .prepare(
       `SELECT id, clubSlug, name, formats, description, active
        FROM pitch
-       WHERE active = 1 AND (clubSlug = ? OR (? IS NULL AND clubSlug IS NULL))
+       WHERE active = 1 AND ${CLUB_PITCH}
        ORDER BY name ASC`
     )
-    .bind(clubSlug, clubSlug)
+    .bind(clubSlug)
     .all<PitchRow>();
 
   const pitches = rows.results.map((r) => ({

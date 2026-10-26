@@ -83,10 +83,15 @@ export function isClubSelfRegisterAllowed(env: Env): boolean {
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
-/** Returns true when PITCH_BOOKINGS env var is set to a truthy value. */
+/**
+ * The deployment default for pitch bookings: true when PITCH_BOOKINGS is set to
+ * a truthy value. Since #83 each club can override this (see lib/club-features),
+ * and "off" / "disabled" / "never" act as a platform-wide kill switch, so they
+ * count as false here too.
+ */
 export function isPitchBookingsEnabled(env: Env): boolean {
-  const v = env.PITCH_BOOKINGS;
-  return !!(v && v !== "0" && v !== "false");
+  const v = env.PITCH_BOOKINGS?.trim().toLowerCase() ?? "";
+  return !["", "0", "false", "no", "off", "disabled", "never"].includes(v);
 }
 
 /** Extract the club slug sent by the frontend via X-Club-Slug header. */

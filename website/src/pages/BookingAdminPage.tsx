@@ -8,6 +8,7 @@ import { IconClock, IconCalendarEvent, IconRefresh } from '@tabler/icons-react';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
 import { captureError } from '../lib/posthog';
+import { useClub } from '../context/ClubContext';
 
 interface Pitch {
   id: string;
@@ -68,6 +69,9 @@ interface Props {
 }
 
 export function BookingAdminPage({ clubFeedSlug }: Props) {
+  const { clubSlug } = useClub();
+  // Every booking API call is club-scoped (#83): the server gates and filters by this header.
+  const clubHeaders = { 'X-Club-Slug': clubSlug };
   const [requests, setRequests] = useState<AdminRequest[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [pitches, setPitches] = useState<Pitch[]>([]);
@@ -84,9 +88,9 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
   const fetchAll = async () => {
     try {
       const [reqRes, bkgRes, pitchRes] = await Promise.all([
-        fetch('/api/booking-requests?status=pending'),
-        fetch('/api/bookings'),
-        fetch('/api/pitches'),
+        fetch('/api/booking-requests?status=pending', { headers: clubHeaders }),
+        fetch('/api/bookings', { headers: clubHeaders }),
+        fetch('/api/pitches', { headers: clubHeaders }),
       ]);
 
       if (!reqRes.ok || !bkgRes.ok) {
@@ -143,7 +147,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
     try {
       const res = await fetch(`/api/booking-requests?id=${selectedRequest.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({
           action: 'approve',
           pitchId: approveForm.pitchId,
@@ -179,7 +183,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
     try {
       const res = await fetch(`/api/booking-requests?id=${selectedRequest.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({ action: 'decline', reason: declineReason || undefined }),
       });
 
@@ -208,7 +212,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
     try {
       const res = await fetch('/api/admin/import-fixtures', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({ clubFeedSlug }),
       });
       const data = await res.json() as { ok?: boolean; created?: number; skipped?: number; error?: string };
@@ -228,7 +232,7 @@ export function BookingAdminPage({ clubFeedSlug }: Props) {
 
   const handleDeleteBooking = async (id: string) => {
     try {
-      const res = await fetch(`/api/bookings?id=${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/bookings?id=${id}`, { method: 'DELETE', headers: clubHeaders });
       if (!res.ok) {
         const data = await res.json() as { error?: string };
         setError(data.error ?? 'Failed to delete booking');

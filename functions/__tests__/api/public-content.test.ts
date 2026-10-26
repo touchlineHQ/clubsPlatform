@@ -3,6 +3,13 @@ import { makeContext, makeDb, getReq } from '../test-utils';
 
 // Mock auth BEFORE importing any handler
 const mockGetSession = vi.hoisted(() => vi.fn());
+// Pitch bookings are a per-club switch since #83; these tests cover the
+// handlers with it on. club-features.test.ts covers a club with it off.
+vi.mock('../../lib/club-features', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/club-features')>()),
+  requireClubFeature: vi.fn(async () => null),
+}));
+
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({
     api: { getSession: mockGetSession },

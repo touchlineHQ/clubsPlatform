@@ -107,6 +107,9 @@ function AppRoutes() {
   // admins (clubSlug === null) count everywhere — same rule as SiteSidebar.
   const registryEntry = registry?.clubs.find(c => c.slug === clubSlug) ?? null;
   const clubPublished = registryEntry?.published ?? true;
+  // Per club since #83; the top-level flag is only the deployment default, kept
+  // for an older API that doesn't send `features`.
+  const clubPitchBookings = registryEntry?.features?.pitchBookings ?? registry?.pitchBookings ?? false;
   const belongsToClub = isPlatformAdmin || user?.clubSlug === clubSlug;
   // Any committee role can see its own club's site before it goes live (#79).
   const canViewPrivate = can(['content', 'payments', 'members']) && belongsToClub;
@@ -120,11 +123,14 @@ function AppRoutes() {
   // admin whose session lapsed all come back 404. That's an expected answer,
   // shown as the private-club notice; anything else is reported and offered a
   // retry. Either way the loader no longer hangs (#154).
+  // Depends on registry.multiClub only, so registry edits (colours, published,
+  // feature switches) don't refetch the site data.
+  const registryMultiClub = registry ? registry.multiClub : null;
   useEffect(() => {
-    if (!clubSlug || !registry || !canViewSite) return;
+    if (!clubSlug || registryMultiClub === null || !canViewSite) return;
     let cancelled = false;
     setLoadFailure(null);
-    loadAllData(clubSlug, registry.multiClub).then(
+    loadAllData(clubSlug, registryMultiClub).then(
       (loaded) => { if (!cancelled) setFetchedData(loaded); },
       (err: unknown) => {
         if (cancelled) return;
@@ -137,7 +143,7 @@ function AppRoutes() {
       },
     );
     return () => { cancelled = true; };
-  }, [clubSlug, registry, canViewSite]);
+  }, [clubSlug, registryMultiClub, canViewSite]);
 
   const data = previewData ?? fetchedData;
 
@@ -168,6 +174,13 @@ function AppRoutes() {
     setRegistry(prev => prev ? {
       ...prev,
       clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, published } : c),
+    } : prev);
+  }, [clubSlug]);
+
+  const handleFeaturesChanged = useCallback((features: { pitchBookings: boolean }) => {
+    setRegistry(prev => prev ? {
+      ...prev,
+      clubs: prev.clubs.map(c => c.slug === clubSlug ? { ...c, features } : c),
     } : prev);
   }, [clubSlug]);
 
@@ -292,7 +305,7 @@ function AppRoutes() {
             sections={data.teams.sections}
             sidebarFeeds={data.sidebarFeeds}
             onNavClick={close}
-            pitchBookings={registry.pitchBookings}
+            pitchBookings={clubPitchBookings}
             visibility={data.visibility}
           />
         </AppShell.Navbar>
@@ -373,6 +386,8 @@ function AppRoutes() {
                   onSecondaryColorSaved={handleSecondaryColorSaved}
                   published={clubPublished}
                   onPublishedChange={isAdmin ? handlePublishedChanged : undefined}
+                  pitchBookings={clubPitchBookings}
+                  onFeaturesChange={isAdmin ? handleFeaturesChanged : undefined}
                 />
               </ProtectedRoute>
             } />

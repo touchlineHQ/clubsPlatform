@@ -205,7 +205,7 @@ Set in `wrangler.toml` under `[vars]`:
 | `BETTER_AUTH_URL` | Override auth base URL | auto-detected |
 | `MULTI_CLUB` | Enable multi-club platform mode (path routing + demo slug) | disabled |
 | `ALLOW_CLUB_SELF_REGISTER` | Allow `POST /api/clubs/register` self-serve club creation (requires `MULTI_CLUB`) | disabled |
-| `PITCH_BOOKINGS` | Enable pitch scheduling & booking features | disabled |
+| `PITCH_BOOKINGS` | Deployment default for pitch scheduling & booking. Each club admin can override it in Site Admin → Features (#83); `off` turns it off for every club | disabled |
 | `SECRETS_ENCRYPTION_KEY` | AES-256-GCM key for at-rest secret encryption (64 hex chars) | required for secrets |
 | `SECRETS_TRANSPORT_PRIVATE_KEY` | RSA-2048 PKCS8 private key for transport decryption | required for secrets |
 | `SECRETS_TRANSPORT_PUBLIC_KEY` | RSA-2048 SPKI public key sent to the browser | required for secrets |

@@ -2,6 +2,13 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { makeContext, makeDb, makeEnv, adminSession, managerSession, memberSession, getReq, postReq, patchReq, deleteReq } from '../test-utils';
 
 const { mockGetSession } = vi.hoisted(() => ({ mockGetSession: vi.fn() }));
+// Pitch bookings are a per-club switch since #83; these tests cover the
+// handlers with it on. club-features.test.ts covers a club with it off.
+vi.mock('../../lib/club-features', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/club-features')>()),
+  requireClubFeature: vi.fn(async () => null),
+}));
+
 vi.mock('../../lib/auth', () => ({
   createAuth: vi.fn(() => ({ api: { getSession: mockGetSession } })),
 }));
@@ -297,15 +304,13 @@ describe('onRequestPatch – approve', () => {
     // 1. booking_request pending check → returns the request row
     // 2. pitch lookup → returns pitch row
     // 3. conflict check → returns null (no conflict)
-    // 4. fullRequest (teamName, teamSlug, teamLeague)
-    // 5. reqClubSlug
+    // 4. fullRequest (clubSlug, teamName, teamSlug, teamLeague)
     const db = makeDb({
       first: [
         { id: 'req_1', teamName: 'U11s', teamSlug: null, teamLeague: null, date: '2024-03-15', format: '11v11', status: 'pending' },
         { id: 'pitch_1', formats: '["11v11"]' },
         null,
-        { teamName: 'U11s', teamSlug: null, teamLeague: null },
-        { clubSlug: 'test-club' },
+        { clubSlug: 'test-club', teamName: 'U11s', teamSlug: null, teamLeague: null },
       ],
     });
     const ctx = makeContext(
@@ -421,8 +426,7 @@ describe('onRequestPatch – approve', () => {
         { id: 'req_1', teamName: 'U11s', teamSlug: 'u11s', teamLeague: 'sunday-lg', date: '2024-03-15', format: '11v11' },
         { id: 'pitch_1', formats: '["11v11"]' },
         null,
-        { teamName: 'U11s', teamSlug: 'u11s', teamLeague: 'sunday-lg' },
-        { clubSlug: 'test-club' },
+        { clubSlug: 'test-club', teamName: 'U11s', teamSlug: 'u11s', teamLeague: 'sunday-lg' },
       ],
     });
     const ctx = makeContext(

@@ -5,6 +5,7 @@ import {
 } from '@mantine/core';
 import { IconCalendarPlus, IconListDetails } from '@tabler/icons-react';
 import { useAuth } from '../context/AuthContext';
+import { useClub } from '../context/ClubContext';
 import type { LiveTeam } from '../types';
 import { PageHeader } from '../components/club/PageHeader';
 import { clubDesign } from '../theme';
@@ -67,6 +68,9 @@ interface Props {
 
 export function PitchBookingPage({ liveTeams }: Props) {
   const { teamRoles } = useAuth();
+  const { clubSlug } = useClub();
+  // Every booking API call is club-scoped (#83): the server gates and filters by this header.
+  const clubHeaders = { 'X-Club-Slug': clubSlug };
   const [pitches, setPitches] = useState<Pitch[]>([]);
   const [teamOptions, setTeamOptions] = useState<TeamOption[]>([]);
   const [allTeamOptions, setAllTeamOptions] = useState<TeamOption[]>([]);
@@ -90,7 +94,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
 
   const fetchPitches = async () => {
     try {
-      const res = await fetch('/api/pitches');
+      const res = await fetch('/api/pitches', { headers: clubHeaders });
       if (res.ok) {
         const data = await res.json() as { pitches: Pitch[] };
         setPitches(data.pitches);
@@ -102,7 +106,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
 
   const fetchTeams = async () => {
     try {
-      const res = await fetch('/api/teams');
+      const res = await fetch('/api/teams', { headers: clubHeaders });
       if (!res.ok) return;
       const data = await res.json() as {
         sections: { id: string; name: string }[];
@@ -165,7 +169,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
 
   const fetchRequests = async () => {
     try {
-      const res = await fetch('/api/booking-requests');
+      const res = await fetch('/api/booking-requests', { headers: clubHeaders });
       if (res.ok) {
         const data = await res.json() as { requests: BookingRequest[] };
         // Show newest first
@@ -181,7 +185,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
     fetchPitches();
     fetchTeams();
     fetchRequests();
-  }, [teamRoles]);
+  }, [teamRoles, clubSlug]);
 
   const handleSubmit = async () => {
     setError('');
@@ -198,7 +202,7 @@ export function PitchBookingPage({ liveTeams }: Props) {
     try {
       const res = await fetch('/api/booking-requests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...clubHeaders },
         body: JSON.stringify({
           teamName,
           teamSlug: isDynamicTeam ? teamSlug : null,
