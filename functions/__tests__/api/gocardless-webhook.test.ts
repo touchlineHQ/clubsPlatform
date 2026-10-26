@@ -3,6 +3,7 @@ import { makeContext, makeDb, makeEnv } from '../test-utils';
 
 vi.mock('../../lib/secrets', () => ({
   decryptSecret: vi.fn(async (_env: unknown, encryptedValue: string) => encryptedValue),
+  getSecret: vi.fn(async () => 'gc_token'),
 }));
 
 vi.mock('../../lib/posthog', () => ({
@@ -46,6 +47,7 @@ function makeWebhookDb(opts: {
   const existingEventIds = new Set(opts.existingEventIds ?? []);
   const updateCalls: Array<{ sql: string; binds: unknown[] }> = [];
   const insertCalls: Array<{ binds: unknown[] }> = [];
+  const failureCalls: Array<{ sql: string; binds: unknown[] }> = [];
 
   const db = {
     exec: vi.fn(async () => ({ results: [], count: 0, duration: 0 })),
@@ -63,6 +65,7 @@ function makeWebhookDb(opts: {
           if (sql.startsWith('UPDATE "player_payment"')) {
             updateCalls.push({ sql, binds });
           }
+          if (sql.includes('"payment_failure"')) failureCalls.push({ sql, binds });
           if (sql.startsWith('INSERT OR IGNORE INTO "gc_webhook_event"')) {
             insertCalls.push({ binds });
             existingEventIds.add(String(binds[0] ?? ''));
@@ -83,7 +86,7 @@ function makeWebhookDb(opts: {
     }),
   };
 
-  return { db, updateCalls, insertCalls };
+  return { db, updateCalls, insertCalls, failureCalls };
 }
 
 beforeEach(() => {
@@ -299,6 +302,88 @@ describe('POST /api/gocardless/webhook', () => {
     const res = await webhookOnRequestPost(ctx as any);
     expect(res.status).toBe(204);
     expect(updateCalls.length).toBe(0);
+  });
+
+  it('records a payments.failed event that links only the payment, looking the mandate up from GoCardless', async () => {
+    const body = JSON.stringify({
+      events: [
+        {
+          id: 'EV-pay-2',
+          created_at: '2026-10-20T09:00:00.000Z',
+          resource_type: 'payments',
+          action: 'failed',
+          links: { payment: 'PM-2' },
+          details: { cause: 'insufficient_funds' },
+        },
+      ],
+    });
+    const { db, failureCalls } = makeWebhookDb({
+      secretRows: [{ clubSlug: 'test-club', encryptedValue: TEST_SECRET, iv: 'iv1' } as any],
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ payments: { id: 'PM-2', links: { mandate: 'MND-2' } } }), { status: 200 }),
+    );
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const ctx = makeContext(makeWebhookReq(body, sig), { env });
+
+    const res = await webhookOnRequestPost(ctx as any);
+    expect(res.status).toBe(204);
+    expect(String(fetchSpy.mock.calls[0][0])).toContain('/payments/PM-2');
+    expect(failureCalls).toHaveLength(1);
+    expect(failureCalls[0].sql).toContain('INSERT INTO "payment_failure"');
+    // Ordered by the event's own time; the receipt time only marks resolution.
+    const eventAt = Date.parse('2026-10-20T09:00:00.000Z');
+    expect(failureCalls[0].binds).toEqual(['PM-2', 'MND-2', 'insufficient_funds', eventAt, 'MND-2', eventAt, expect.any(Number), 'MND-2']);
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal);
+    fetchSpy.mockRestore();
+  });
+
+  it('returns 500 so GoCardless retries when the payment lookup hits a GoCardless outage', async () => {
+    const body = JSON.stringify({
+      events: [{ id: 'EV-pay-3', resource_type: 'payments', action: 'failed', links: { payment: 'PM-3' } }],
+    });
+    const { db, failureCalls, insertCalls } = makeWebhookDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 503 }));
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const ctx = makeContext(makeWebhookReq(body, sig), { env });
+
+    const res = await webhookOnRequestPost(ctx as any);
+    expect(res.status).toBe(500);
+    expect(failureCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+    fetchSpy.mockRestore();
+  });
+
+  it.each([408, 429])('returns 500 so GoCardless retries when the payment lookup gets HTTP %i', async (status) => {
+    const body = JSON.stringify({
+      events: [{ id: `EV-pay-${status}`, resource_type: 'payments', action: 'failed', links: { payment: 'PM-4' } }],
+    });
+    const { db, failureCalls, insertCalls } = makeWebhookDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status }));
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const res = await webhookOnRequestPost(makeContext(makeWebhookReq(body, sig), { env }) as any);
+    expect(res.status).toBe(500);
+    expect(failureCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
+    fetchSpy.mockRestore();
+  });
+
+  it('acknowledges the event without a failure row when GoCardless does not know the payment (404)', async () => {
+    const body = JSON.stringify({
+      events: [{ id: 'EV-pay-404', resource_type: 'payments', action: 'failed', links: { payment: 'PM-5' } }],
+    });
+    const { db, failureCalls, insertCalls } = makeWebhookDb();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+    const env = makeEnv({ DB: db as any });
+    const sig = await hmacHex(TEST_SECRET, body);
+    const res = await webhookOnRequestPost(makeContext(makeWebhookReq(body, sig), { env }) as any);
+    expect(res.status).toBe(204);
+    expect(failureCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(1);
+    fetchSpy.mockRestore();
   });
 
   it('returns 400 on malformed JSON body (after passing signature)', async () => {

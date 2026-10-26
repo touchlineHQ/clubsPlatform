@@ -96,13 +96,18 @@ export function AdminSecretsPage() {
   };
 
   const handleDelete = async (key: string) => {
+    setError('');
     setDeleting(key);
     try {
       const res = await fetch(`/api/admin/secrets?key=${encodeURIComponent(key)}`, {
         method: 'DELETE',
         headers: clubHeaders,
       });
-      if (!res.ok) { setError('Failed to delete secret'); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        setError(data.error ?? 'Failed to delete secret');
+        return;
+      }
       setSecrets(prev => prev.filter(s => s.key !== key));
     } catch (e) {
       captureError(e, { op: 'adminSecrets.delete' });
