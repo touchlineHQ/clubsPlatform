@@ -13,9 +13,9 @@
     "api:gen": "npm ci --silent --no-audit --no-fund --prefix tools/openapi && tools/openapi/node_modules/.bin/openapi-typescript ../openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {
-    "@mantine/core": "9.7.2",
-    "@mantine/dates": "9.7.2",
-    "@mantine/hooks": "9.7.2",
+    "@mantine/core": "9.7.3",
+    "@mantine/dates": "9.7.3",
+    "@mantine/hooks": "9.7.3",
     "@posthog/react": "^1.11.3",
     "@tabler/icons-react": "^3.49.0",
     "better-auth": "^1.7.10",
