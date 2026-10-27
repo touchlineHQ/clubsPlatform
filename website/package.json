@@ -27,7 +27,7 @@
     "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
-    "@posthog/rollup-plugin": "^1.6.1",
+    "@posthog/rollup-plugin": "^1.6.2",
     "@types/node": "^26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
