@@ -15,7 +15,7 @@ import { deploymentDefault, getClubFeatures, getStoredClubFeature, isClubFeature
  * audit-logged like going live.
  */
 
-async function describe(env: Env, clubSlug: string) {
+async function describeClubFeatures(env: Env, clubSlug: string) {
   const features = await getClubFeatures(env, env.DB, clubSlug);
   const killed = { pitchBookings: deploymentDefault(env, "pitchBookings") === "killed" };
   return { features, killed };
@@ -32,7 +32,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     .bind(clubSlug)
     .first<{ id: string }>();
   if (!club) return json({ error: "Club not found" }, { status: 404 });
-  return json(await describe(context.env, clubSlug));
+  return json(await describeClubFeatures(context.env, clubSlug));
 };
 
 export const onRequestPut: PagesFunction<Env> = async (context) => {
@@ -87,5 +87,5 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     }),
   ]);
 
-  return json({ ok: true, ...(await describe(context.env, clubSlug)) });
+  return json({ ok: true, ...(await describeClubFeatures(context.env, clubSlug)) });
 };
