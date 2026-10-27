@@ -24,7 +24,7 @@
     "posthog:events": "node scripts/generate-posthog-events.mjs"
   },
   "dependencies": {
-    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api": "^1.10.0",
     "better-auth": "^1.7.10",
     "hono": "^4.13.13",
     "posthog-node": "^5.56.2"
