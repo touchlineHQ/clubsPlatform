@@ -86,6 +86,16 @@ describe('claim detection', () => {
     expect(check('```\n`functions/api/moved.ts`\n```')).toEqual([]);
   });
 
+  it('ignores claims inside ~~~ fences', () => {
+    expect(check('~~~\n`functions/api/moved.ts`\n~~~')).toEqual([]);
+  });
+
+  it('does not close a fence on a shorter or different-character marker', () => {
+    expect(check('````\n```\n`functions/api/moved.ts`\n```\n````')).toEqual([]);
+    expect(check('````\n```\n````\n`functions/api/moved.ts`')).toEqual(['functions/api/moved.ts']);
+    expect(check('~~~~\n```\n`functions/api/moved.ts`\n~~~~')).toEqual([]);
+  });
+
   it('catches SKILL.md reference listing drift in both directions', () => {
     put('.claude/skills/s/SKILL.md', 'Read `references/a.md` and `references/gone.md`.');
     put('.claude/skills/s/references/a.md', 'x');

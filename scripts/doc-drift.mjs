@@ -94,12 +94,20 @@ export function checkDocs(root, files = docFiles(root)) {
   for (const file of files) {
     const lines = readFileSync(join(root, file), 'utf8').split('\n');
     const fail = (i, claim, message) => problems.push({ file, line: i + 1, claim, message });
-    let inFence = false;
+    let fence = null; // open code fence: { char, len }
     let tableHeader = null;
 
     lines.forEach((line, i) => {
-      if (/^\s*```/.test(line)) inFence = !inFence;
-      if (inFence) return;
+      // CommonMark: a fence closes only on the same character, at least as long, with nothing after it.
+      const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+      if (fence) {
+        if (marker && marker[1][0] === fence.char && marker[1].length >= fence.len && marker[2].trim() === '') fence = null;
+        return;
+      }
+      if (marker && !(marker[1][0] === '`' && marker[2].includes('`'))) {
+        fence = { char: marker[1][0], len: marker[1].length };
+        return;
+      }
 
       const isRow = /^\s*\|/.test(line);
       const cells = isRow ? line.split('|').slice(1, -1).map((c) => c.trim()) : [];
