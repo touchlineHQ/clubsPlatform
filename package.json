@@ -21,7 +21,8 @@
     "e2e:serve": "npm run e2e:migrate && wrangler pages dev website/dist --ip 127.0.0.1 --port 8788 --persist-to .wrangler/e2e-state --d1 DB=895c505d-ccc6-49d9-87ba-375ef9492f19 --show-interactive-dev-session=false",
     "lint": "biome lint",
     "typecheck": "tsc -p functions/tsconfig.json && tsc -p functions/tsconfig.tests.json && tsc -p e2e/tsconfig.json && tsc -p tsconfig.website-tests.json && cd website && npm run typecheck",
-    "posthog:events": "node scripts/generate-posthog-events.mjs"
+    "posthog:events": "node scripts/generate-posthog-events.mjs",
+    "docs:check": "node scripts/check-doc-drift.mjs"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",
