@@ -51,8 +51,8 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
-      # VITE_POSTHOG_DISABLED must be the exact string "true", and the key/host
-      # pair has to be present alongside it: init() in website/src/lib/posthog.ts
+      # PostHog is disabled at runtime (see the next step), and the key/host
+      # pair has to be baked in alongside it: init() in website/src/lib/posthog.ts
       # checks for a missing key BEFORE it checks the disable flag and logs a
       # console error on that path. Both values are repository *variables*, not
       # secrets — the project key is write-only and ships in the client bundle
@@ -65,9 +65,13 @@ jobs:
         run: npm run build
         working-directory: website
         env:
-          VITE_POSTHOG_DISABLED: 'true'
           VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+
+      # The opt-out is a runtime flag, not a build-time env: see
+      # website/public/runtime-config.js.
+      - name: Disable PostHog
+        run: echo 'window.__POSTHOG_DISABLED__ = true;' > website/dist/runtime-config.js
 
       # functions/lib/seed.ts reads the club's JSON through the ASSETS binding and
       # treats an HTML response as absent — which is what the SPA fallback serves

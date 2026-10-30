@@ -12,11 +12,6 @@ interface ImportMetaEnv {
   readonly VITE_POSTHOG_API_KEY?: string;
   /** PostHog ingest host (our reverse proxy). Also allowlisted in public/_headers. */
   readonly VITE_POSTHOG_HOST?: string;
-  /**
-   * Set to 'true' to stop the SDK initialising. Defaults to on in dev; set it
-   * to 'false' locally to verify the analytics pipeline end to end.
-   */
-  readonly VITE_POSTHOG_DISABLED?: string;
 }
 
 interface ImportMeta {

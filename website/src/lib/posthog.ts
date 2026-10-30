@@ -3,13 +3,27 @@ import posthog from 'posthog-js';
 const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_API_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST;
 
+declare global {
+  interface Window {
+    /**
+     * Runtime opt-out, set by /runtime-config.js (see website/public). It is
+     * read at init() rather than baked in at build time so one build can be
+     * promoted from preview to production unchanged.
+     */
+    __POSTHOG_DISABLED__?: boolean;
+  }
+}
+
 /**
- * Explicit opt-out, so the pipeline can be exercised locally. Defaults to on in
- * dev — previously this was hardcoded to `import.meta.env.DEV`, which meant
- * there was no way to verify an analytics change before shipping it.
+ * Explicit opt-out, so the pipeline can be exercised locally. `true` disables,
+ * `false` enables. When /runtime-config.js leaves it unset (local `npm run
+ * dev`) it defaults to off in dev only, so there is still a way to verify an
+ * analytics change before shipping it.
  */
-const DISABLED = import.meta.env.VITE_POSTHOG_DISABLED === 'true'
-  || (import.meta.env.VITE_POSTHOG_DISABLED === undefined && import.meta.env.DEV);
+function isDisabled(): boolean {
+  const flag = window.__POSTHOG_DISABLED__;
+  return flag === undefined ? import.meta.env.DEV : flag === true;
+}
 
 /**
  * Whether init() actually configured the SDK. Every helper below is a no-op
@@ -46,8 +60,8 @@ export function init(): void {
     return;
   }
 
-  if (DISABLED) {
-    console.info('[PostHog] Disabled via VITE_POSTHOG_DISABLED — no events will be sent');
+  if (isDisabled()) {
+    console.info('[PostHog] Disabled via window.__POSTHOG_DISABLED__ — no events will be sent');
     return;
   }
 
