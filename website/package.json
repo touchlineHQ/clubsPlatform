@@ -17,7 +17,7 @@
     "@mantine/dates": "9.7.4",
     "@mantine/hooks": "9.7.4",
     "@posthog/react": "^1.11.3",
-    "@tabler/icons-react": "^3.49.0",
+    "@tabler/icons-react": "^3.50.0",
     "better-auth": "^1.7.14",
     "dayjs": "^1.11.23",
     "posthog-js": "^1.444.0",
