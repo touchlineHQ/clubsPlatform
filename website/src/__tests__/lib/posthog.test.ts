@@ -24,7 +24,8 @@ async function loadModule(env: Record<string, string | undefined>) {
   vi.unstubAllEnvs();
   vi.stubEnv('VITE_POSTHOG_API_KEY', env.key as string);
   vi.stubEnv('VITE_POSTHOG_HOST', env.host as string);
-  vi.stubEnv('VITE_POSTHOG_DISABLED', env.disabled as string);
+  // The opt-out is a runtime global set by /runtime-config.js, not a Vite env.
+  window.__POSTHOG_DISABLED__ = env.disabled === undefined ? undefined : env.disabled === 'true';
   return import('../../lib/posthog');
 }
 
@@ -45,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete window.__POSTHOG_DISABLED__;
   vi.unstubAllEnvs();
 });
 
@@ -95,6 +97,36 @@ describe('init()', () => {
   it('does not initialise when explicitly disabled', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const mod = await loadModule({ key: 'phc_test', host: 'https://ph.example.com', disabled: 'true' });
+
+    mod.init();
+
+    expect(mockPosthog.init).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('initialises when the runtime flag is false, even in dev', async () => {
+    const mod = await loadModule({ key: 'phc_test', host: 'https://ph.example.com', disabled: 'false' });
+
+    mod.init();
+
+    expect(mockPosthog.init).toHaveBeenCalledTimes(1);
+  });
+
+  // A production build served with no flag set (the production deploy).
+  it('initialises when the runtime flag is unset outside dev', async () => {
+    const mod = await loadModule({ key: 'phc_test', host: 'https://ph.example.com', disabled: undefined });
+    vi.stubEnv('DEV', false);
+
+    mod.init();
+
+    expect(mockPosthog.init).toHaveBeenCalledTimes(1);
+  });
+
+  // Local `npm run dev`: no runtime-config.js value and no explicit opt-in.
+  it('falls back to disabled in dev when the runtime flag is unset', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const mod = await loadModule({ key: 'phc_test', host: 'https://ph.example.com', disabled: undefined });
+    vi.stubEnv('DEV', true);
 
     mod.init();
 

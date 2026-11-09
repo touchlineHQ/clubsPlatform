@@ -41,6 +41,78 @@ jobs:
       - name: Run tests with coverage
         run: npm run test:coverage
 
+  # Builds website/dist exactly once per push. Preview E2E and the production
+  # deploy both promote this artifact, so the bundle that passes E2E is the
+  # bundle that ships. Nothing environment-specific is baked in: the PostHog
+  # opt-out is a runtime flag in dist/runtime-config.js, which each deploy job
+  # sets on its own copy.
+  #
+  # The POSTHOG_CLI_* values drive source map upload to PostHog error tracking
+  # (see website/vite.config.mts). Without them a frontend exception is reported
+  # against a minified chunk, which nobody - human or agent - can act on. Unlike
+  # the VITE_* pair, POSTHOG_CLI_API_KEY is a genuine *secret*: it is a personal
+  # API key, not the project write key, so it must never be a repository
+  # variable and must never reach the client bundle. The build succeeds without
+  # it and simply skips the upload. Source maps therefore upload before E2E has
+  # passed, for a build that may not ship.
+  #
+  # VITE_* values must be injected here: this is a direct-upload Pages project,
+  # so the dashboard's build environment variables never run. Both are
+  # repository *variables*, not secrets: the PostHog project key is a write-only
+  # public key that ships in the client bundle regardless, and the host is
+  # already in our CSP.
+  build:
+    name: Build website
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      dist-digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            website/package-lock.json
+      - name: Install website dependencies
+        run: npm ci
+        working-directory: website
+      - name: Build
+        run: npm run build
+        working-directory: website
+        env:
+          VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
+          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
+          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+      - name: Verify seed assets are in the build output
+        run: test -s website/dist/data/clubs/demo/club.json
+      # A hash over every file path and content, so the consuming jobs can prove
+      # they received the same bytes. The artifact-level digest is printed too.
+      - name: Digest the build output
+        id: digest
+        run: |
+          digest=$(cd website/dist && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "website/dist digest: $digest"
+      - name: Upload website/dist
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: website-dist
+          path: website/dist
+          if-no-files-found: error
+          retention-days: 7
+      - name: Print artifact digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: echo "website-dist artifact digest $ARTIFACT_DIGEST"
+
   # Blocking pre-production gate: deploy this commit as a Cloudflare preview and
   # run the end-to-end smoke suite against it before production is touched.
   #
@@ -52,7 +124,7 @@ jobs:
   # be testing against the wrong schema.
   preview-e2e:
     name: E2E against a Cloudflare preview
-    needs: test
+    needs: [test, build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -111,19 +183,31 @@ jobs:
         if: steps.access.outputs.configured == 'true'
         run: npx playwright install --with-deps chromium
 
-      # No POSTHOG_CLI_* here, unlike the production build below: a throwaway
-      # preview must not create a PostHog release or upload source maps. That is
-      # also why the deploy job builds again rather than reusing an artifact from
-      # this job — the plugin stamps chunk ids at build time, so the two bundles
-      # genuinely differ.
-      - name: Build
+      # Promote the artifact the build job uploaded; do not rebuild. Preview is
+      # told to skip PostHog through the runtime flag, applied to this job's own
+      # copy (the production deploy downloads a fresh, unmodified one). The key
+      # and host must still be baked into the bundle: init() in
+      # website/src/lib/posthog.ts checks for a missing key BEFORE it checks the
+      # disable flag and logs a console error on that path.
+      - name: Download website/dist
         if: steps.access.outputs.configured == 'true'
-        run: npm run build
-        working-directory: website
+        uses: actions/download-artifact@v7
+        with:
+          name: website-dist
+          path: website/dist
+
+      - name: Verify the artifact matches the build job's digest
+        if: steps.access.outputs.configured == 'true'
         env:
-          VITE_POSTHOG_DISABLED: 'true'
-          VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
-          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          EXPECTED: ${{ needs.build.outputs.dist-digest }}
+        run: |
+          actual=$(cd website/dist && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+          echo "website/dist digest (as uploaded): $actual"
+          test "$actual" = "$EXPECTED"
+
+      - name: Disable PostHog for the preview
+        if: steps.access.outputs.configured == 'true'
+        run: echo 'window.__POSTHOG_DISABLED__ = true;' > website/dist/runtime-config.js
 
       - name: Verify seed assets are in the build output
         if: steps.access.outputs.configured == 'true'
@@ -219,7 +303,7 @@ jobs:
           retention-days: 7
 
   deploy:
-    needs: preview-e2e
+    needs: [build, preview-e2e]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -252,29 +336,20 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: "4"
           command: d1 migrations apply clubsplatform-auth --remote --env production
-      # This is a direct-upload Pages project, so the dashboard's build
-      # environment variables never run. VITE_* values must be injected here or
-      # they are undefined in the bundle. Both are repository *variables*, not
-      # secrets: the PostHog project key is a write-only public key that ships
-      # in the client bundle regardless, and the host is already in our CSP.
-      #
-      # The POSTHOG_CLI_* values drive source map upload to PostHog error
-      # tracking (see website/vite.config.mts). Without them a frontend
-      # exception is reported against a minified chunk, which nobody — human or
-      # agent — can act on. Unlike the VITE_* pair, POSTHOG_CLI_API_KEY is a
-      # genuine *secret*: it is a personal API key, not the project write key,
-      # so it must never be a repository variable and must never reach the
-      # client bundle. The build succeeds without it and simply skips the
-      # upload, which is what keeps forks and the PR workflow working.
-      - name: Build
-        run: npm run build
-        working-directory: website
+      # Promote the exact bundle that preview E2E tested. Nothing is rebuilt, and
+      # runtime-config.js stays as built, so PostHog is on in production.
+      - name: Download website/dist
+        uses: actions/download-artifact@v7
+        with:
+          name: website-dist
+          path: website/dist
+      - name: Verify the artifact matches the build job's digest
         env:
-          VITE_POSTHOG_API_KEY: ${{ vars.VITE_POSTHOG_API_KEY }}
-          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
-          POSTHOG_CLI_API_KEY: ${{ secrets.POSTHOG_CLI_API_KEY }}
-          POSTHOG_CLI_PROJECT_ID: ${{ vars.POSTHOG_CLI_PROJECT_ID }}
-          POSTHOG_CLI_HOST: ${{ vars.POSTHOG_CLI_HOST }}
+          EXPECTED: ${{ needs.build.outputs.dist-digest }}
+        run: |
+          actual=$(cd website/dist && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+          echo "website/dist digest (as uploaded): $actual"
+          test "$actual" = "$EXPECTED"
       # wranglerVersion is pinned like every other wrangler-action step in this
       # repo. Unpinned, the wrangler major that uploads the production bundle
       # comes from the action's own default rather than from anything here —
