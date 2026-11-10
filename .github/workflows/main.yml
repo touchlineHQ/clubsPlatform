@@ -191,7 +191,7 @@ jobs:
       # disable flag and logs a console error on that path.
       - name: Download website/dist
         if: steps.access.outputs.configured == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: website-dist
           path: website/dist
@@ -339,7 +339,7 @@ jobs:
       # Promote the exact bundle that preview E2E tested. Nothing is rebuilt, and
       # runtime-config.js stays as built, so PostHog is on in production.
       - name: Download website/dist
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: website-dist
           path: website/dist
