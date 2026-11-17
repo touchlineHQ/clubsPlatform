@@ -12,6 +12,9 @@ updates:
         patterns:
           - "vitest"
           - "@vitest/*"
+      mantine:
+        patterns:
+          - "@mantine/*"
     ignore:
       - dependency-name: "vitest"
         update-types: ["version-update:semver-major"]
