@@ -37,7 +37,7 @@
     "@mantine/dates": "^9.7.5",
     "@mantine/hooks": "^9.0.0",
     "@playwright/test": "1.65.1",
-    "@tabler/icons-react": "^3.50.0",
+    "@tabler/icons-react": "^3.51.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^26.6.6",
