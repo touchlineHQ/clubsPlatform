@@ -27,7 +27,7 @@
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",
     "better-auth": "^1.7.27",
-    "hono": "^4.13.18",
+    "hono": "^4.13.19",
     "posthog-node": "^5.73.0"
   },
   "devDependencies": {
